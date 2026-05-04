@@ -40,10 +40,12 @@ enum AppConstants {
     enum Watermark {
         static let mockEmbedDelayNanoseconds: UInt64 = 2_000_000_000
         static let mockExtractDelayNanoseconds: UInt64 = 1_000_000_000
-        static let realEmbedDelayNanoseconds: UInt64 = 300_000_000
-        static let realExtractDelayNanoseconds: UInt64 = 200_000_000
-        /// 最小边长（点），小于则 `WatermarkService` 抛 `imageTooSmall`。
-        static let minimumImageSidePoints: CGFloat = 64
+        /// 条带高度（像素）；完整实现要求图像高度为该值的整数倍且与 8 对齐策略一致。
+        static let stripHeightPixels = 80
+        /// 平滑块方差阈值，低于则跳过嵌入（隐蔽性）。
+        static let smoothBlockVarianceThreshold: Float = 10.5
+        /// 最小边长（点），小于则 `WatermarkService` 抛 `imageTooSmall`（与算法伪代码一致）。
+        static let minimumImageSidePoints: CGFloat = 128
         static let mockExtractResultText = "Test_Copyright_2026"
         static let embedSampleText = "MyText"
         static let sampleSystemSymbolName = "photo.fill"
@@ -114,7 +116,7 @@ enum AppConstants {
             static let embedChipFormat = "示例文案 · %@"
             static let tipArchitectureTitle = "依赖注入"
             static let tipHistoryTitle = "历史"
-            static let captionDependencyInjection = "视图只依赖 WatermarkServiceProtocol；DEBUG 使用 Mock，Release 使用 Real。"
+            static let captionDependencyInjection = "视图只依赖 WatermarkServiceProtocol；运行时使用 WatermarkService，SwiftUI Preview 使用 PreviewWatermarkService；单元测试使用 Tests 内 Mock。"
             static let captionHistoryHintWhenLogging = "仅「嵌入水印」成功时会写入历史（可在「设置」关闭）。"
             static let captionHistoryHintWhenNotLogging = "已关闭：嵌入水印成功时不会写入历史。"
         }

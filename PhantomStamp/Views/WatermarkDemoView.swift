@@ -292,7 +292,7 @@ private struct WatermarkTipsCard: View {
     let config = ModelConfiguration(schema: schema, isStoredInMemoryOnly: true)
     let container = try! ModelContainer(for: schema, configurations: [config])
     return WatermarkDemoView(
-        watermarkService: MockWatermarkService(),
+        watermarkService: PreviewWatermarkService(),
         settingsStore: UserSettingsStore()
     )
     .modelContainer(container)

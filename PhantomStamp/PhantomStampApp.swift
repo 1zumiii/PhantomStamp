@@ -10,14 +10,7 @@ import SwiftUI
 
 @main
 struct PhantomStampApp: App {
-    /// 集成阶段切换实现：`DEBUG` 使用 Mock 便于 UI 联调，`Release` 使用算法实现。
-    private let watermarkService: any WatermarkServiceProtocol = {
-        #if DEBUG
-        MockWatermarkService()
-        #else
-        WatermarkService()
-        #endif
-    }()
+    private let watermarkService: any WatermarkServiceProtocol = WatermarkService()
 
     var sharedModelContainer: ModelContainer = {
         let schema = Schema([
