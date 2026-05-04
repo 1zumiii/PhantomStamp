@@ -11,9 +11,9 @@ import Observation
 final class UserSettingsStore {
     private let defaults: UserDefaults
 
-    /// 水印 Demo 成功操作是否写入 `HistoryEntry`。
-    var autoLogWatermarkToHistory: Bool {
-        didSet { defaults.set(autoLogWatermarkToHistory, forKey: AppConstants.UserDefaultsKey.autoLogWatermark) }
+    /// 仅当「嵌入水印」成功时是否写入 `HistoryEntry`（提取不记录）。
+    var autoLogWatermarkEmbedToHistory: Bool {
+        didSet { defaults.set(autoLogWatermarkEmbedToHistory, forKey: AppConstants.UserDefaultsKey.autoLogWatermarkEmbed) }
     }
 
     var compactHistoryList: Bool {
@@ -22,10 +22,13 @@ final class UserSettingsStore {
 
     init(defaults: UserDefaults = .standard) {
         self.defaults = defaults
-        if let v = defaults.object(forKey: AppConstants.UserDefaultsKey.autoLogWatermark) as? Bool {
-            self.autoLogWatermarkToHistory = v
+        if let v = defaults.object(forKey: AppConstants.UserDefaultsKey.autoLogWatermarkEmbed) as? Bool {
+            self.autoLogWatermarkEmbedToHistory = v
+        } else if let legacy = defaults.object(forKey: "phantomstamp.settings.autoLogWatermark") as? Bool {
+            self.autoLogWatermarkEmbedToHistory = legacy
+            defaults.set(legacy, forKey: AppConstants.UserDefaultsKey.autoLogWatermarkEmbed)
         } else {
-            self.autoLogWatermarkToHistory = AppConstants.SettingsDefault.autoLogWatermark
+            self.autoLogWatermarkEmbedToHistory = AppConstants.SettingsDefault.autoLogWatermarkEmbed
         }
         if let v = defaults.object(forKey: AppConstants.UserDefaultsKey.compactHistoryList) as? Bool {
             self.compactHistoryList = v

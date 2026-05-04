@@ -1,5 +1,5 @@
 //
-//  RealWatermarkService.swift
+//  WatermarkService.swift
 //  PhantomStamp
 //
 //  算法组实现：`YCbCr` / `DCT` / `TaskGroup` 等应在此替换当前占位逻辑。
@@ -7,7 +7,7 @@
 
 import UIKit
 
-final class RealWatermarkService: WatermarkServiceProtocol {
+final class WatermarkService: WatermarkServiceProtocol {
     func embedWatermark(into image: UIImage, text: String) async throws -> UIImage {
         let minSide = min(image.size.width, image.size.height)
         guard minSide >= AppConstants.Watermark.minimumImageSidePoints else {

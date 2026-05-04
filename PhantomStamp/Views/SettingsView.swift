@@ -12,8 +12,8 @@ struct SettingsView: View {
         NavigationStack {
             Form {
                 Section {
-                    Toggle(AppConstants.Copy.Settings.toggleAutoLogWatermark, isOn: $settingsStore.autoLogWatermarkToHistory)
-                    Text(AppConstants.Copy.Settings.footnoteAutoLogWatermark)
+                    Toggle(AppConstants.Copy.Settings.toggleAutoLogWatermarkEmbed, isOn: $settingsStore.autoLogWatermarkEmbedToHistory)
+                    Text(AppConstants.Copy.Settings.footnoteAutoLogWatermarkEmbed)
                         .font(.caption)
                         .foregroundStyle(.secondary)
                 } header: {

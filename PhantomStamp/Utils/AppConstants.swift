@@ -19,12 +19,13 @@ enum AppConstants {
     // MARK: - UserDefaults
 
     enum UserDefaultsKey {
-        static let autoLogWatermark = "phantomstamp.settings.autoLogWatermark"
+        /// 仅控制「嵌入水印」是否写入历史（提取不记录）。
+        static let autoLogWatermarkEmbed = "phantomstamp.settings.autoLogWatermarkEmbed"
         static let compactHistoryList = "phantomstamp.settings.compactHistoryList"
     }
 
     enum SettingsDefault {
-        static let autoLogWatermark = true
+        static let autoLogWatermarkEmbed = true
         static let compactHistoryList = false
     }
 
@@ -32,7 +33,6 @@ enum AppConstants {
 
     enum HistoryRecordKind {
         static let watermarkEmbedded = "watermark.embedded"
-        static let watermarkExtracted = "watermark.extracted"
     }
 
     // MARK: - 水印（Mock / Real 延时与占位）
@@ -42,7 +42,7 @@ enum AppConstants {
         static let mockExtractDelayNanoseconds: UInt64 = 1_000_000_000
         static let realEmbedDelayNanoseconds: UInt64 = 300_000_000
         static let realExtractDelayNanoseconds: UInt64 = 200_000_000
-        /// 最小边长（点），小于则 `RealWatermarkService` 抛 `imageTooSmall`。
+        /// 最小边长（点），小于则 `WatermarkService` 抛 `imageTooSmall`。
         static let minimumImageSidePoints: CGFloat = 64
         static let mockExtractResultText = "Test_Copyright_2026"
         static let embedSampleText = "MyText"
@@ -72,8 +72,11 @@ enum AppConstants {
     // MARK: - 布局
 
     enum Layout {
-        static let watermarkSectionSpacing: CGFloat = 16
-        static let watermarkPreviewMaxHeight: CGFloat = 220
+        static let watermarkSectionSpacing: CGFloat = 20
+        static let watermarkPreviewMaxHeight: CGFloat = 280
+        static let watermarkPreviewCornerRadius: CGFloat = 20
+        static let watermarkCardPadding: CGFloat = 14
+        static let watermarkActionsCardCornerRadius: CGFloat = 16
         static let historyRowInnerSpacing: CGFloat = 4
         static let historyRowPaddingCompact: CGFloat = 2
         static let historyRowPaddingRegular: CGFloat = 6
@@ -98,31 +101,38 @@ enum AppConstants {
         }
 
         enum Watermark {
-            static let navigationTitle = "水印 Demo"
+            static let navigationTitle = "水印"
             static let alertTitle = "提示"
             static let embedButton = "嵌入水印"
             static let extractButton = "提取水印"
             static let okButton = "好的"
+            static let sectionPreview = "预览"
+            static let sectionActions = "操作"
+            static let sectionExtractResult = "提取结果"
+            static let extractPlaceholder = "提取水印后，结果将显示在此"
+            static let processing = "处理中…"
+            static let embedChipFormat = "示例文案 · %@"
+            static let tipArchitectureTitle = "依赖注入"
+            static let tipHistoryTitle = "历史"
             static let captionDependencyInjection = "视图只依赖 WatermarkServiceProtocol；DEBUG 使用 Mock，Release 使用 Real。"
-            static let captionHistoryHintWhenLogging = "成功操作将写入 SwiftData 历史（可在「设置」关闭）。"
-            static let captionHistoryHintWhenNotLogging = "自动写入历史已关闭。"
+            static let captionHistoryHintWhenLogging = "仅「嵌入水印」成功时会写入历史（可在「设置」关闭）。"
+            static let captionHistoryHintWhenNotLogging = "已关闭：嵌入水印成功时不会写入历史。"
         }
 
         enum History {
             static let navigationTitle = "历史记录"
             static let clearButton = "清空"
             static let emptyTitle = "暂无历史"
-            static let emptyDescription = "在水印页完成嵌入或提取，且设置中开启「自动记录水印操作」后，会出现在这里。"
+            static let emptyDescription = "在水印页成功「嵌入水印」，且设置中开启「自动记录嵌入水印」后，会出现在这里。"
             static let logWatermarkEmbeddedFormat = "嵌入水印完成（文案：%@）"
-            static let logWatermarkExtractedFormat = "提取水印：%@"
         }
 
         enum Settings {
             static let navigationTitle = "设置"
             static let sectionHistory = "历史"
             static let sectionAppearance = "界面"
-            static let toggleAutoLogWatermark = "自动记录水印操作"
-            static let footnoteAutoLogWatermark = "开启后，水印 Demo 嵌入 / 提取成功时会写入 SwiftData 历史表。"
+            static let toggleAutoLogWatermarkEmbed = "自动记录嵌入水印"
+            static let footnoteAutoLogWatermarkEmbed = "开启后，仅在水印页「嵌入水印」成功时写入 SwiftData；提取水印不会记录。"
             static let toggleCompactHistory = "紧凑显示历史列表"
             static let footnoteCompactHistory = "使用 UserDefaults 持久化，重启应用后仍保留。"
         }

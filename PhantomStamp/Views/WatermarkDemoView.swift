@@ -24,48 +24,83 @@ struct WatermarkDemoView: View {
     var body: some View {
         NavigationStack {
             ScrollView {
-                VStack(spacing: AppConstants.Layout.watermarkSectionSpacing) {
-                    Image(uiImage: currentImage)
-                        .resizable()
-                        .scaledToFit()
-                        .frame(maxHeight: AppConstants.Layout.watermarkPreviewMaxHeight)
-                        .clipShape(RoundedRectangle(cornerRadius: 12))
+                VStack(alignment: .leading, spacing: AppConstants.Layout.watermarkSectionSpacing) {
+                    WatermarkSectionHeader(
+                        title: AppConstants.Copy.Watermark.sectionPreview,
+                        systemImage: "photo.on.rectangle.angled"
+                    )
 
-                    if isLoading {
-                        ProgressView()
+                    WatermarkPreviewCard(image: currentImage, isLoading: isLoading)
+
+                    Text(String(format: AppConstants.Copy.Watermark.embedChipFormat, AppConstants.Watermark.embedSampleText))
+                        .font(.caption.weight(.semibold))
+                        .foregroundStyle(.secondary)
+                        .padding(.horizontal, 12)
+                        .padding(.vertical, 8)
+                        .background {
+                            Capsule(style: .continuous)
+                                .fill(Color.accentColor.opacity(0.14))
+                        }
+
+                    WatermarkSectionHeader(
+                        title: AppConstants.Copy.Watermark.sectionActions,
+                        systemImage: "square.stack.3d.forward.dottedline"
+                    )
+
+                    VStack(spacing: 12) {
+                        Button {
+                            Task { await runEmbed() }
+                        } label: {
+                            Label(AppConstants.Copy.Watermark.embedButton, systemImage: "wand.and.stars")
+                                .frame(maxWidth: .infinity)
+                                .padding(.vertical, 4)
+                        }
+                        .buttonStyle(.borderedProminent)
+                        .controlSize(.large)
+                        .disabled(isLoading)
+
+                        Button {
+                            Task { await runExtract() }
+                        } label: {
+                            Label(AppConstants.Copy.Watermark.extractButton, systemImage: "text.magnifyingglass")
+                                .frame(maxWidth: .infinity)
+                                .padding(.vertical, 4)
+                        }
+                        .buttonStyle(.bordered)
+                        .controlSize(.large)
+                        .disabled(isLoading)
+                    }
+                    .padding(18)
+                    .background {
+                        RoundedRectangle(cornerRadius: AppConstants.Layout.watermarkActionsCardCornerRadius, style: .continuous)
+                            .fill(Color(uiColor: .secondarySystemGroupedBackground))
+                    }
+                    .overlay {
+                        RoundedRectangle(cornerRadius: AppConstants.Layout.watermarkActionsCardCornerRadius, style: .continuous)
+                            .strokeBorder(Color.primary.opacity(0.05), lineWidth: 1)
                     }
 
-                    Button(AppConstants.Copy.Watermark.embedButton) {
-                        Task { await runEmbed() }
-                    }
-                    .buttonStyle(.borderedProminent)
-                    .disabled(isLoading)
+                    WatermarkSectionHeader(
+                        title: AppConstants.Copy.Watermark.sectionExtractResult,
+                        systemImage: "doc.plaintext"
+                    )
 
-                    Button(AppConstants.Copy.Watermark.extractButton) {
-                        Task { await runExtract() }
-                    }
-                    .buttonStyle(.bordered)
-                    .disabled(isLoading)
+                    WatermarkExtractResultCard(text: lastExtractedText)
 
-                    if let text = lastExtractedText {
-                        Text(text)
-                            .font(.footnote.monospaced())
-                            .foregroundStyle(.secondary)
-                            .textSelection(.enabled)
-                    }
-
-                    SectionCaption(text: AppConstants.Copy.Watermark.captionDependencyInjection)
-
-                    SectionCaption(
-                        text: settingsStore.autoLogWatermarkToHistory
+                    WatermarkTipsCard(
+                        historyDetail: settingsStore.autoLogWatermarkEmbedToHistory
                             ? AppConstants.Copy.Watermark.captionHistoryHintWhenLogging
                             : AppConstants.Copy.Watermark.captionHistoryHintWhenNotLogging
                     )
                 }
-                .padding()
-                .frame(maxWidth: .infinity)
+                .padding(.horizontal, 20)
+                .padding(.vertical, 8)
+                .frame(maxWidth: .infinity, alignment: .leading)
             }
+            .scrollIndicators(.hidden)
+            .background(Color(uiColor: .systemGroupedBackground))
             .navigationTitle(AppConstants.Copy.Watermark.navigationTitle)
+            .navigationBarTitleDisplayMode(.large)
             .alert(AppConstants.Copy.Watermark.alertTitle, isPresented: $showAlert) {
                 Button(AppConstants.Copy.Watermark.okButton, role: .cancel) {}
             } message: {
@@ -84,7 +119,7 @@ struct WatermarkDemoView: View {
             currentImage = output
             lastExtractedText = nil
 
-            if settingsStore.autoLogWatermarkToHistory {
+            if settingsStore.autoLogWatermarkEmbedToHistory {
                 HistoryRecordService.append(
                     modelContext,
                     kind: AppConstants.HistoryRecordKind.watermarkEmbedded,
@@ -103,14 +138,6 @@ struct WatermarkDemoView: View {
         do {
             let text = try await watermarkService.extractWatermark(from: currentImage)
             lastExtractedText = text
-
-            if settingsStore.autoLogWatermarkToHistory {
-                HistoryRecordService.append(
-                    modelContext,
-                    kind: AppConstants.HistoryRecordKind.watermarkExtracted,
-                    message: String(format: AppConstants.Copy.History.logWatermarkExtractedFormat, text)
-                )
-            }
         } catch {
             present(error)
         }
@@ -119,6 +146,144 @@ struct WatermarkDemoView: View {
     private func present(_ error: Error) {
         alertMessage = (error as? LocalizedError)?.errorDescription ?? error.localizedDescription
         showAlert = true
+    }
+}
+
+// MARK: - Subviews
+
+private struct WatermarkSectionHeader: View {
+    let title: String
+    let systemImage: String
+
+    var body: some View {
+        Label(title, systemImage: systemImage)
+            .font(.subheadline.weight(.semibold))
+            .foregroundStyle(.secondary)
+            .labelStyle(.titleAndIcon)
+            .frame(maxWidth: .infinity, alignment: .leading)
+            .padding(.top, 4)
+    }
+}
+
+private struct WatermarkPreviewCard: View {
+    let image: UIImage
+    let isLoading: Bool
+
+    var body: some View {
+        ZStack {
+            Image(uiImage: image)
+                .resizable()
+                .scaledToFit()
+                .frame(maxWidth: .infinity)
+                .frame(maxHeight: AppConstants.Layout.watermarkPreviewMaxHeight)
+
+            if isLoading {
+                RoundedRectangle(cornerRadius: AppConstants.Layout.watermarkPreviewCornerRadius, style: .continuous)
+                    .fill(.ultraThinMaterial)
+                VStack(spacing: 10) {
+                    ProgressView()
+                        .scaleEffect(1.12)
+                        .tint(.accentColor)
+                    Text(AppConstants.Copy.Watermark.processing)
+                        .font(.subheadline.weight(.medium))
+                        .foregroundStyle(.secondary)
+                }
+            }
+        }
+        .padding(AppConstants.Layout.watermarkCardPadding)
+        .background {
+            RoundedRectangle(cornerRadius: AppConstants.Layout.watermarkPreviewCornerRadius, style: .continuous)
+                .fill(Color(uiColor: .secondarySystemGroupedBackground))
+        }
+        .overlay {
+            RoundedRectangle(cornerRadius: AppConstants.Layout.watermarkPreviewCornerRadius, style: .continuous)
+                .strokeBorder(Color.primary.opacity(0.06), lineWidth: 1)
+        }
+        .shadow(color: Color.black.opacity(0.08), radius: 22, x: 0, y: 12)
+    }
+}
+
+private struct WatermarkExtractResultCard: View {
+    let text: String?
+
+    var body: some View {
+        Group {
+            if let text {
+                Text(text)
+                    .font(.body.monospaced())
+                    .foregroundStyle(.primary)
+                    .textSelection(.enabled)
+                    .frame(maxWidth: .infinity, alignment: .leading)
+            } else {
+                HStack(alignment: .center, spacing: 12) {
+                    Image(systemName: "doc.text.magnifyingglass")
+                        .font(.title3)
+                        .foregroundStyle(.tertiary)
+                    Text(AppConstants.Copy.Watermark.extractPlaceholder)
+                        .font(.subheadline)
+                        .foregroundStyle(.tertiary)
+                        .fixedSize(horizontal: false, vertical: true)
+                }
+                .frame(maxWidth: .infinity, alignment: .leading)
+            }
+        }
+        .padding(18)
+        .background {
+            RoundedRectangle(cornerRadius: AppConstants.Layout.watermarkActionsCardCornerRadius, style: .continuous)
+                .fill(Color(uiColor: .secondarySystemGroupedBackground))
+        }
+        .overlay {
+            RoundedRectangle(cornerRadius: AppConstants.Layout.watermarkActionsCardCornerRadius, style: .continuous)
+                .strokeBorder(Color.primary.opacity(0.05), lineWidth: 1)
+        }
+    }
+}
+
+private struct WatermarkTipsCard: View {
+    let historyDetail: String
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 14) {
+            tipRow(
+                icon: "arrow.triangle.branch",
+                title: AppConstants.Copy.Watermark.tipArchitectureTitle,
+                detail: AppConstants.Copy.Watermark.captionDependencyInjection
+            )
+            Divider().opacity(0.35)
+            tipRow(
+                icon: "clock.arrow.circlepath",
+                title: AppConstants.Copy.Watermark.tipHistoryTitle,
+                detail: historyDetail
+            )
+        }
+        .padding(18)
+        .background {
+            RoundedRectangle(cornerRadius: AppConstants.Layout.watermarkActionsCardCornerRadius, style: .continuous)
+                .fill(Color(uiColor: .secondarySystemGroupedBackground).opacity(0.92))
+        }
+        .overlay {
+            RoundedRectangle(cornerRadius: AppConstants.Layout.watermarkActionsCardCornerRadius, style: .continuous)
+                .strokeBorder(Color.primary.opacity(0.05), lineWidth: 1)
+        }
+    }
+
+    @ViewBuilder
+    private func tipRow(icon: String, title: String, detail: String) -> some View {
+        HStack(alignment: .top, spacing: 14) {
+            Image(systemName: icon)
+                .font(.body.weight(.semibold))
+                .foregroundStyle(.tertiary)
+                .frame(width: 26, alignment: .center)
+
+            VStack(alignment: .leading, spacing: 6) {
+                Text(title)
+                    .font(.subheadline.weight(.semibold))
+                Text(detail)
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+                    .fixedSize(horizontal: false, vertical: true)
+            }
+        }
     }
 }
 

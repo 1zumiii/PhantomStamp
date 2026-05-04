@@ -15,7 +15,7 @@ struct PhantomStampApp: App {
         #if DEBUG
         MockWatermarkService()
         #else
-        RealWatermarkService()
+        WatermarkService()
         #endif
     }()
 
