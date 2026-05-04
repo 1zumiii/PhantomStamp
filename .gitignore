@@ -1,0 +1,63 @@
+# macOS
+.DS_Store
+.AppleDouble
+.LSOverride
+._*
+
+# Xcode user data
+xcuserdata/
+*.xcuserstate
+*.xccheckout
+*.xcscmblueprint
+*.moved-aside
+*.hmap
+*.ipa
+*.dSYM.zip
+
+# Xcode build products and indices
+build/
+DerivedData/
+*.swiftpm/configuration/registries.json
+
+# Local specified DerivedData path (commonly used for command line/CI)
+.derivedData/
+
+# Swift Package Manager (local parsing cache and build directory)
+.build/
+.swiftpm/
+
+# CocoaPods
+Pods/
+*.podspec.lock
+
+# Carthage
+Carthage/Build/
+
+# Accio
+Dependencies/
+.accio/
+
+# fastlane
+fastlane/report.xml
+fastlane/Preview.html
+fastlane/screenshots/**/*.png
+fastlane/test_output
+fastlane/.env*
+
+# Code Injection / 临时
+*.swp
+*~.nib
+*.bak
+
+# Test coverage (if generated in the repository)
+*.gcno
+*.gcda
+*.profdata
+
+# App build products
+*.app.dSYM
+
+# Environment keys (do not commit)
+.env
+.env.*
+!.env.example
