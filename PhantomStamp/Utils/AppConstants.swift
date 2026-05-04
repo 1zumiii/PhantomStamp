@@ -120,7 +120,7 @@ enum AppConstants {
             static let captionHistoryHintWhenLogging = "仅「嵌入水印」成功时会写入历史（可在「设置」关闭）。"
             static let captionHistoryHintWhenNotLogging = "已关闭：嵌入水印成功时不会写入历史。"
         }
-
+        // AppConstants.Copy.History.navigationTitle
         enum History {
             static let navigationTitle = "历史记录"
             static let clearButton = "清空"
