@@ -13,6 +13,7 @@ class WatermarkService: WatermarkServiceProtocol {
     // ==========================================
     func embedWatermark(into image: UIImage, text: String) async throws -> UIImage {
         // 1. 尺寸校验
+        
         let minSize: CGFloat = 128.0
         if image.size.width < minSize || image.size.height < minSize {
             throw WatermarkError.imageTooSmall
@@ -36,7 +37,7 @@ class WatermarkService: WatermarkServiceProtocol {
         }
         var yChannel = ycbcrImage.Y
         
-        // TODO: 将 Y 通道按行切分为多个条带（高度必须是 8 的倍数）
+        // TODO: 将 Y 通道按行切分为多个条带（高度必须是 8 的倍数）。限定算法范围，详见”尺寸校验 - 8的倍数“ 页面
         let stripHeight = 80
         var imageStrips = sliceImage(yChannel, heightPerStrip: stripHeight)
         
@@ -59,6 +60,7 @@ class WatermarkService: WatermarkServiceProtocol {
         }
         
         // 5. 图像重组与收尾
+        // TODO: 先裁剪回原来的尺寸
         // TODO: 组装处理后的条带，替换原 YCbCr 的 Y 通道，并转回 RGB 的 UIImage
         ycbcrImage.Y = reassembleStrips(imageStrips)
         guard let finalImage = convertToUIImage(from: ycbcrImage) else {
