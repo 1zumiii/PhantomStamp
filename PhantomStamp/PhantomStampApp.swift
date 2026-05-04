@@ -10,7 +10,8 @@ import SwiftUI
 
 @main
 struct PhantomStampApp: App {
-    private let watermarkService: any WatermarkServiceProtocol = WatermarkService()
+    // 依赖注入，开发UI的时候用 PreviewWatermarkService()，正式发布用WatermarkService()
+    private let watermarkService: any WatermarkServiceProtocol = PreviewWatermarkService()
 
     var sharedModelContainer: ModelContainer = {
         let schema = Schema([
