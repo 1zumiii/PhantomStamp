@@ -26,9 +26,9 @@ extension WatermarkService {
     func reassembleStrips(_ strips: [ImageStrip]) -> Matrix { return Matrix() }
     
     // 数学运算
-    func calculateVariance(_ block: Matrix8x8) -> Float { return 0.0 }
-    func performDCT(_ block: Matrix8x8) -> Matrix8x8 { return block }
-    func performIDCT(_ freqBlock: Matrix8x8) -> Matrix8x8 { return freqBlock }
+    //func calculateVariance(_ block: Matrix8x8) -> Float { return 0.0 }
+    //func performDCT(_ block: Matrix8x8) -> Matrix8x8 { return block }
+    //func performIDCT(_ freqBlock: Matrix8x8) -> Matrix8x8 { return freqBlock }
     func embedBitIntoFrequencies(_ freqBlock: inout Matrix8x8, bit: Int) { }
     
     // 提取专用
