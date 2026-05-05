@@ -13,6 +13,8 @@ class WatermarkService: WatermarkServiceProtocol {
     // ==========================================
     func embedWatermark(into image: UIImage, text: String) async throws -> UIImage {
         
+        debugTestDataLayer()
+        
         // Internal helper method to report progress
         func reportProgress(step: AppConstants.WatermarkStep, percentage: Double) {
             let clamped = min(max(percentage, 0), 1)
@@ -23,6 +25,7 @@ class WatermarkService: WatermarkServiceProtocol {
                 userInfo: ["payload": payload]
             )
         }
+        
 
         // Overall budget (must sum to 1.0): strip work dominates CPU time.
         let prepEnd = 0.10          // 10% — validation + payload / macroblock
@@ -144,5 +147,29 @@ class WatermarkService: WatermarkServiceProtocol {
         
         return correctedText
     }
-
+    
+    func debugTestDataLayer() {
+        let originalText = "hello"
+        
+        let fecBits = encodeFEC(text: originalText)
+        let decodedText = decodeFEC(bits: fecBits)
+        
+        print("Original:", originalText)
+        print("FEC bit count:", fecBits.count)
+        print("Decoded:", decodedText ?? "nil")
+        
+        let sync = getSyncMarkerBits()
+        let tile = build2DTile(from: sync + fecBits)
+        
+        print("Sync bit count:", sync.count)
+        print("Tile bit count:", tile.bits.count)
+        
+        let tileStartsWithSync = Array(tile.bits.prefix(sync.count)) == sync
+        print("Tile starts with sync:", tileStartsWithSync)
+        
+        let extractedPayload = Array(tile.bits.dropFirst(sync.count))
+        let decodedFromTile = decodeFEC(bits: extractedPayload)
+        
+        print("Decoded from tile:", decodedFromTile ?? "nil")
+    }
 }
