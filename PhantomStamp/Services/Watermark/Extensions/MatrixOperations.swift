@@ -14,19 +14,21 @@ extension WatermarkService{
     /// - Note: This uses population variance (divide by N=64), which is what we typically want
     ///   for block activity/energy heuristics in DSP pipelines.
     func calculateVariance(_ block: Matrix8x8) -> Float {
-        let n = Float(Matrix8x8.elementCount)
+        // Population variance: Var(X) = E[X^2] - (E[X])^2
+        // Using vDSP primitives avoids scalar loops and vectorizes well.
         var mean: Float = 0
-        for v in block.values {
-            mean += v
-        }
-        mean /= n
+        var meanSquare: Float = 0
+        let length = vDSP_Length(Matrix8x8.elementCount)
 
-        var sumSq: Float = 0
-        for v in block.values {
-            let d = v - mean
-            sumSq += d * d
+        block.values.withUnsafeBufferPointer { ptr in
+            guard let base = ptr.baseAddress else { return }
+            vDSP_meanv(base, 1, &mean, length)
+            vDSP_measqv(base, 1, &meanSquare, length)
         }
-        return sumSq / n
+
+        let variance = meanSquare - (mean * mean)
+        // Protect against tiny negative values from floating-point cancellation.
+        return max(0, variance)
     }
 
     /// Performs an 8×8 2D DCT-II using Accelerate/vDSP.
@@ -57,6 +59,7 @@ extension WatermarkService{
 
 private enum DCT8x8vDSP {
     private static let n = Matrix8x8.side
+    private static let lengthN = vDSP_Length(n)
 
     /// Orthonormal 8×8 DCT-II basis matrix in row-major order.
     /// C[u,x] = alpha(u) * cos((2x+1)uπ / (2N)), with alpha(0)=sqrt(1/N), alpha(u>0)=sqrt(2/N)
@@ -89,68 +92,72 @@ private enum DCT8x8vDSP {
     static func apply2DDCTInPlace(_ matrix: inout [Float]) {
         precondition(matrix.count == Matrix8x8.elementCount)
         // F = C * X * C^T
-        // temp = C * X
-        var temp = [Float](repeating: 0, count: n * n)
-        basisC.withUnsafeBufferPointer { c in
-            matrix.withUnsafeBufferPointer { x in
-                temp.withUnsafeMutableBufferPointer { t in
-                    vDSP_mmul(
-                        c.baseAddress!, 1,
-                        x.baseAddress!, 1,
-                        t.baseAddress!, 1,
-                        vDSP_Length(n), vDSP_Length(n), vDSP_Length(n)
-                    )
-                }
-            }
-        }
+        // Use stack-backed temporary storage to avoid per-block heap allocations.
+        withUnsafeTemporaryAllocation(of: Float.self, capacity: Matrix8x8.elementCount) { tempBuf in
+            withUnsafeTemporaryAllocation(of: Float.self, capacity: Matrix8x8.elementCount) { outBuf in
+                let tempPtr = tempBuf.baseAddress!
+                let outPtr = outBuf.baseAddress!
 
-        // out = temp * C^T
-        var out = [Float](repeating: 0, count: n * n)
-        temp.withUnsafeBufferPointer { t in
-            basisCT.withUnsafeBufferPointer { ct in
-                out.withUnsafeMutableBufferPointer { o in
+                basisC.withUnsafeBufferPointer { c in
+                    matrix.withUnsafeBufferPointer { x in
+                        vDSP_mmul(
+                            c.baseAddress!, 1,
+                            x.baseAddress!, 1,
+                            tempPtr, 1,
+                            lengthN, lengthN, lengthN
+                        )
+                    }
+                }
+
+                basisCT.withUnsafeBufferPointer { ct in
                     vDSP_mmul(
-                        t.baseAddress!, 1,
+                        tempPtr, 1,
                         ct.baseAddress!, 1,
-                        o.baseAddress!, 1,
-                        vDSP_Length(n), vDSP_Length(n), vDSP_Length(n)
+                        outPtr, 1,
+                        lengthN, lengthN, lengthN
                     )
+                }
+
+                matrix.withUnsafeMutableBufferPointer { dst in
+                    dst.baseAddress!.assign(from: outPtr, count: Matrix8x8.elementCount)
                 }
             }
         }
-        matrix = out
     }
 
     static func apply2DIDCTInPlace(_ matrix: inout [Float]) {
         precondition(matrix.count == Matrix8x8.elementCount)
         // X = C^T * F * C   (since C is orthonormal)
-        var temp = [Float](repeating: 0, count: n * n)
-        basisCT.withUnsafeBufferPointer { ct in
-            matrix.withUnsafeBufferPointer { f in
-                temp.withUnsafeMutableBufferPointer { t in
-                    vDSP_mmul(
-                        ct.baseAddress!, 1,
-                        f.baseAddress!, 1,
-                        t.baseAddress!, 1,
-                        vDSP_Length(n), vDSP_Length(n), vDSP_Length(n)
-                    )
-                }
-            }
-        }
+        // Use stack-backed temporary storage to avoid per-block heap allocations.
+        withUnsafeTemporaryAllocation(of: Float.self, capacity: Matrix8x8.elementCount) { tempBuf in
+            withUnsafeTemporaryAllocation(of: Float.self, capacity: Matrix8x8.elementCount) { outBuf in
+                let tempPtr = tempBuf.baseAddress!
+                let outPtr = outBuf.baseAddress!
 
-        var out = [Float](repeating: 0, count: n * n)
-        temp.withUnsafeBufferPointer { t in
-            basisC.withUnsafeBufferPointer { c in
-                out.withUnsafeMutableBufferPointer { o in
+                basisCT.withUnsafeBufferPointer { ct in
+                    matrix.withUnsafeBufferPointer { f in
+                        vDSP_mmul(
+                            ct.baseAddress!, 1,
+                            f.baseAddress!, 1,
+                            tempPtr, 1,
+                            lengthN, lengthN, lengthN
+                        )
+                    }
+                }
+
+                basisC.withUnsafeBufferPointer { c in
                     vDSP_mmul(
-                        t.baseAddress!, 1,
+                        tempPtr, 1,
                         c.baseAddress!, 1,
-                        o.baseAddress!, 1,
-                        vDSP_Length(n), vDSP_Length(n), vDSP_Length(n)
+                        outPtr, 1,
+                        lengthN, lengthN, lengthN
                     )
+                }
+
+                matrix.withUnsafeMutableBufferPointer { dst in
+                    dst.baseAddress!.assign(from: outPtr, count: Matrix8x8.elementCount)
                 }
             }
         }
-        matrix = out
     }
 }
