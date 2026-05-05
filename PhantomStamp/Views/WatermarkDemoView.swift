@@ -17,6 +17,8 @@ struct WatermarkDemoView: View {
 
     @State private var currentImage: UIImage = WatermarkSampleImage.make()
     @State private var isLoading = false
+    /// Enables ``WatermarkEmbedProgressDemo`` subscription + determinate bar only during embed (not extract).
+    @State private var isEmbedSessionActive = false
     @State private var lastExtractedText: String?
     @State private var alertMessage = ""
     @State private var showAlert = false
@@ -30,7 +32,11 @@ struct WatermarkDemoView: View {
                         systemImage: "photo.on.rectangle.angled"
                     )
 
-                    WatermarkPreviewCard(image: currentImage, isLoading: isLoading)
+                    WatermarkPreviewCard(
+                        image: currentImage,
+                        isLoading: isLoading,
+                        isEmbedSessionActive: $isEmbedSessionActive
+                    )
 
                     Text(String(format: AppConstants.Copy.Watermark.embedChipFormat, AppConstants.Watermark.embedSampleText))
                         .font(.caption.weight(.semibold))
@@ -111,7 +117,11 @@ struct WatermarkDemoView: View {
 
     private func runEmbed() async {
         isLoading = true
-        defer { isLoading = false }
+        isEmbedSessionActive = true
+        defer {
+            isLoading = false
+            isEmbedSessionActive = false
+        }
 
         do {
             let text = AppConstants.Watermark.embedSampleText
@@ -133,6 +143,7 @@ struct WatermarkDemoView: View {
 
     private func runExtract() async {
         isLoading = true
+        isEmbedSessionActive = false
         defer { isLoading = false }
 
         do {
@@ -168,6 +179,7 @@ private struct WatermarkSectionHeader: View {
 private struct WatermarkPreviewCard: View {
     let image: UIImage
     let isLoading: Bool
+    @Binding var isEmbedSessionActive: Bool
 
     var body: some View {
         ZStack {
@@ -180,13 +192,20 @@ private struct WatermarkPreviewCard: View {
             if isLoading {
                 RoundedRectangle(cornerRadius: AppConstants.Layout.watermarkPreviewCornerRadius, style: .continuous)
                     .fill(.ultraThinMaterial)
-                VStack(spacing: 10) {
-                    ProgressView()
-                        .scaleEffect(1.12)
-                        .tint(.accentColor)
-                    Text(AppConstants.Copy.Watermark.processing)
-                        .font(.subheadline.weight(.medium))
-                        .foregroundStyle(.secondary)
+                Group {
+                    if isEmbedSessionActive {
+                        WatermarkEmbedProgressDemo(isEmbedSessionActive: $isEmbedSessionActive)
+                    } else {
+                        VStack(spacing: 10) {
+                            ProgressView()
+                                .scaleEffect(1.12)
+                                .tint(.accentColor)
+                            Text(AppConstants.Copy.Watermark.processing)
+                                .font(.subheadline.weight(.medium))
+                                .foregroundStyle(.secondary)
+                        }
+                        .padding(.horizontal, 24)
+                    }
                 }
             }
         }
