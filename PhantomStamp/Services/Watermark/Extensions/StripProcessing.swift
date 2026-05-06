@@ -52,4 +52,83 @@ extension WatermarkService {
         
         return resultStrip
     }
+    /// Embeds one payload bit into the mid-frequency band of an 8×8 DCT block.
+    ///
+    /// Strategy:
+    /// - Pick two mid-frequency coefficients `(u1, v1)` and `(u2, v2)`.
+    /// - Encode the bit by enforcing a strict ordering on their magnitudes with margin `Q`:
+    ///   - bit == 1  => |A| - |B| >= Q
+    ///   - bit == 0  => |B| - |A| >= Q
+    /// - If adjustment is needed, apply a *bidirectional split* (increase one, decrease the other
+    ///   by half the required delta) to minimize total energy perturbation.
+    func embedBitIntoFrequencies(_ freqBlock: inout Matrix8x8, bit: Int) {
+        // A small symmetric pair around the diagonal tends to be stable and visually subtle.
+        let p1 = (u: 3, v: 4)
+        let p2 = (u: 4, v: 3)
+
+        let a = freqBlock[p1.u, p1.v]
+        let b = freqBlock[p2.u, p2.v]
+
+        let qa = adaptiveQuantizationStep(for: freqBlock)
+
+        let absA = abs(a)
+        let absB = abs(b)
+
+        if bit == 1 {
+            // Want |A| - |B| >= Q
+            let diff = absA - absB
+            if diff < qa {
+                let delta = (qa - diff) / 2
+                let newAbsA = absA + delta
+                let newAbsB = max(0, absB - delta)
+                freqBlock[p1.u, p1.v] = applyMagnitude(newAbsA, keepingSignOf: a)
+                freqBlock[p2.u, p2.v] = applyMagnitude(newAbsB, keepingSignOf: b)
+            }
+        } else {
+            // Want |B| - |A| >= Q
+            let diff = absB - absA
+            if diff < qa {
+                let delta = (qa - diff) / 2
+                let newAbsB = absB + delta
+                let newAbsA = max(0, absA - delta)
+                freqBlock[p2.u, p2.v] = applyMagnitude(newAbsB, keepingSignOf: b)
+                freqBlock[p1.u, p1.v] = applyMagnitude(newAbsA, keepingSignOf: a)
+            }
+        }
+    }
+
+    /// Extracts one payload bit from the mid-frequency band of an 8×8 DCT block.
+    ///
+    /// This is the inverse decision rule of ``embedBitIntoFrequencies(_:bit:)``:
+    /// - returns 1 if |A| >= |B|
+    /// - returns 0 otherwise
+    func extractBitFromFrequencies(_ freqBlock: Matrix8x8) -> Int {
+        let p1 = (u: 3, v: 4)
+        let p2 = (u: 4, v: 3)
+        let absA = abs(freqBlock[p1.u, p1.v])
+        let absB = abs(freqBlock[p2.u, p2.v])
+        return absA >= absB ? 1 : 0
+    }
+
+    /// Picks a Q in a conservative range for 8×8 DCT on 0…255-ish pixels, adapted by block activity.
+    private func adaptiveQuantizationStep(for freqBlock: Matrix8x8) -> Float {
+        // Use mean absolute AC magnitude as a cheap activity proxy.
+        var sumAbs: Float = 0
+        for u in 0..<Matrix8x8.side {
+            for v in 0..<Matrix8x8.side {
+                if u == 0 && v == 0 { continue } // exclude DC
+                sumAbs += abs(freqBlock[u, v])
+            }
+        }
+        let acMean = sumAbs / 63.0
+
+        // Map activity into [6, 14].
+        let q = 6.0 + min(8.0, acMean * 0.15)
+        return max(6.0, min(14.0, q))
+    }
+
+    private func applyMagnitude(_ magnitude: Float, keepingSignOf value: Float) -> Float {
+        let m = max(0, magnitude)
+        return value < 0 ? -m : m
+    }
 }
