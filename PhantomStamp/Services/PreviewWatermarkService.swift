@@ -25,6 +25,12 @@ final class PreviewWatermarkService: WatermarkServiceProtocol {
             let dtMs = (CFAbsoluteTimeGetCurrent() - t0) * 1000
             print("[Timing] MatrixOperationsTests.runAllAndPrint took \(String(format: "%.2f", dtMs)) ms")
         }
+        do{
+            let t0 = CFAbsoluteTimeGetCurrent()
+            DataProcessingTests.runAllAndPrint()
+            let dtMs = (CFAbsoluteTimeGetCurrent() - t0) * 1000
+            print("[Timing] DataProcessingTests.runAllAndPrint took \(String(format: "%.2f", dtMs)) ms")
+        }
         try await Task.sleep(nanoseconds: AppConstants.Watermark.mockEmbedDelayNanoseconds)
         return image
     }
