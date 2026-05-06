@@ -12,61 +12,107 @@ class WatermarkService: WatermarkServiceProtocol {
     // 嵌入水印
     // ==========================================
     func embedWatermark(into image: UIImage, text: String) async throws -> UIImage {
-        // 1. 尺寸校验
         
+        debugTestDataLayer()
+        
+        // Internal helper method to report progress
+        func reportProgress(step: AppConstants.WatermarkStep, percentage: Double) {
+            let clamped = min(max(percentage, 0), 1)
+            let payload = ProgressPayload(step: step, percentage: clamped)
+            NotificationCenter.default.post(
+                name: AppConstants.Notifications.watermarkProgress,
+                object: nil,
+                userInfo: ["payload": payload]
+            )
+        }
+        
+
+        // Overall budget (must sum to 1.0): strip work dominates CPU time.
+        let prepEnd = 0.10          // 10% — validation + payload / macroblock
+        let colorEnd = 0.18         // 8% — YCbCr + slicing
+        let stripsEnd = 0.90        // 72% — concurrent strip embedding (largest share)
+        // remaining 10% — reassemble Y + RGB rebuild
+        
+        // ==========================================
+        // Step 1: Data preparation → [0, prepEnd]
+        // ==========================================
+        reportProgress(step: .preparation, percentage: 0)
         let minSize: CGFloat = 128.0
         if image.size.width < minSize || image.size.height < minSize {
             throw WatermarkError.imageTooSmall
         }
-        
-        // 2. 数据链路层准备
+        reportProgress(step: .preparation, percentage: prepEnd * 0.35)
+
         // TODO: 将文本转为二进制并应用前向纠错码 (FEC)
         let eccBits = encodeFEC(text: text)
-        
+        reportProgress(step: .preparation, percentage: prepEnd * 0.65)
+
         // TODO: 拼接同步头，构成完整的单个水印周期
         let syncBits = getSyncMarkerBits()
         let payloadBits = syncBits + eccBits
-        
         // TODO: 将一维数据流转为二维宏块（防裁剪的光栅断裂问题）
         let macroblock = build2DTile(from: payloadBits)
-        
-        // 3. 图像预处理 (色彩空间转换)
-        // TODO: 将 UIImage 转为 YCbCr 色彩空间矩阵，并提取 Y 通道
+        reportProgress(step: .preparation, percentage: prepEnd)
+
+        // ==========================================
+        // Step 2: Color / layout → (prepEnd, colorEnd]
+        // ==========================================
+        reportProgress(step: .colorConversion, percentage: prepEnd)
         guard var ycbcrImage = convertToYCbCr(image: image) else {
             throw WatermarkError.processingError
         }
-        var yChannel = ycbcrImage.Y
-        
-        // TODO: 将 Y 通道按行切分为多个条带（高度必须是 8 的倍数）。限定算法范围，详见”尺寸校验 - 8的倍数“ 页面
+        let yChannel = ycbcrImage.Y
+        reportProgress(step: .colorConversion, percentage: prepEnd + (colorEnd - prepEnd) * 0.55)
+
+        // TODO: 将 Y 通道按行切分为多个条带（高度必须是 8 的倍数）。限定算法范围，详见「尺寸校验 - 8的倍数」页面
         let stripHeight = 80
         var imageStrips = sliceImage(yChannel, heightPerStrip: stripHeight)
-        
-        // 4. 并发处理层
+        reportProgress(step: .colorConversion, percentage: colorEnd)
+
+        // ==========================================
+        // Step 3: Strip processing → (colorEnd, stripsEnd]  (main cost)
+        // ==========================================
+        let stripSpan = stripsEnd - colorEnd
+        reportProgress(step: .processingStrips, percentage: colorEnd)
+
+        let stripCount = imageStrips.count
         try await withThrowingTaskGroup(of: ImageStrip.self) { group in
             for strip in imageStrips {
                 group.addTask {
                     // 强制内存回收，防止大图切片运算导致 OOM 静默崩溃
-                    return autoreleasepool {
-                        return self.processSingleStripForEmbedding(strip: strip, macroblock: macroblock)
+                    autoreleasepool {
+                        self.processSingleStripForEmbedding(strip: strip, macroblock: macroblock)
                     }
                 }
             }
-            
-            // 收集处理完的条带
+
+            var completedStrips = 0
             for try await processedStrip in group {
                 // TODO: 根据条带的全局坐标，将其写回总的 Y 通道矩阵结构中
                 updateStripInPlace(&imageStrips, with: processedStrip)
+                completedStrips += 1
+                if stripCount > 0 {
+                    let t = colorEnd + stripSpan * Double(completedStrips) / Double(stripCount)
+                    reportProgress(step: .processingStrips, percentage: t)
+                }
             }
         }
-        
-        // 5. 图像重组与收尾
+        reportProgress(step: .processingStrips, percentage: stripsEnd)
+
+        // ==========================================
+        // Step 4: Reassemble → (stripsEnd, 1.0]
+        // ==========================================
+        reportProgress(step: .reassembling, percentage: stripsEnd)
         // TODO: 先裁剪回原来的尺寸
         // TODO: 组装处理后的条带，替换原 YCbCr 的 Y 通道，并转回 RGB 的 UIImage
         ycbcrImage.Y = reassembleStrips(imageStrips)
+        reportProgress(step: .reassembling, percentage: stripsEnd + (1 - stripsEnd) * 0.55)
+
         guard let finalImage = convertToUIImage(from: ycbcrImage) else {
             throw WatermarkError.processingError
         }
-        
+        reportProgress(step: .reassembling, percentage: 1)
+
         return finalImage
     }
     
@@ -100,5 +146,30 @@ class WatermarkService: WatermarkServiceProtocol {
         }
         
         return correctedText
+    }
+    
+    func debugTestDataLayer() {
+        let originalText = "hello"
+        
+        let fecBits = encodeFEC(text: originalText)
+        let decodedText = decodeFEC(bits: fecBits)
+        
+        print("Original:", originalText)
+        print("FEC bit count:", fecBits.count)
+        print("Decoded:", decodedText ?? "nil")
+        
+        let sync = getSyncMarkerBits()
+        let tile = build2DTile(from: sync + fecBits)
+        
+        print("Sync bit count:", sync.count)
+        print("Tile bit count:", tile.bits.count)
+        
+        let tileStartsWithSync = Array(tile.bits.prefix(sync.count)) == sync
+        print("Tile starts with sync:", tileStartsWithSync)
+        
+        let extractedPayload = Array(tile.bits.dropFirst(sync.count))
+        let decodedFromTile = decodeFEC(bits: extractedPayload)
+        
+        print("Decoded from tile:", decodedFromTile ?? "nil")
     }
 }

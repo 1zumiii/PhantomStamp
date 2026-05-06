@@ -12,6 +12,7 @@ import SwiftUI
 struct PhantomStampApp: App {
     // 依赖注入，开发UI的时候用 PreviewWatermarkService()，正式发布用WatermarkService()
     private let watermarkService: any WatermarkServiceProtocol = PreviewWatermarkService()
+//    private let watermarkService: any WatermarkServiceProtocol = WatermarkService()
 
     var sharedModelContainer: ModelContainer = {
         let schema = Schema([
@@ -28,7 +29,9 @@ struct PhantomStampApp: App {
 
     init() {
         #if DEBUG
-        print(AppConstants.Debug.launchLogPrefix + AppVersion.marketing)
+//        print(AppConstants.Debug.launchLogPrefix + AppVersion.marketing)
+//        ImagePipelineTests.runAllBundledAndPrint()
+//        MatrixOperationsTests.runAllAndPrint()
         #endif
     }
 
