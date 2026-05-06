@@ -97,13 +97,13 @@ enum AppConstants {
     enum Copy {
 
         enum Tab {
-            static let watermark = "水印"
-            static let history = "历史"
-            static let settings = "设置"
+            static let watermark = "Watermark"
+            static let history = "History"
+            static let settings = "Settings"
         }
 
         enum Watermark {
-            static let navigationTitle = "水印"
+            static let navigationTitle = "测试页面"
             static let alertTitle = "提示"
             static let embedButton = "嵌入水印"
             static let extractButton = "提取水印"
@@ -122,21 +122,21 @@ enum AppConstants {
         }
         // AppConstants.Copy.History.navigationTitle
         enum History {
-            static let navigationTitle = "历史记录"
-            static let clearButton = "清空"
-            static let emptyTitle = "暂无历史"
-            static let emptyDescription = "在水印页成功「嵌入水印」，且设置中开启「自动记录嵌入水印」后，会出现在这里。"
-            static let logWatermarkEmbeddedFormat = "嵌入水印完成（文案：%@）"
+            static let navigationTitle = "History"
+            static let clearButton = "Clear"
+            static let emptyTitle = "No History"
+            static let emptyDescription = "When watermark embedding is successful on the watermark page, and \"Auto Log Watermark Embed\" is enabled in the settings, it will appear here."
+            static let logWatermarkEmbeddedFormat = "Watermark Embedding Completed (Text: %@)"
         }
 
         enum Settings {
-            static let navigationTitle = "设置"
-            static let sectionHistory = "历史"
-            static let sectionAppearance = "界面"
-            static let toggleAutoLogWatermarkEmbed = "自动记录嵌入水印"
-            static let footnoteAutoLogWatermarkEmbed = "开启后，仅在水印页「嵌入水印」成功时写入 SwiftData；提取水印不会记录。"
-            static let toggleCompactHistory = "紧凑显示历史列表"
-            static let footnoteCompactHistory = "使用 UserDefaults 持久化，重启应用后仍保留。"
+            static let navigationTitle = "Settings"
+            static let sectionHistory = "History"
+            static let sectionAppearance = "Layout"
+            static let toggleAutoLogWatermarkEmbed = "Auto Log Watermark Embed"
+            static let footnoteAutoLogWatermarkEmbed = "Enable only when watermark embedding is successful in the watermark page; watermark extraction will not be recorded."
+            static let toggleCompactHistory = "Compact History List"
+            static let footnoteCompactHistory = "Persisted using UserDefaults, retained after app restart."
         }
 
         enum Footer {
@@ -144,7 +144,7 @@ enum AppConstants {
         }
 
         enum Preview {
-            static let sectionCaption = "示例说明文案"
+            static let sectionCaption = "Example Description"
         }
     }
 }

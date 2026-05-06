@@ -25,7 +25,8 @@ extension WatermarkService {
     //func calculateVariance(_ block: Matrix8x8) -> Float { return 0.0 } 已移至MatrixOperations
     //func performDCT(_ block: Matrix8x8) -> Matrix8x8 { return block }
     //func performIDCT(_ freqBlock: Matrix8x8) -> Matrix8x8 { return freqBlock }
-    func embedBitIntoFrequencies(_ freqBlock: inout Matrix8x8, bit: Int) { }
+    // embedBitIntoFrequencies implemented in StripProcessing.swift
+    //func embedBitIntoFrequencies(_ freqBlock: inout Matrix8x8, bit: Int) { }
     
     // 提取专用
     func findGridOffsetAndSyncMarker(in matrix: Matrix) -> CGPoint? { return nil }
