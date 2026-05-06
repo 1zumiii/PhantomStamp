@@ -62,12 +62,29 @@ enum MatrixOperationsTests {
         let (maxAbsError, mae) = errorMetrics(a: randomBlock.values, b: roundTripped.values)
         let dctIdctRoundTripPassed = maxAbsError <= 1e-2 && mae <= 5e-3
 
+        // 5) Embed/extract should be self-consistent on frequency blocks.
+        var freqForEmbed = service.performDCT(randomBlock)
+        service.embedBitIntoFrequencies(&freqForEmbed, bit: 1)
+        let extracted1 = service.extractBitFromFrequencies(freqForEmbed)
+        service.embedBitIntoFrequencies(&freqForEmbed, bit: 0)
+        let extracted0 = service.extractBitFromFrequencies(freqForEmbed)
+        let embedExtractPassed = (extracted1 == 1) && (extracted0 == 0)
+
+        // 6) Pipeline realism: embed in freq, go back to pixels, forward DCT again, then extract.
+        // This simulates the embed path where IDCT quantization/rounding happens on write-back.
+        var freqPipe = service.performDCT(randomBlock)
+        service.embedBitIntoFrequencies(&freqPipe, bit: 1)
+        let pixelsAfter = service.performIDCT(freqPipe)
+        let freqAfter = service.performDCT(pixelsAfter)
+        let extractedAfter = service.extractBitFromFrequencies(freqAfter)
+        let embedPipelinePassed = (extractedAfter == 1)
+
+
         return Report(
             varianceConstantPassed: varianceConstantPassed,
             varianceRampPassed: varianceRampPassed,
             dctConstantDcOnlyPassed: dctConstantDcOnlyPassed,
-            dctIdctRoundTripPassed: dctIdctRoundTripPassed,
-            varianceConstant: vConst,
+            dctIdctRoundTripPassed: dctIdctRoundTripPassed && embedExtractPassed && embedPipelinePassed,            varianceConstant: vConst,
             varianceRamp: vRamp,
             dctConstantMaxNonDCAbs: maxNonDCAbs,
             roundTripMaxAbsError: maxAbsError,

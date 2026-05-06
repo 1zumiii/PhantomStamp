@@ -10,26 +10,52 @@ struct RootView: View {
   let watermarkService: any WatermarkServiceProtocol
 
   @State private var settingsStore = UserSettingsStore()
+  @State private var tab: AnyHashable = AnyHashable("watermark")
 
   var body: some View {
-    TabView {
-      WatermarkDemoView(watermarkService: watermarkService, settingsStore: settingsStore)
-        .tabItem {
-          Label(AppConstants.Copy.Tab.watermark, systemImage: AppConstants.Symbol.tabWatermark)
+    let items: [BottomNavItem<AnyHashable>] = [
+      BottomNavItem(
+        id: AnyHashable("watermark"),
+        title: AppConstants.Copy.Tab.watermark,
+        systemImage: AppConstants.Symbol.tabWatermark
+      ) {
+        NavigationStack {
+          WatermarkInsertDemoView(watermarkService: watermarkService, settingsStore: settingsStore)
         }
+      },
+      BottomNavItem(
+        id: AnyHashable("history"),
+        title: AppConstants.Copy.Tab.history,
+        systemImage: AppConstants.Symbol.tabHistory
+      ) {
+        HistoryView(settingsStore: settingsStore)
+      },
+      BottomNavItem(
+        id: AnyHashable("settings"),
+        title: AppConstants.Copy.Tab.settings,
+        systemImage: AppConstants.Symbol.tabSettings
+      ) {
+        SettingsView(settingsStore: settingsStore)
+      },
+    ]
 
-      HistoryView(settingsStore: settingsStore)
-        .tabItem {
-          Label(AppConstants.Copy.Tab.history, systemImage: AppConstants.Symbol.tabHistory)
+    ZStack {
+      VStack(spacing: 0) {
+        ZStack {
+          ForEach(items) { item in
+            item.content
+              .opacity(tab == item.id ? 1 : 0)
+              .allowsHitTesting(tab == item.id)
+          }
         }
+        .frame(maxWidth: .infinity, maxHeight: .infinity)
 
-      SettingsView(settingsStore: settingsStore)
-        .tabItem {
-          Label(AppConstants.Copy.Tab.settings, systemImage: AppConstants.Symbol.tabSettings)
-        }
-    }
-    .safeAreaInset(edge: .bottom, spacing: 0) {
-      SectionCaption(text: AppConstants.Copy.Footer.versionPrefix + AppVersion.marketing)
+        BottomNavBar(items: items, selection: $tab)
+      }
+
+      // Demo-only full-screen overlay for `WatermarkInsertDemoView`.
+      FullScreenDemoProgressOverlay()
+        .zIndex(1000)
     }
   }
 }

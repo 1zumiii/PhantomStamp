@@ -45,7 +45,7 @@ struct HistoryView: View {
 
     @ViewBuilder
     private func historyList(viewModel: HistoryListViewModel) -> some View {
-        List {
+        Group {
             if viewModel.entries.isEmpty {
                 ContentUnavailableView(
                     AppConstants.Copy.History.emptyTitle,
@@ -53,29 +53,125 @@ struct HistoryView: View {
                     description: Text(AppConstants.Copy.History.emptyDescription)
                 )
             } else {
-                ForEach(viewModel.entries) { entry in
-                    VStack(alignment: .leading, spacing: AppConstants.Layout.historyRowInnerSpacing) {
-                        HStack {
-                            Text(entry.kind)
-                                .font(.caption.weight(.semibold))
-                                .foregroundStyle(.secondary)
-                            Spacer()
-                            Text(entry.createdAt, format: .dateTime.month().day().hour().minute())
-                                .font(.caption2)
-                                .foregroundStyle(.tertiary)
+                List {
+                    ForEach(viewModel.entries) { entry in
+                        NavigationLink {
+                            HistoryEntryDetailView(entry: entry)
+                        } label: {
+                            HistoryEntryCardRow(entry: entry, compact: settingsStore.compactHistoryList)
                         }
-                        Text(entry.message)
-                            .font(settingsStore.compactHistoryList ? .caption : .body)
+                        .listRowInsets(EdgeInsets(top: 10, leading: 16, bottom: 10, trailing: 16))
+                        .listRowSeparator(.hidden)
+                        .listRowBackground(Color.clear)
                     }
-                    .padding(
-                        .vertical,
-                        settingsStore.compactHistoryList
-                            ? AppConstants.Layout.historyRowPaddingCompact
-                            : AppConstants.Layout.historyRowPaddingRegular
-                    )
                 }
+                .listStyle(.plain)
+                .scrollContentBackground(.hidden)
+                .background(Color(uiColor: .systemGroupedBackground))
             }
         }
+    }
+}
+
+// MARK: - Detail
+
+private struct HistoryEntryDetailView: View {
+    let entry: HistoryEntry
+
+    var body: some View {
+        let meta = HistoryRowMeta(entry: entry)
+        ScrollView {
+            VStack(alignment: .leading, spacing: 16) {
+                HStack(spacing: 14) {
+                    HistoryPreviewTile(kind: entry.kind)
+
+                    VStack(alignment: .leading, spacing: 6) {
+                        Text(meta.fileName)
+                            .font(.title3.weight(.semibold))
+                        Text(entry.createdAt, format: .dateTime.year().month().day().hour().minute())
+                            .font(.caption)
+                            .foregroundStyle(.secondary)
+                        Text(entry.kind)
+                            .font(.caption.weight(.semibold))
+                            .foregroundStyle(.secondary)
+                    }
+
+                    Spacer()
+                }
+
+                if let watermarkName = meta.watermarkName {
+                    VStack(alignment: .leading, spacing: 6) {
+                        Text("Watermark")
+                            .font(.caption.weight(.semibold))
+                            .foregroundStyle(.secondary)
+                        Text(watermarkName)
+                            .font(.body.weight(.semibold))
+                    }
+                    .padding(14)
+                    .frame(maxWidth: .infinity, alignment: .leading)
+                    .background {
+                        RoundedRectangle(cornerRadius: 18, style: .continuous)
+                            .fill(Color(uiColor: .secondarySystemGroupedBackground))
+                    }
+                }
+
+                VStack(alignment: .leading, spacing: 6) {
+                    Text("Message")
+                        .font(.caption.weight(.semibold))
+                        .foregroundStyle(.secondary)
+                    Text(entry.message)
+                        .font(.body.monospaced())
+                        .textSelection(.enabled)
+                }
+                .padding(14)
+                .frame(maxWidth: .infinity, alignment: .leading)
+                .background {
+                    RoundedRectangle(cornerRadius: 18, style: .continuous)
+                        .fill(Color(uiColor: .secondarySystemGroupedBackground))
+                }
+            }
+            .padding(.horizontal, 20)
+            .padding(.vertical, 12)
+        }
+        .background(Color(uiColor: .systemGroupedBackground))
+        .navigationTitle("Details")
+        .navigationBarTitleDisplayMode(.inline)
+    }
+}
+
+// MARK: - Parsing helpers (detail-only)
+
+private struct HistoryRowMeta {
+    var fileName: String
+    var watermarkName: String?
+
+    init(entry: HistoryEntry) {
+        // We don't persist an actual file name yet; keep a stable placeholder.
+        fileName = "Untitled image"
+        watermarkName = HistoryRowMeta.parseWatermarkName(from: entry.message)
+    }
+
+    private static func parseWatermarkName(from message: String) -> String? {
+        // Current app message formats:
+        // - "嵌入水印完成（文案：%@）"
+        // - Potential future English formats like "text: <...>"
+        if let v = extractBetween(message, start: "文案：", end: "）") { return v }
+        if let v = extractAfter(message, prefix: "text:") { return v.trimmingCharacters(in: .whitespacesAndNewlines) }
+        return nil
+    }
+
+    private static func extractBetween(_ s: String, start: String, end: String) -> String? {
+        guard let r1 = s.range(of: start) else { return nil }
+        let tail = s[r1.upperBound...]
+        guard let r2 = tail.range(of: end) else { return nil }
+        let v = String(tail[..<r2.lowerBound]).trimmingCharacters(in: .whitespacesAndNewlines)
+        return v.isEmpty ? nil : v
+    }
+
+    private static func extractAfter(_ s: String, prefix: String) -> String? {
+        guard let r = s.range(of: prefix, options: [.caseInsensitive]) else { return nil }
+        let v = String(s[r.upperBound...])
+        return v.isEmpty ? nil : v
     }
 }
 
