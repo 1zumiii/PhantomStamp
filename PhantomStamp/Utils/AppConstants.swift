@@ -108,7 +108,7 @@ enum AppConstants {
             static let embedButton = "嵌入水印"
             static let extractButton = "提取水印"
             static let okButton = "好的"
-            static let sectionPreview = "预览"
+            static let sectionPreview = "Preview"
             static let sectionActions = "操作"
             static let sectionExtractResult = "提取结果"
             static let extractPlaceholder = "提取水印后，结果将显示在此"
