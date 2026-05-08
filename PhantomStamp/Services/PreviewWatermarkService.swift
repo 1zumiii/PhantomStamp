@@ -42,14 +42,82 @@ private extension PreviewWatermarkService {
             let run: @Sendable () -> Void
         }
 
+        func timed(_ label: String, _ block: () -> Void) {
+            let t0 = CFAbsoluteTimeGetCurrent()
+            block()
+            let dtMs = (CFAbsoluteTimeGetCurrent() - t0) * 1000
+            print("[Timing] \(label) took \(String(format: "%.2f", dtMs)) ms")
+        }
+
         let steps: [Step] = [
             Step(
                 title: "Running Tests",
                 detail: "Image pipeline (YCbCr round-trip)…",
-                percentage: 0.10,
+                percentage: 0.12,
                 run: {
-                    // Keep detailed timing inside the centralized runner.
-                    WatermarkDebugTests.runAllAndPrint()
+                    timed("ImagePipelineTests.runAllBundledAndPrint") {
+                        ImagePipelineTests.runAllBundledAndPrint()
+                    }
+                }
+            ),
+            Step(
+                title: "Running Tests",
+                detail: "DSP transforms (variance / DCT)…",
+                percentage: 0.28,
+                run: {
+                    timed("DSPTransformsTests.runAllAndPrint") {
+                        DSPTransformsTests.runAllAndPrint()
+                    }
+                }
+            ),
+            Step(
+                title: "Running Tests",
+                detail: "Strips (slice / reassemble)…",
+                percentage: 0.44,
+                run: {
+                    timed("StripsTests.runAllAndPrint") {
+                        StripsTests.runAllAndPrint()
+                    }
+                }
+            ),
+            Step(
+                title: "Running Tests",
+                detail: "Alignment (64 offsets + sliding window)…",
+                percentage: 0.62,
+                run: {
+                    timed("GridAlignmentTests.runAllAndPrint") {
+                        GridAlignmentTests.runAllAndPrint()
+                    }
+                }
+            ),
+            Step(
+                title: "Running Tests",
+                detail: "Extraction (bits + majority vote)…",
+                percentage: 0.80,
+                run: {
+                    timed("ExtractionAndVotingTests.runAllAndPrint") {
+                        ExtractionAndVotingTests.runAllAndPrint()
+                    }
+                }
+            ),
+            Step(
+                title: "Running Tests",
+                detail: "Data processing (FEC / sync / tile)…",
+                percentage: 0.92,
+                run: {
+                    timed("DataProcessingTests.runAllAndPrint") {
+                        DataProcessingTests.runAllAndPrint()
+                    }
+                }
+            ),
+            Step(
+                title: "Running Tests",
+                detail: "End-to-end (embed → extract)…",
+                percentage: 0.97,
+                run: {
+                    timed("WatermarkEndToEndTests.runAllAndPrintBlocking") {
+                        WatermarkEndToEndTests.runAllAndPrintBlocking()
+                    }
                 }
             ),
         ]

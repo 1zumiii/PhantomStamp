@@ -12,8 +12,10 @@ class WatermarkService: WatermarkServiceProtocol {
     // Embedding Watermark
     // ==========================================
     func embedWatermark(into image: UIImage, text: String) async throws -> UIImage {
-        
-        debugTestDataLayer()
+        #if DEBUG
+        // Debug-only: prints internal data-layer checks. Disable by default to avoid noisy logs in demos.
+        // debugTestDataLayer()
+        #endif
         
         // Internal helper method to report progress
         func reportProgress(step: AppConstants.WatermarkStep, percentage: Double) {
@@ -27,50 +29,60 @@ class WatermarkService: WatermarkServiceProtocol {
         }
         
 
-        // Overall budget (must sum to 1.0): strip work dominates CPU time.
-        let prepEnd = 0.10          // 10% — validation + payload / macroblock
-        let colorEnd = 0.18         // 8% — YCbCr + slicing
-        let stripsEnd = 0.90        // 72% — concurrent strip embedding (largest share)
-        // remaining 10% — reassemble Y + RGB rebuild
+        // Progress budget (roughly sums to 1.0).
+        //
+        // Empirically on large images, the "reassemble + RGB rebuild" stage can dominate,
+        // so we reserve a meaningful slice of the bar for it to avoid the UI looking "stuck".
+        let prepEnd = 0.10          // validation + payload / macroblock
+        let colorEnd = 0.20         // YCbCr + slicing
+        let stripsEnd = 0.70        // concurrent strip embedding
+        // remaining 30% — reassemble Y + RGB rebuild
         
         // ==========================================
-        // Step 1: Data preparation → [0, prepEnd]
+        // Step 1: Prepare payload + build 2D tile → [0, prepEnd]
         // ==========================================
         reportProgress(step: .preparation, percentage: 0)
         let minSize: CGFloat = 128.0
         if image.size.width < minSize || image.size.height < minSize {
             throw WatermarkError.imageTooSmall
         }
-        reportProgress(step: .preparation, percentage: prepEnd * 0.35)
+        reportProgress(step: .preparation, percentage: prepEnd * 0.20)
 
         // Convert the text to binary and apply Forward Error Correction (FEC)
+        reportProgress(step: .fecEncoding, percentage: prepEnd * 0.35)
         let eccBits = encodeFEC(text: text)
-        reportProgress(step: .preparation, percentage: prepEnd * 0.65)
+        reportProgress(step: .fecEncoding, percentage: prepEnd * 0.55)
 
         // Concatenate the sync header, and form a complete single watermark period
         let syncBits = getSyncMarkerBits()
         let payloadBits = syncBits + eccBits
+        reportProgress(step: .macroblockBuild, percentage: prepEnd * 0.80)
         // Convert the one-dimensional data stream to a two-dimensional macroblock (to prevent raster断裂问题)
         let macroblock = build2DTile(from: payloadBits)
-        reportProgress(step: .preparation, percentage: prepEnd)
+        reportProgress(step: .macroblockBuild, percentage: prepEnd)
 
         // ==========================================
         // Step 2: Color / layout → (prepEnd, colorEnd]
         // ==========================================
         reportProgress(step: .colorConversion, percentage: prepEnd)
         guard var ycbcrImage = convertToYCbCr(image: image) else {
+            #if DEBUG
+            let pxW = Int(image.size.width * image.scale)
+            let pxH = Int(image.size.height * image.scale)
+            print("[WatermarkService] convertToYCbCr failed (image=\(pxW)x\(pxH)px scale=\(image.scale) orientation=\(image.imageOrientation.rawValue))")
+            #endif
             throw WatermarkError.processingError
         }
         let yChannel = ycbcrImage.Y
-        reportProgress(step: .colorConversion, percentage: prepEnd + (colorEnd - prepEnd) * 0.55)
+        reportProgress(step: .colorConversion, percentage: prepEnd + (colorEnd - prepEnd) * 0.45)
 
         // slice the Y channel into multiple strips (the height must be a multiple of 8)
         let stripHeight = 80
         var imageStrips = sliceImage(yChannel, heightPerStrip: stripHeight)
-        reportProgress(step: .colorConversion, percentage: colorEnd)
+        reportProgress(step: .stripSlicing, percentage: colorEnd)
 
         // ==========================================
-        // Step 3: Strip processing → (colorEnd, stripsEnd]  (main cost)
+        // Step 3: Strip processing → (colorEnd, stripsEnd]
         // ==========================================
         let stripSpan = stripsEnd - colorEnd
         reportProgress(step: .processingStrips, percentage: colorEnd)
@@ -88,7 +100,7 @@ class WatermarkService: WatermarkServiceProtocol {
 
             var completedStrips = 0
             for try await processedStrip in group {
-                // TODO: 根据条带的全局坐标，将其写回总的 Y 通道矩阵结构中
+                // overwrite the processed strip back to the original strips array (located by `globalYOffset`).
                 updateStripInPlace(&imageStrips, with: processedStrip)
                 completedStrips += 1
                 if stripCount > 0 {
@@ -106,11 +118,17 @@ class WatermarkService: WatermarkServiceProtocol {
         
         // overwrite the processed strips back to the original Y channel matrix.
         // the extra 1~7 pixels on the right side and bottom of the original matrix will be kept intact, and not be destroyed.
+        reportProgress(step: .reassembling, percentage: stripsEnd + (1 - stripsEnd) * 0.18)
         reassembleStrips(imageStrips, into: &ycbcrImage.Y)
+        reportProgress(step: .reassembling, percentage: stripsEnd + (1 - stripsEnd) * 0.52)
         
-        reportProgress(step: .reassembling, percentage: stripsEnd + (1 - stripsEnd) * 0.55)
+        // Final color conversion back to UIImage.
+        reportProgress(step: .rgbRebuild, percentage: stripsEnd + (1 - stripsEnd) * 0.72)
 
         guard let finalImage = convertToUIImage(from: ycbcrImage) else {
+            #if DEBUG
+            print("[WatermarkService] convertToUIImage failed (Y=\(ycbcrImage.Y.width)x\(ycbcrImage.Y.height), Cb=\(ycbcrImage.Cb.width)x\(ycbcrImage.Cb.height), Cr=\(ycbcrImage.Cr.width)x\(ycbcrImage.Cr.height))")
+            #endif
             throw WatermarkError.processingError
         }
         reportProgress(step: .reassembling, percentage: 1)
@@ -129,25 +147,65 @@ class WatermarkService: WatermarkServiceProtocol {
         let yChannel = ycbcrImage.Y
         
         // 2. physical and logical alignment (to handle translation and cropping attacks)
-        // TODO: execute 64 grid offset scans, and use sliding window to find the sync header
+        // execute 64 grid offset scans, and use sliding window to find the sync header
         guard let gridOffset = findGridOffsetAndSyncMarker(in: yChannel) else {
             throw WatermarkError.extractFailed
         }
         
         // 3. data extraction
-        // TODO: based on the exact grid base point found, extract the bit stream in all 8x8 blocks of the entire image
+        // based on the exact grid base point found, extract the bit stream in all 8x8 blocks of the entire image
         let rawExtractedBits = extractBitsWithOffset(yChannel, offset: gridOffset)
         
         // 4. data recovery and decoding
-        // TODO: merge redundant data through majority voting (Majority Voting)
+        // merge redundant data through majority voting (Majority Voting)
         let votedBits = applyMajorityVoting(to: rawExtractedBits)
+
+        #if DEBUG
+        let rows = rawExtractedBits.count
+        let cols = rawExtractedBits.first?.count ?? 0
+        print("[WatermarkService] DEBUG extract: gridOffset=(\(Int(gridOffset.x)),\(Int(gridOffset.y))) rawBits=\(rows)x\(cols) votedBits=\(votedBits.count)")
+        #endif
         
-        // TODO: remove the sync header, and send the pure data to the FEC decoder for error correction
-        guard let correctedText = decodeFEC(bits: votedBits) else {
-            throw WatermarkError.extractFailed
+        // remove the sync header, and send the pure data to the FEC decoder for error correction
+        let syncCount = getSyncMarkerBits().count
+        let payloadBits = votedBits.count >= syncCount ? Array(votedBits.dropFirst(syncCount)) : []
+
+        #if DEBUG
+        if !payloadBits.isEmpty {
+            func bitsToByteLocal(_ bits: [Int]) -> Int {
+                var v = 0
+                for b in bits.prefix(8) { v = (v << 1) | (b & 1) }
+                return v
+            }
+            let lenByte = payloadBits.count >= 8 ? bitsToByteLocal(Array(payloadBits.prefix(8))) : -1
+            let payloadPreview = payloadBits.prefix(24).map(String.init).joined()
+            print("[WatermarkService] DEBUG extract: syncCount=\(syncCount) payloadBits=\(payloadBits.count) lenByte(raw)=\(lenByte) payloadPreview=\(payloadPreview)")
+        } else {
+            print("[WatermarkService] DEBUG extract: payloadBits empty (votedBits too short)")
         }
-        
-        return correctedText
+        #endif
+        // Decode FEC with length-guessed truncation.
+        // Reason:
+        // `payloadBits` comes from a `w*w` macro-tile, which can contain padding zeros beyond the real eccBits.
+        // Feeding those extra bits into Hamming84 decode can introduce additional erroneous codewords and
+        // cause decodeFEC to fail.
+        func eccBitCount(messageLengthBytes: Int) -> Int {
+            let rawBits = 8 + messageLengthBytes * 8
+            let paddedRaw = ((rawBits + 3) / 4) * 4
+            let codewordBits = (paddedRaw / 4) * 8
+            return codewordBits
+        }
+
+        for lenGuess in 1...16 {
+            let eccCount = eccBitCount(messageLengthBytes: lenGuess)
+            guard payloadBits.count >= eccCount else { continue }
+            let eccBits = Array(payloadBits.prefix(eccCount))
+            if let correctedText = decodeFEC(bits: eccBits) {
+                return correctedText
+            }
+        }
+
+        throw WatermarkError.extractFailed
     }
     
     func debugTestDataLayer() {

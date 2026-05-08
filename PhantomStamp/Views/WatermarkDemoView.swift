@@ -85,6 +85,7 @@ struct WatermarkDemoView: View {
             let output = try await watermarkService.embedWatermark(into: currentImage, text: text)
             currentImage = output
             lastExtractedText = nil
+            await saveToSystemPhotoAlbumIfPossible(output)
 
             if settingsStore.autoLogWatermarkEmbedToHistory {
                 HistoryRecordService.append(
@@ -95,6 +96,20 @@ struct WatermarkDemoView: View {
             }
         } catch {
             present(error)
+        }
+    }
+
+    @MainActor
+    private func saveToSystemPhotoAlbumIfPossible(_ image: UIImage) async {
+        do {
+            try await PhotoLibraryExporter.saveToPhotoLibrary(image)
+            #if DEBUG
+            print("[WatermarkDemoView] Photo save: completed")
+            #endif
+        } catch {
+            #if DEBUG
+            print("[WatermarkDemoView] Photo save failed: \(error)")
+            #endif
         }
     }
 
@@ -114,8 +129,82 @@ struct WatermarkDemoView: View {
             present(error)
         }
     }
+    
+    private func runEndToEndTestOnBundledImage() async {
+        isLoading = true
+        defer { isLoading = false }
+        
+        NotificationCenter.default.post(name: AppConstants.Notifications.watermarkProgressOverlayDidStart, object: nil)
+        NotificationCenter.default.post(
+            name: AppConstants.Notifications.watermarkProgress,
+            object: nil,
+            userInfo: ["payload": ProgressPayload(step: .preparation, percentage: 0.05)]
+        )
+        
+        let r = await WatermarkEndToEndTests.runAll()
+        
+        let ok = r.imageLoaded && r.embedSucceeded && r.extractSucceeded && r.textRoundTripPassed && r.progressPassed
+        let status = ok ? "PASS" : "FAIL"
+        print("[WatermarkDemoView] E2E \(status) extracted=\(r.extractedText ?? "nil") events=\(r.progressEventCount)")
+        if let watermarked = r.watermarkedImage {
+            // Save the embedded image even if extraction fails; it helps debugging.
+            await saveToSystemPhotoAlbumIfPossible(watermarked)
+        }
+        if !ok {
+            print("[WatermarkDemoView] E2E embed total=\(String(format: "%.2f", r.embedTotalMs)) ms")
+            for (s, ms) in r.embedStepTimingsMs {
+                print("[WatermarkDemoView] E2E embed step=\(s) ms=\(String(format: "%.2f", ms))")
+            }
+        }
+        
+        NotificationCenter.default.post(
+            name: AppConstants.Notifications.watermarkProgress,
+            object: nil,
+            userInfo: ["payload": ProgressPayload(step: .reassembling, percentage: 1)]
+        )
+        NotificationCenter.default.post(name: AppConstants.Notifications.watermarkProgressOverlayDidEnd, object: nil)
+        
+        if !ok {
+            let msg = "E2E failed: imageLoaded=\(r.imageLoaded) embed=\(r.embedSucceeded) extract=\(r.extractSucceeded) textOK=\(r.textRoundTripPassed) progressOK=\(r.progressPassed)\nextracted=\(r.extractedText ?? "nil")"
+            present(NSError(domain: "WatermarkE2E", code: -1, userInfo: [NSLocalizedDescriptionKey: msg]))
+        }
+    }
+    
+    private func runEmbedOnlyTestOnBundledImage() async {
+        isLoading = true
+        defer { isLoading = false }
+        
+        NotificationCenter.default.post(name: AppConstants.Notifications.watermarkProgressOverlayDidStart, object: nil)
+        NotificationCenter.default.post(
+            name: AppConstants.Notifications.watermarkProgress,
+            object: nil,
+            userInfo: ["payload": ProgressPayload(step: .preparation, percentage: 0.15)]
+        )
+        
+        let r = await WatermarkEmbedOnlyTests.runOnBundledTestImg(text: "水印OK")
+        let ok = r.imageLoaded && r.embedSucceeded
+        let status = ok ? "PASS" : "FAIL"
+        print("[WatermarkDemoView] EmbedOnly \(status) totalMs=\(String(format: "%.2f", r.totalMs)) events=\(r.progressEventCount)")
+        for (s, ms) in r.stepTimingsMs {
+            print("[WatermarkDemoView] EmbedOnly step=\(s) ms=\(String(format: "%.2f", ms))")
+        }
+        
+        NotificationCenter.default.post(
+            name: AppConstants.Notifications.watermarkProgress,
+            object: nil,
+            userInfo: ["payload": ProgressPayload(step: .reassembling, percentage: 1)]
+        )
+        NotificationCenter.default.post(name: AppConstants.Notifications.watermarkProgressOverlayDidEnd, object: nil)
+        
+        if !ok {
+            present(NSError(domain: "WatermarkEmbedOnly", code: -1, userInfo: [NSLocalizedDescriptionKey: "Embed-only test failed (see console)."]))
+        }
+    }
 
     private func present(_ error: Error) {
+        #if DEBUG
+        print("[WatermarkDemoView] ERROR: \(error)")
+        #endif
         alertMessage = (error as? LocalizedError)?.errorDescription ?? error.localizedDescription
         showAlert = true
     }
@@ -199,6 +288,30 @@ struct WatermarkDemoView: View {
                 Task { await runExtract() }
             } label: {
                 Label(AppConstants.Copy.Watermark.extractButton, systemImage: "text.magnifyingglass")
+                    .frame(maxWidth: .infinity)
+                    .padding(.vertical, 4)
+            }
+            .buttonStyle(.bordered)
+            .controlSize(.large)
+            .disabled(isLoading)
+            
+            Divider().opacity(0.35)
+
+            Button {
+                Task { await runEmbedOnlyTestOnBundledImage() }
+            } label: {
+                Label("Run Embed Test (TestImg)", systemImage: "timer")
+                    .frame(maxWidth: .infinity)
+                    .padding(.vertical, 4)
+            }
+            .buttonStyle(.bordered)
+            .controlSize(.large)
+            .disabled(isLoading)
+            
+            Button {
+                Task { await runEndToEndTestOnBundledImage() }
+            } label: {
+                Label("Run E2E Test (TestImg)", systemImage: "checkmark.seal")
                     .frame(maxWidth: .infinity)
                     .padding(.vertical, 4)
             }

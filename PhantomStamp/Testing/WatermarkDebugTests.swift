@@ -51,6 +51,13 @@ enum WatermarkDebugTests {
             let dtMs = (CFAbsoluteTimeGetCurrent() - t0) * 1000
             print("[Timing] DataProcessingTests.runAllAndPrint took \(String(format: "%.2f", dtMs)) ms")
         }
+
+        do {
+            let t0 = CFAbsoluteTimeGetCurrent()
+            WatermarkEndToEndTests.runAllAndPrintBlocking()
+            let dtMs = (CFAbsoluteTimeGetCurrent() - t0) * 1000
+            print("[Timing] WatermarkEndToEndTests.runAllAndPrintBlocking took \(String(format: "%.2f", dtMs)) ms")
+        }
         #endif
     }
 }

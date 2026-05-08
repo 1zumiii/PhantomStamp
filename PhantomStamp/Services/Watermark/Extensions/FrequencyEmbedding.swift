@@ -20,7 +20,14 @@ extension WatermarkService {
                 var pixelBlock = strip.get8x8Block(x: blockX, y: blockY)
 
                 let variance = calculateVariance(pixelBlock)
-                let thresholdSmooth: Float = 10.5
+                // In practice (especially on smooth photos), skipping low-variance blocks can
+                // reduce repetition so much that sync match becomes marginal (e.g. 28/32).
+                // Use a lower threshold to improve robustness; the adaptive `Q` still keeps
+                // changes small on smooth blocks.
+                // Embed as many blocks as possible to maximize redundancy for majority voting.
+                // Previously we skipped low-variance blocks which can leave some macro-cells
+                // under-embedded, making extraction bits too noisy.
+                let thresholdSmooth: Float = -1.0
                 if variance < thresholdSmooth { continue }
 
                 var freqBlock = performDCT(pixelBlock)
@@ -48,14 +55,18 @@ extension WatermarkService {
         let b = freqBlock[p2.u, p2.v]
 
         let qa = adaptiveQuantizationStep(for: freqBlock)
+        // Increase the target separation between (3,4) and (4,3) so the decision survives
+        // IDCT/quantization round-trips.
+        let strength: Float = 1.45
+        let targetQa = qa * strength
 
         let absA = abs(a)
         let absB = abs(b)
 
         if bit == 1 {
             let diff = absA - absB
-            if diff < qa {
-                let delta = (qa - diff) / 2
+            if diff < targetQa {
+                let delta = (targetQa - diff) / 2
                 let newAbsA = absA + delta
                 let newAbsB = max(0, absB - delta)
                 freqBlock[p1.u, p1.v] = applyMagnitude(newAbsA, keepingSignOf: a)
@@ -63,8 +74,8 @@ extension WatermarkService {
             }
         } else {
             let diff = absB - absA
-            if diff < qa {
-                let delta = (qa - diff) / 2
+            if diff < targetQa {
+                let delta = (targetQa - diff) / 2
                 let newAbsB = absB + delta
                 let newAbsA = max(0, absA - delta)
                 freqBlock[p2.u, p2.v] = applyMagnitude(newAbsB, keepingSignOf: b)
@@ -91,8 +102,9 @@ extension WatermarkService {
             }
         }
         let acMean = sumAbs / 63.0
-        let q = 6.0 + min(8.0, acMean * 0.15)
-        return max(6.0, min(14.0, q))
+        // Stronger baseline helps sync recovery on real images (E2E).
+        let q = 9.0 + min(10.0, acMean * 0.18)
+        return max(9.0, min(18.0, q))
     }
 
     private func applyMagnitude(_ magnitude: Float, keepingSignOf value: Float) -> Float {

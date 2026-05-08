@@ -24,10 +24,18 @@ extension AppConstants {
     
     // Fixed all possible operation stages
     enum WatermarkStep: String {
-        case preparation = "数据准备中..."
-        case colorConversion = "提取亮度通道..."
-        case processingStrips = "频域水印嵌入中..."
-        case reassembling = "图像重组中..."
+        // Embedding pipeline (frequency-domain watermark).
+        case preparation = "Preparing payload..."
+        case fecEncoding = "Applying FEC..."
+        case macroblockBuild = "Building 2D tile..."
+
+        case colorConversion = "Extracting luminance (Y)..."
+        case stripSlicing = "Slicing luminance into strips..."
+
+        case processingStrips = "Embedding bits into DCT blocks..."
+
+        case reassembling = "Reassembling luminance..."
+        case rgbRebuild = "Rebuilding final image..."
     }
 }
 
