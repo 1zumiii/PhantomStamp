@@ -15,6 +15,10 @@ extension WatermarkService {
     func processSingleStripForEmbedding(strip: ImageStrip, macroblock: Macroblock2D) -> ImageStrip {
         var resultStrip = strip
 
+        // The macro-tile starts with: sync(32) + lengthHeader(8) + payload...
+        let syncBitCount = getSyncMarkerBits().count
+        let headerBitCount = syncBitCount + 8
+
         for blockY in stride(from: 0, to: strip.height, by: 8) {
             for blockX in stride(from: 0, to: strip.width, by: 8) {
                 var pixelBlock = strip.get8x8Block(x: blockX, y: blockY)
@@ -32,12 +36,27 @@ extension WatermarkService {
 
                 var freqBlock = performDCT(pixelBlock)
 
-                let targetBit = macroblock.getBitAt(
-                    imageX: blockX + strip.globalXOffset,
-                    imageY: blockY + strip.globalYOffset
-                )
+                let imageX = blockX + strip.globalXOffset
+                let imageY = blockY + strip.globalYOffset
+                let mx = imageX / Matrix8x8.side
+                let my = imageY / Matrix8x8.side
+                let ix = (macroblock.bitsWide > 0) ? (mx % macroblock.bitsWide) : 0
+                let iy = (macroblock.bitsHigh > 0) ? (my % macroblock.bitsHigh) : 0
+                let tileIndex = iy * max(1, macroblock.bitsWide) + ix
+                let targetBit = macroblock.getBitAt(imageX: imageX, imageY: imageY)
 
-                embedBitIntoFrequencies(&freqBlock, bit: targetBit)
+                // JPEG compression tends to destroy small mid-frequency differences first.
+                // Make the sync + length header cells significantly stronger than the rest.
+                let strength: Float
+                if tileIndex < syncBitCount {
+                    strength = 2.25
+                } else if tileIndex < headerBitCount {
+                    strength = 2.00
+                } else {
+                    strength = 1.45
+                }
+
+                embedBitIntoFrequencies(&freqBlock, bit: targetBit, strength: strength)
                 pixelBlock = performIDCT(freqBlock)
                 resultStrip.write8x8Block(pixelBlock, x: blockX, y: blockY)
             }
@@ -47,7 +66,7 @@ extension WatermarkService {
     }
 
     /// Embeds one payload bit into the mid-frequency band of an 8×8 DCT block.
-    func embedBitIntoFrequencies(_ freqBlock: inout Matrix8x8, bit: Int) {
+    func embedBitIntoFrequencies(_ freqBlock: inout Matrix8x8, bit: Int, strength: Float = 1.45) {
         let p1 = (u: 3, v: 4)
         let p2 = (u: 4, v: 3)
 
@@ -56,9 +75,9 @@ extension WatermarkService {
 
         let qa = adaptiveQuantizationStep(for: freqBlock)
         // Increase the target separation between (3,4) and (4,3) so the decision survives
-        // IDCT/quantization round-trips.
-        let strength: Float = 1.45
-        let targetQa = qa * strength
+        // IDCT/quantization round-trips, and optionally boost header bits for compression robustness.
+        let s = max(1.0, strength)
+        let targetQa = qa * s
 
         let absA = abs(a)
         let absB = abs(b)

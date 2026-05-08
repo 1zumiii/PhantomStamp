@@ -60,7 +60,7 @@ enum WatermarkEmbedOnlyTests {
         let sema = DispatchSemaphore(value: 0)
         Task.detached(priority: .userInitiated) {
             // Keep <= 16 bytes to satisfy current encodeFEC cap.
-            let r = await runOnBundledTestImg(text: "水印OK")
+            let r = await runOnBundledTestImg(text: "Successful")
             let status = (r.imageLoaded && r.embedSucceeded) ? "PASS" : "FAIL"
             print("[WatermarkEmbedOnlyTests] \(status) Embed only (TestImg)")
             print("  - total: \(String(format: "%.2f", r.totalMs)) ms  progressEvents=\(r.progressEventCount)")

@@ -47,7 +47,7 @@ enum WatermarkCropAttackTests {
             return Report(imageLoaded: false, cases: [])
         }
 
-        let text = "水印OK"
+        let text = "Successful"
         let service = WatermarkService()
 
         // Embed once, reuse the watermarked image for all crop cases.

@@ -50,7 +50,7 @@ enum WatermarkEndToEndTests {
         }
 
         // Keep <= 16 bytes to satisfy current encodeFEC cap.
-        let text = "水印OK" // 3 chars, UTF-8 <= 16 bytes
+        let text = "Successful" // 3 chars, UTF-8 <= 16 bytes
         let service = WatermarkService()
 
         let collector = ProgressCollector()

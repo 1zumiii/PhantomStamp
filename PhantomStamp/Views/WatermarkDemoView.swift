@@ -181,7 +181,7 @@ struct WatermarkDemoView: View {
             userInfo: ["payload": ProgressPayload(step: .preparation, percentage: 0.15)]
         )
         
-        let r = await WatermarkEmbedOnlyTests.runOnBundledTestImg(text: "水印OK")
+        let r = await WatermarkEmbedOnlyTests.runOnBundledTestImg(text: "Successful")
         let ok = r.imageLoaded && r.embedSucceeded
         let status = ok ? "PASS" : "FAIL"
         print("[WatermarkDemoView] EmbedOnly \(status) totalMs=\(String(format: "%.2f", r.totalMs)) events=\(r.progressEventCount)")
@@ -236,6 +236,72 @@ struct WatermarkDemoView: View {
             }.joined(separator: "\n")
             let msg = "CropAttack failed: imageLoaded=\(r.imageLoaded)\n\(details)"
             present(NSError(domain: "WatermarkCropAttack", code: -1, userInfo: [NSLocalizedDescriptionKey: msg]))
+        }
+    }
+
+    private func runCompressionAttackTestOnBundledImage() async {
+        isLoading = true
+        defer { isLoading = false }
+
+        NotificationCenter.default.post(name: AppConstants.Notifications.watermarkProgressOverlayDidStart, object: nil)
+        NotificationCenter.default.post(
+            name: AppConstants.Notifications.watermarkProgress,
+            object: nil,
+            userInfo: ["payload": ProgressPayload(step: .preparation, percentage: 0.05)]
+        )
+
+        let r = await WatermarkCompressionAttackTests.runMediumJpegCompressionOnBundledTestImg(quality: 0.60)
+        let ok = r.imageLoaded && r.embedSucceeded && r.recompressSucceeded && r.extractSucceeded && r.textRoundTripPassed
+        let status = ok ? "PASS" : "FAIL"
+        let px = r.attackedPx.map { "\($0.w)x\($0.h)px" } ?? "nil"
+        let bytes = r.jpegBytes.map(String.init) ?? "nil"
+        print("[WatermarkDemoView] CompressionAttack \(status) q=\(String(format: "%.2f", r.quality)) jpegBytes=\(bytes) px=\(px) saved=\(r.saveSucceeded) extracted=\(r.extractedText ?? "nil")")
+
+        NotificationCenter.default.post(
+            name: AppConstants.Notifications.watermarkProgress,
+            object: nil,
+            userInfo: ["payload": ProgressPayload(step: .reassembling, percentage: 1)]
+        )
+        NotificationCenter.default.post(name: AppConstants.Notifications.watermarkProgressOverlayDidEnd, object: nil)
+
+        if !ok {
+            let msg = "CompressionAttack failed: imageLoaded=\(r.imageLoaded) embed=\(r.embedSucceeded) recompress=\(r.recompressSucceeded) save=\(r.saveSucceeded) extract=\(r.extractSucceeded) textOK=\(r.textRoundTripPassed)\nextracted=\(r.extractedText ?? "nil") jpegBytes=\(bytes) px=\(px) q=\(String(format: "%.2f", r.quality))"
+            present(NSError(domain: "WatermarkCompressionAttack", code: -1, userInfo: [NSLocalizedDescriptionKey: msg]))
+        }
+    }
+
+    private func runCompressionLimitSweepOnBundledImage() async {
+        isLoading = true
+        defer { isLoading = false }
+
+        NotificationCenter.default.post(name: AppConstants.Notifications.watermarkProgressOverlayDidStart, object: nil)
+        NotificationCenter.default.post(
+            name: AppConstants.Notifications.watermarkProgress,
+            object: nil,
+            userInfo: ["payload": ProgressPayload(step: .preparation, percentage: 0.05)]
+        )
+
+        let r = await WatermarkCompressionAttackTests.runJpegQualityLimitSweepOnBundledTestImg()
+        let ok = r.imageLoaded && r.embedSucceeded && (r.lowestPassingQuality != nil)
+        let status = ok ? "PASS" : "FAIL"
+        let lowest = r.lowestPassingQuality.map { String(format: "%.2f", $0) } ?? "nil"
+        let firstFail = r.firstFailingQuality.map { String(format: "%.2f", $0) } ?? "nil"
+        print("[WatermarkDemoView] CompressionSweep \(status) lowestPass=\(lowest) firstFail=\(firstFail) cases=\(r.cases.count)")
+        for c in r.cases {
+            let pass = c.textRoundTripPassed
+            print("  - q=\(String(format: "%.2f", c.quality)) \(pass ? "PASS" : "FAIL") bytes=\(c.jpegBytes) extracted=\(c.extractedText ?? "nil")")
+        }
+
+        NotificationCenter.default.post(
+            name: AppConstants.Notifications.watermarkProgress,
+            object: nil,
+            userInfo: ["payload": ProgressPayload(step: .reassembling, percentage: 1)]
+        )
+        NotificationCenter.default.post(name: AppConstants.Notifications.watermarkProgressOverlayDidEnd, object: nil)
+
+        if !ok {
+            let msg = "CompressionSweep failed: imageLoaded=\(r.imageLoaded) embed=\(r.embedSucceeded) lowestPass=\(lowest)"
+            present(NSError(domain: "WatermarkCompressionSweep", code: -1, userInfo: [NSLocalizedDescriptionKey: msg]))
         }
     }
 
@@ -361,6 +427,28 @@ struct WatermarkDemoView: View {
                 Task { await runCropAttackTestOnBundledImage() }
             } label: {
                 Label("Run Crop Attack Test (TestImg)", systemImage: "crop")
+                    .frame(maxWidth: .infinity)
+                    .padding(.vertical, 4)
+            }
+            .buttonStyle(.bordered)
+            .controlSize(.large)
+            .disabled(isLoading)
+
+            Button {
+                Task { await runCompressionAttackTestOnBundledImage() }
+            } label: {
+                Label("Run Compression Attack Test (TestImg)", systemImage: "arrow.down.right.and.arrow.up.left")
+                    .frame(maxWidth: .infinity)
+                    .padding(.vertical, 4)
+            }
+            .buttonStyle(.bordered)
+            .controlSize(.large)
+            .disabled(isLoading)
+
+            Button {
+                Task { await runCompressionLimitSweepOnBundledImage() }
+            } label: {
+                Label("Run Compression Limit Sweep (TestImg)", systemImage: "gauge.with.dots.needle.33percent")
                     .frame(maxWidth: .infinity)
                     .padding(.vertical, 4)
             }

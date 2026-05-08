@@ -22,7 +22,9 @@ extension WatermarkService {
         // Doing 64 offset scans over the whole image is expensive (each block requires DCT).
         // We restrict to the top-left region (in macroblocks) which is sufficient to locate at least one
         // complete sync header in typical crop/translate scenarios.
-        let searchBlockLimit = 30
+        // JPEG recompression tends to increase bit noise; expanding the search window improves the odds
+        // of finding a higher-quality sync hit (at the cost of more DCT work).
+        let searchBlockLimit = 45
 
         // Return the globally best match across all 64 pixel offsets.
         // We *do not* return the first window that crosses the tolerance threshold, because synthetic or noisy
