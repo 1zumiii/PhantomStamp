@@ -24,7 +24,7 @@ The app leverages Apple's official **Accelerate (vDSP)** framework to transform 
 ### 3.2 Adaptive Visual Masking (Mid-Frequency Embedding)
 
 Based on the characteristics of the Human Visual System (HVS), the algorithm embeds the watermark into the **mid-frequency coefficients** (e.g., utilizing symmetry points).
-Crucially, it employs an **Adaptive Quantization Step**. The algorithm calculates the mean absolute AC magnitude of each 8×8 block to assess texture complexity dynamically. Smooth areas receive a lighter embedding to preserve pristine visual quality. Highly textured areas receive a stronger embedding to maximize robustness against compression.
+Crucially, it employs an **Adaptive Quantization Step**. The algorithm calculates the mean absolute AC (alternating-current) coefficient magnitude of each 8×8 block to assess texture complexity dynamically. Smooth areas receive a lighter embedding to preserve pristine visual quality. Highly textured areas receive a stronger embedding to maximize robustness against compression.
 
 ### 3.3 Data Link Layer Security (FEC & Interleaving)
 
@@ -36,7 +36,7 @@ To combat localized burst errors caused by image damage or heavy compression art
 
 The extraction algorithm operates entirely blindly (requires no original image):
 - **64-Offset Sliding Window Scan:** Re-aligns the grid origin perfectly even if the image suffers from severe translation or cropping attacks.
-- **Global Majority Voting:** The 2D watermark tile is redundantly paved across the entire image. The algorithm aggregates surviving data from all valid fragments (including edge-cropped macroblocks) to recover the most likely true payload. Based on compression quality sweeps in `WatermarkCompressionAttackTests`, this approach survives JPEG compression qualities down to ~51%.
+- **Global Majority Voting:** The 2D watermark tile is redundantly paved across the entire image. The algorithm aggregates surviving data from all valid fragments (including edge-cropped macroblocks) to recover the most likely true payload. Based on compression quality sweeps in `WatermarkCompressionAttackTests`, this approach survives JPEG compression at quality levels as low as ~51%.
 
 ## 4. Technical Highlights
 
