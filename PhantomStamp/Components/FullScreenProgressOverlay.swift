@@ -40,7 +40,6 @@ struct FullScreenWatermarkProgressOverlay: View {
     @State private var batchCurrent: Int = 0
     /// The file index currently shown by the per-file progress bar.
     @State private var displayFileIndex: Int = 0
-    @State private var batchRequestedCurrent: Int?
     @State private var lastDrainAckCurrent: Int = -1
 
     var body: some View {
@@ -67,6 +66,11 @@ struct FullScreenWatermarkProgressOverlay: View {
                         }
 
                         Spacer()
+
+                        if batchTotal > 1 {
+                            batchBadge
+                                .transition(.opacity.combined(with: .scale(scale: 0.98)))
+                        }
                     }
 
                     ProgressView(value: progress, total: 1.0)
@@ -89,24 +93,6 @@ struct FullScreenWatermarkProgressOverlay: View {
                             }
                             .mask(ProgressView(value: progress, total: 1.0).tint(.white))
                         }
-
-                    if batchTotal > 1 {
-                        VStack(spacing: 6) {
-                            ProgressView(
-                                value: Double(batchCompleted),
-                                total: Double(batchTotal)
-                            )
-                            .tint(.secondary)
-
-                            HStack {
-                                Text("Files \(min(batchCompleted, batchTotal))/\(batchTotal)")
-                                    .font(.caption)
-                                    .foregroundStyle(.secondary)
-                                Spacer()
-                            }
-                        }
-                        .transition(.opacity)
-                    }
 
                     HStack {
                         Text("\(Int(progressTextValue * 100))%")
@@ -160,9 +146,23 @@ struct FullScreenWatermarkProgressOverlay: View {
             Task { @MainActor in
                 let nextCurrent = max(0, payload.current)
                 batchCurrent = nextCurrent
-                // Defer per-file reset until the current displayed file drains.
-                if nextCurrent != displayFileIndex {
-                    batchRequestedCurrent = nextCurrent
+                // With strict backend pacing (awaiting drain ACK), it's safe to switch immediately.
+                let hasNextFile = nextCurrent < max(0, payload.total)
+                if hasNextFile, nextCurrent != displayFileIndex {
+                    pendingProgress.removeAll(keepingCapacity: true)
+                    progressPumpTask?.cancel()
+                    progressPumpTask = nil
+                    lastProgressApplyInstant = nil
+                    lastDrainAckCurrent = -1
+
+                    var t = Transaction()
+                    t.animation = nil
+                    withTransaction(t) {
+                        progress = 0
+                        progressTextValue = 0
+                    }
+                    displayFileIndex = nextCurrent
+                    ensureProgressPump()
                 }
                 batchCompleted = max(0, payload.completed)
                 batchTotal = max(0, payload.total)
@@ -174,6 +174,34 @@ struct FullScreenWatermarkProgressOverlay: View {
     private var detailWithDots: String {
         let dots = String(repeating: "·", count: dotsPhase)
         return dots.isEmpty ? detail : "\(detail) \(dots)"
+    }
+
+    private var batchBadge: some View {
+        let total = max(batchTotal, 1)
+        let completedClamped = min(max(batchCompleted, 0), total)
+        let p = Double(completedClamped) / Double(total)
+
+        return ZStack {
+            Circle()
+                .stroke(Color.primary.opacity(0.10), lineWidth: 3)
+            Circle()
+                .trim(from: 0, to: p)
+                .stroke(
+                    LinearGradient(
+                        colors: [Color.accentColor.opacity(0.55), Color.accentColor],
+                        startPoint: .topLeading,
+                        endPoint: .bottomTrailing
+                    ),
+                    style: StrokeStyle(lineWidth: 3, lineCap: .round)
+                )
+                .rotationEffect(.degrees(-90))
+
+            Text("\(completedClamped)/\(total)")
+                .font(.caption2.monospacedDigit().weight(.semibold))
+                .foregroundStyle(.secondary)
+        }
+        .frame(width: 28, height: 28)
+        .accessibilityLabel("文件 \(completedClamped) / \(total)")
     }
 
     @MainActor
@@ -282,40 +310,11 @@ struct FullScreenWatermarkProgressOverlay: View {
                        lastDrainAckCurrent != displayFileIndex
                     {
                         lastDrainAckCurrent = displayFileIndex
-                        #if DEBUG
-                        print("[Overlay][DrainAck] file=\(displayFileIndex) progress=\(Int(progress * 100))% (batchCurrent=\(batchCurrent))")
-                        #endif
                         NotificationCenter.default.post(
                             name: AppConstants.Notifications.watermarkPerFileProgressDidDrain,
                             object: nil,
                             userInfo: ["payload": PerFileProgressDrainPayload(current: displayFileIndex)]
                         )
-                    }
-
-                    // If a new file is queued, only switch once the previous file is visually complete.
-                    if let requested = batchRequestedCurrent,
-                       requested != displayFileIndex,
-                       progress >= 1.0 - 1e-9
-                    {
-                        displayFileIndex = requested
-                        batchRequestedCurrent = nil
-
-                        // Reset per-file progress without animation.
-                        pendingProgress.removeAll(keepingCapacity: true)
-                        progressPumpTask?.cancel()
-                        progressPumpTask = nil
-                        lastProgressApplyInstant = nil
-
-                        var t = Transaction()
-                        t.animation = nil
-                        withTransaction(t) {
-                            progress = 0
-                            progressTextValue = 0
-                        }
-                        lastDrainAckCurrent = -1
-
-                        ensureProgressPump()
-                        break
                     }
 
                     if endRequested {
@@ -332,25 +331,15 @@ struct FullScreenWatermarkProgressOverlay: View {
                     if $0.percentage != $1.percentage { return $0.percentage < $1.percentage }
                     return $0.enqueuedAt < $1.enqueuedAt
                 }
-                let isSwitchingFileSoon: Bool = {
-                    if let requested = batchRequestedCurrent {
-                        return requested != batchCurrent
-                    }
-                    return false
-                }()
-
                 let next: QueuedProgress
-                if isSwitchingFileSoon {
-                    // If the next file already started, fast-forward to catch up.
-                    next = pendingProgress.removeLast()
-                    pendingProgress.removeAll(keepingCapacity: true)
-                } else {
-                    next = pendingProgress.removeFirst()
-                }
+                next = pendingProgress.removeFirst()
 
-                // Enforce minimum time between *applied* updates (adaptive).
+                // Enforce minimum time between *applied* updates (adaptive + fast-forward under backlog).
+                let qCount = pendingProgress.count
+                let dynamicMinInterval = qCount > 2 ? 0.01 : 0.10
+
                 let deltaForInterval = abs(next.percentage - progress)
-                let intervalSeconds = min(max(deltaForInterval * 10.0, 0.10), 1.00)
+                let intervalSeconds = min(max(deltaForInterval * 10.0, dynamicMinInterval), 1.00)
                 if let last = lastProgressApplyInstant {
                     let elapsed = last.duration(to: clock.now)
                     let minInterval = Duration.seconds(intervalSeconds)
@@ -374,15 +363,11 @@ struct FullScreenWatermarkProgressOverlay: View {
                     progressTextValue = target
                 }
 
-                #if DEBUG
-                let qCount = pendingProgress.count
-                print("[Overlay][ProgressApply] file=\(displayFileIndex) target=\(Int(target * 100))% queueAfter=\(qCount) (batchCurrent=\(batchCurrent))")
-                #endif
-
-                let delta = abs(target - progress)
-                // Keep animation bounded; overall cadence is controlled by min interval.
-                let duration = min(max(0.20, 0.25 + delta * 0.7), 0.90)
-                withAnimation(.easeInOut(duration: duration)) {
+                // Animation duration should also adapt to backlog.
+                let dynamicAnimDuration = qCount > 2
+                    ? 0.10
+                    : min(max(0.20, 0.25 + deltaForInterval * 0.7), 0.90)
+                withAnimation(.easeInOut(duration: dynamicAnimDuration)) {
                     progress = target
                 }
                 lastProgressApplyInstant = clock.now

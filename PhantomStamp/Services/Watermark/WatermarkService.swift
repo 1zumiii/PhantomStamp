@@ -7,7 +7,7 @@ import UIKit
 import Accelerate
 
 class WatermarkService: WatermarkServiceProtocol {
-    private func awaitPerFileProgressDrain(current: Int, timeoutSeconds: Double = 4.0) async -> Bool {
+    private func awaitPerFileProgressDrain(current: Int, timeoutSeconds: Double = 60.0) async -> Bool {
         // If the overlay isn't listening (e.g. tests or headless runs), don't block forever.
         let deadlineNs = UInt64(timeoutSeconds * 1_000_000_000)
 
@@ -312,9 +312,6 @@ class WatermarkService: WatermarkServiceProtocol {
 
         do {
             for (idx, img) in images.enumerated() {
-                #if DEBUG
-                print("[WatermarkService][BatchEmbed] begin file=\(idx)/\(images.count)")
-                #endif
                 NotificationCenter.default.post(
                     name: AppConstants.Notifications.watermarkBatchProgress,
                     object: nil,
@@ -323,21 +320,12 @@ class WatermarkService: WatermarkServiceProtocol {
                 let watermarked = try await embedWatermark(into: img, text: text, shouldHideProgressbar: false)
                 outputs.append(watermarked)
                 // Pace batch: wait until the per-file progress bar is fully displayed.
-                #if DEBUG
-                print("[WatermarkService][BatchEmbed] algo done file=\(idx) -> awaiting UI drain")
-                #endif
-                let didAck = await awaitPerFileProgressDrain(current: idx)
-                #if DEBUG
-                print("[WatermarkService][BatchEmbed] UI drain \(didAck ? "ACK" : "TIMEOUT") file=\(idx)")
-                #endif
+                _ = await awaitPerFileProgressDrain(current: idx)
                 NotificationCenter.default.post(
                     name: AppConstants.Notifications.watermarkBatchProgress,
                     object: nil,
                     userInfo: ["payload": BatchProgressPayload(completed: idx + 1, total: images.count, current: idx + 1)]
                 )
-                #if DEBUG
-                print("[WatermarkService][BatchEmbed] advance -> nextCurrent=\(idx + 1)")
-                #endif
             }
 
             NotificationCenter.default.post(name: AppConstants.Notifications.watermarkProgressOverlayDidEnd, object: nil)
@@ -362,9 +350,6 @@ class WatermarkService: WatermarkServiceProtocol {
 
         do {
             for (idx, img) in images.enumerated() {
-                #if DEBUG
-                print("[WatermarkService][BatchExtract] begin file=\(idx)/\(images.count)")
-                #endif
                 NotificationCenter.default.post(
                     name: AppConstants.Notifications.watermarkBatchProgress,
                     object: nil,
@@ -372,21 +357,12 @@ class WatermarkService: WatermarkServiceProtocol {
                 )
                 let extracted = try await extractWatermark(from: img, shouldHideProgressbar: false)
                 outputs.append(extracted)
-                #if DEBUG
-                print("[WatermarkService][BatchExtract] algo done file=\(idx) -> awaiting UI drain")
-                #endif
-                let didAck = await awaitPerFileProgressDrain(current: idx)
-                #if DEBUG
-                print("[WatermarkService][BatchExtract] UI drain \(didAck ? "ACK" : "TIMEOUT") file=\(idx)")
-                #endif
+                _ = await awaitPerFileProgressDrain(current: idx)
                 NotificationCenter.default.post(
                     name: AppConstants.Notifications.watermarkBatchProgress,
                     object: nil,
                     userInfo: ["payload": BatchProgressPayload(completed: idx + 1, total: images.count, current: idx + 1)]
                 )
-                #if DEBUG
-                print("[WatermarkService][BatchExtract] advance -> nextCurrent=\(idx + 1)")
-                #endif
             }
 
             NotificationCenter.default.post(name: AppConstants.Notifications.watermarkProgressOverlayDidEnd, object: nil)
@@ -410,9 +386,6 @@ class WatermarkService: WatermarkServiceProtocol {
         var outputs: [String?] = Array(repeating: nil, count: images.count)
 
         for (idx, img) in images.enumerated() {
-            #if DEBUG
-            print("[WatermarkService][BatchExtractBestEffort] begin file=\(idx)/\(images.count)")
-            #endif
             NotificationCenter.default.post(
                 name: AppConstants.Notifications.watermarkBatchProgress,
                 object: nil,
@@ -424,21 +397,12 @@ class WatermarkService: WatermarkServiceProtocol {
             } catch {
                 outputs[idx] = nil
             }
-            #if DEBUG
-            print("[WatermarkService][BatchExtractBestEffort] algo done file=\(idx) -> awaiting UI drain")
-            #endif
-            let didAck = await awaitPerFileProgressDrain(current: idx)
-            #if DEBUG
-            print("[WatermarkService][BatchExtractBestEffort] UI drain \(didAck ? "ACK" : "TIMEOUT") file=\(idx)")
-            #endif
+            _ = await awaitPerFileProgressDrain(current: idx)
             NotificationCenter.default.post(
                 name: AppConstants.Notifications.watermarkBatchProgress,
                 object: nil,
                 userInfo: ["payload": BatchProgressPayload(completed: idx + 1, total: images.count, current: idx + 1)]
             )
-            #if DEBUG
-            print("[WatermarkService][BatchExtractBestEffort] advance -> nextCurrent=\(idx + 1)")
-            #endif
         }
 
         NotificationCenter.default.post(name: AppConstants.Notifications.watermarkProgressOverlayDidEnd, object: nil)

@@ -42,6 +42,8 @@ The extraction algorithm does not require the original image. By analyzing the m
 - **High-Performance Concurrency:** Utilizes Swift Concurrency (`async/await`) and `TaskGroup` to slice and process large images concurrently. This maximizes multi-core CPU performance and guarantees a responsive UI without blocking the main thread.
 - **Low Overhead Optimization:** Calls the SIMD instruction sets of the Accelerate framework for matrix operations, significantly reducing computational overhead on mobile devices.
 - **Loosely Coupled Architecture:** Adopts the MVVM design pattern to completely decouple complex mathematical transformation logic from the View layer, ensuring code extensibility, testability, and isolated collaboration via GitHub.
+- **Adaptive UI Throttling & Backpressure:** Developed a highly resilient SwiftUI progress overlay to handle high-frequency, out-of-order progress notifications from the concurrent backend. It features dynamic queuing and adaptive animation pacing—automatically fast-forwarding when the event backlog grows—ensuring smooth 60fps rendering without freezing the main UI thread.
+- **Strict Producer-Consumer Synchronization:** Implemented a robust "Drain ACK" handshake mechanism between the headless data-processing layer and the UI layer. This guarantees perfect synchronization during multi-file batch processing, forcing the backend to pace its workload until the UI gracefully completes its progress animations, entirely eliminating race conditions and event loss.
 
 ## 5. Tech Stack
 
