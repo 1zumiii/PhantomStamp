@@ -9,11 +9,13 @@ import Accelerate
 class WatermarkService: WatermarkServiceProtocol {
     
     // ==========================================
-    // 嵌入水印
+    // Embedding Watermark
     // ==========================================
     func embedWatermark(into image: UIImage, text: String) async throws -> UIImage {
-        
-        debugTestDataLayer()
+        #if DEBUG
+        // Debug-only: prints internal data-layer checks. Disable by default to avoid noisy logs in demos.
+        // debugTestDataLayer()
+        #endif
         
         // Internal helper method to report progress
         func reportProgress(step: AppConstants.WatermarkStep, percentage: Double) {
@@ -27,50 +29,60 @@ class WatermarkService: WatermarkServiceProtocol {
         }
         
 
-        // Overall budget (must sum to 1.0): strip work dominates CPU time.
-        let prepEnd = 0.10          // 10% — validation + payload / macroblock
-        let colorEnd = 0.18         // 8% — YCbCr + slicing
-        let stripsEnd = 0.90        // 72% — concurrent strip embedding (largest share)
-        // remaining 10% — reassemble Y + RGB rebuild
+        // Progress budget (roughly sums to 1.0).
+        //
+        // Empirically on large images, the "reassemble + RGB rebuild" stage can dominate,
+        // so we reserve a meaningful slice of the bar for it to avoid the UI looking "stuck".
+        let prepEnd = 0.10          // validation + payload / macroblock
+        let colorEnd = 0.20         // YCbCr + slicing
+        let stripsEnd = 0.70        // concurrent strip embedding
+        // remaining 30% — reassemble Y + RGB rebuild
         
         // ==========================================
-        // Step 1: Data preparation → [0, prepEnd]
+        // Step 1: Prepare payload + build 2D tile → [0, prepEnd]
         // ==========================================
         reportProgress(step: .preparation, percentage: 0)
         let minSize: CGFloat = 128.0
         if image.size.width < minSize || image.size.height < minSize {
             throw WatermarkError.imageTooSmall
         }
-        reportProgress(step: .preparation, percentage: prepEnd * 0.35)
+        reportProgress(step: .preparation, percentage: prepEnd * 0.20)
 
-        // TODO: 将文本转为二进制并应用前向纠错码 (FEC)
+        // Convert the text to binary and apply Forward Error Correction (FEC)
+        reportProgress(step: .fecEncoding, percentage: prepEnd * 0.35)
         let eccBits = encodeFEC(text: text)
-        reportProgress(step: .preparation, percentage: prepEnd * 0.65)
+        reportProgress(step: .fecEncoding, percentage: prepEnd * 0.55)
 
-        // TODO: 拼接同步头，构成完整的单个水印周期
+        // Concatenate the sync header, and form a complete single watermark period
         let syncBits = getSyncMarkerBits()
         let payloadBits = syncBits + eccBits
-        // TODO: 将一维数据流转为二维宏块（防裁剪的光栅断裂问题）
+        reportProgress(step: .macroblockBuild, percentage: prepEnd * 0.80)
+        // Convert the one-dimensional data stream to a two-dimensional macroblock (to prevent raster断裂问题)
         let macroblock = build2DTile(from: payloadBits)
-        reportProgress(step: .preparation, percentage: prepEnd)
+        reportProgress(step: .macroblockBuild, percentage: prepEnd)
 
         // ==========================================
         // Step 2: Color / layout → (prepEnd, colorEnd]
         // ==========================================
         reportProgress(step: .colorConversion, percentage: prepEnd)
         guard var ycbcrImage = convertToYCbCr(image: image) else {
+            #if DEBUG
+            let pxW = Int(image.size.width * image.scale)
+            let pxH = Int(image.size.height * image.scale)
+            print("[WatermarkService] convertToYCbCr failed (image=\(pxW)x\(pxH)px scale=\(image.scale) orientation=\(image.imageOrientation.rawValue))")
+            #endif
             throw WatermarkError.processingError
         }
         let yChannel = ycbcrImage.Y
-        reportProgress(step: .colorConversion, percentage: prepEnd + (colorEnd - prepEnd) * 0.55)
+        reportProgress(step: .colorConversion, percentage: prepEnd + (colorEnd - prepEnd) * 0.45)
 
-        // TODO: 将 Y 通道按行切分为多个条带（高度必须是 8 的倍数）。限定算法范围，详见「尺寸校验 - 8的倍数」页面
+        // slice the Y channel into multiple strips (the height must be a multiple of 8)
         let stripHeight = 80
         var imageStrips = sliceImage(yChannel, heightPerStrip: stripHeight)
-        reportProgress(step: .colorConversion, percentage: colorEnd)
+        reportProgress(step: .stripSlicing, percentage: colorEnd)
 
         // ==========================================
-        // Step 3: Strip processing → (colorEnd, stripsEnd]  (main cost)
+        // Step 3: Strip processing → (colorEnd, stripsEnd]
         // ==========================================
         let stripSpan = stripsEnd - colorEnd
         reportProgress(step: .processingStrips, percentage: colorEnd)
@@ -79,7 +91,7 @@ class WatermarkService: WatermarkServiceProtocol {
         try await withThrowingTaskGroup(of: ImageStrip.self) { group in
             for strip in imageStrips {
                 group.addTask {
-                    // 强制内存回收，防止大图切片运算导致 OOM 静默崩溃
+                    // force memory recycling to prevent OOM silent crash caused by large image slicing computation
                     autoreleasepool {
                         self.processSingleStripForEmbedding(strip: strip, macroblock: macroblock)
                     }
@@ -88,7 +100,7 @@ class WatermarkService: WatermarkServiceProtocol {
 
             var completedStrips = 0
             for try await processedStrip in group {
-                // TODO: 根据条带的全局坐标，将其写回总的 Y 通道矩阵结构中
+                // overwrite the processed strip back to the original strips array (located by `globalYOffset`).
                 updateStripInPlace(&imageStrips, with: processedStrip)
                 completedStrips += 1
                 if stripCount > 0 {
@@ -103,12 +115,20 @@ class WatermarkService: WatermarkServiceProtocol {
         // Step 4: Reassemble → (stripsEnd, 1.0]
         // ==========================================
         reportProgress(step: .reassembling, percentage: stripsEnd)
-        // TODO: 先裁剪回原来的尺寸
-        // TODO: 组装处理后的条带，替换原 YCbCr 的 Y 通道，并转回 RGB 的 UIImage
-        ycbcrImage.Y = reassembleStrips(imageStrips)
-        reportProgress(step: .reassembling, percentage: stripsEnd + (1 - stripsEnd) * 0.55)
+        
+        // overwrite the processed strips back to the original Y channel matrix.
+        // the extra 1~7 pixels on the right side and bottom of the original matrix will be kept intact, and not be destroyed.
+        reportProgress(step: .reassembling, percentage: stripsEnd + (1 - stripsEnd) * 0.18)
+        reassembleStrips(imageStrips, into: &ycbcrImage.Y)
+        reportProgress(step: .reassembling, percentage: stripsEnd + (1 - stripsEnd) * 0.52)
+        
+        // Final color conversion back to UIImage.
+        reportProgress(step: .rgbRebuild, percentage: stripsEnd + (1 - stripsEnd) * 0.72)
 
         guard let finalImage = convertToUIImage(from: ycbcrImage) else {
+            #if DEBUG
+            print("[WatermarkService] convertToUIImage failed (Y=\(ycbcrImage.Y.width)x\(ycbcrImage.Y.height), Cb=\(ycbcrImage.Cb.width)x\(ycbcrImage.Cb.height), Cr=\(ycbcrImage.Cr.width)x\(ycbcrImage.Cr.height))")
+            #endif
             throw WatermarkError.processingError
         }
         reportProgress(step: .reassembling, percentage: 1)
@@ -117,35 +137,75 @@ class WatermarkService: WatermarkServiceProtocol {
     }
     
     // ==========================================
-    // 提取水印
+    // Extract Watermark
     // ==========================================
     func extractWatermark(from image: UIImage) async throws -> String {
-        // 1. 图像预处理
+        // 1. image preprocessing
         guard let ycbcrImage = convertToYCbCr(image: image) else {
             throw WatermarkError.processingError
         }
         let yChannel = ycbcrImage.Y
         
-        // 2. 物理与逻辑对齐 (应对平移裁切攻击)
-        // TODO: 执行 64 次网格偏移扫描，配合滑动窗口寻找同步头
+        // 2. physical and logical alignment (to handle translation and cropping attacks)
+        // execute 64 grid offset scans, and use sliding window to find the sync header
         guard let gridOffset = findGridOffsetAndSyncMarker(in: yChannel) else {
             throw WatermarkError.extractFailed
         }
         
-        // 3. 数据提取
-        // TODO: 基于找到的精确网格基准点，提取全图所有的 8x8 块中的比特流
+        // 3. data extraction
+        // based on the exact grid base point found, extract the bit stream in all 8x8 blocks of the entire image
         let rawExtractedBits = extractBitsWithOffset(yChannel, offset: gridOffset)
         
-        // 4. 数据恢复与解码
-        // TODO: 通过多数表决 (Majority Voting) 合并冗余数据
+        // 4. data recovery and decoding
+        // merge redundant data through majority voting (Majority Voting)
         let votedBits = applyMajorityVoting(to: rawExtractedBits)
+
+        #if DEBUG
+        let rows = rawExtractedBits.count
+        let cols = rawExtractedBits.first?.count ?? 0
+        print("[WatermarkService] DEBUG extract: gridOffset=(\(Int(gridOffset.x)),\(Int(gridOffset.y))) rawBits=\(rows)x\(cols) votedBits=\(votedBits.count)")
+        #endif
         
-        // TODO: 移除同步头，将纯数据送入 FEC 解码器纠错
-        guard let correctedText = decodeFEC(bits: votedBits) else {
-            throw WatermarkError.extractFailed
+        // remove the sync header, and send the pure data to the FEC decoder for error correction
+        let syncCount = getSyncMarkerBits().count
+        let payloadBits = votedBits.count >= syncCount ? Array(votedBits.dropFirst(syncCount)) : []
+
+        #if DEBUG
+        if !payloadBits.isEmpty {
+            func bitsToByteLocal(_ bits: [Int]) -> Int {
+                var v = 0
+                for b in bits.prefix(8) { v = (v << 1) | (b & 1) }
+                return v
+            }
+            let lenByte = payloadBits.count >= 8 ? bitsToByteLocal(Array(payloadBits.prefix(8))) : -1
+            let payloadPreview = payloadBits.prefix(24).map(String.init).joined()
+            print("[WatermarkService] DEBUG extract: syncCount=\(syncCount) payloadBits=\(payloadBits.count) lenByte(raw)=\(lenByte) payloadPreview=\(payloadPreview)")
+        } else {
+            print("[WatermarkService] DEBUG extract: payloadBits empty (votedBits too short)")
         }
-        
-        return correctedText
+        #endif
+        // Decode FEC with length-guessed truncation.
+        // Reason:
+        // `payloadBits` comes from a `w*w` macro-tile, which can contain padding zeros beyond the real eccBits.
+        // Feeding those extra bits into Hamming84 decode can introduce additional erroneous codewords and
+        // cause decodeFEC to fail.
+        func eccBitCount(messageLengthBytes: Int) -> Int {
+            let rawBits = 8 + messageLengthBytes * 8
+            let paddedRaw = ((rawBits + 3) / 4) * 4
+            let codewordBits = (paddedRaw / 4) * 8
+            return codewordBits
+        }
+
+        for lenGuess in 1...16 {
+            let eccCount = eccBitCount(messageLengthBytes: lenGuess)
+            guard payloadBits.count >= eccCount else { continue }
+            let eccBits = Array(payloadBits.prefix(eccCount))
+            if let correctedText = decodeFEC(bits: eccBits) {
+                return correctedText
+            }
+        }
+
+        throw WatermarkError.extractFailed
     }
     
     func debugTestDataLayer() {

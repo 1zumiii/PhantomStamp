@@ -53,8 +53,8 @@ struct RootView: View {
         BottomNavBar(items: items, selection: $tab)
       }
 
-      // Demo-only full-screen overlay for `WatermarkInsertDemoView`.
-      FullScreenDemoProgressOverlay()
+      // Full-screen overlay (used for both demos and real watermark operations).
+      FullScreenWatermarkProgressOverlay()
         .zIndex(1000)
     }
   }
