@@ -47,7 +47,7 @@ struct WatermarkInsertDemoView: View {
             .toolbar {
                 ToolbarItem(placement: .topBarTrailing) {
                     NavigationLink {
-                        WatermarkDemoView(watermarkService: watermarkService, settingsStore: settingsStore)
+                        TestPage(watermarkService: watermarkService, settingsStore: settingsStore)
                     } label: {
                         Label("Tools", systemImage: "wrench.and.screwdriver")
                     }

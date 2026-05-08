@@ -2,7 +2,7 @@
 //  Components.swift
 //  PhantomStamp
 //
-//  可复用 SwiftUI 片段（示例：`SectionCaption` 在 RootView / WatermarkDemoView 中使用）。
+//  可复用 SwiftUI 片段（示例：`SectionCaption` 在 RootView / TestPage 中使用）。
 //
 
 import SwiftUI

@@ -84,9 +84,8 @@ enum WatermarkCompressionAttackTests {
             )
         }
 
-        let clampedQ = min(max(quality, 0.05), 0.95)
-        guard let jpeg = watermarked.jpegData(compressionQuality: clampedQ),
-              let attacked = UIImage(data: jpeg) else {
+        let clampedQ = ImageCompressionUtils.clampQuality(quality)
+        guard let recompressed = ImageCompressionUtils.recompressJPEG(image: watermarked, quality: clampedQ) else {
             return Report(
                 imageLoaded: true,
                 embedSucceeded: true,
@@ -100,6 +99,8 @@ enum WatermarkCompressionAttackTests {
                 quality: clampedQ
             )
         }
+        let attacked = recompressed.image
+        let jpegBytes = recompressed.jpegBytes
 
         let pxW = Int(attacked.size.width * attacked.scale)
         let pxH = Int(attacked.size.height * attacked.scale)
@@ -122,7 +123,7 @@ enum WatermarkCompressionAttackTests {
                 extractSucceeded: true,
                 textRoundTripPassed: (extracted == text),
                 extractedText: extracted,
-                jpegBytes: jpeg.count,
+                jpegBytes: jpegBytes,
                 attackedPx: (pxW, pxH),
                 quality: clampedQ
             )
@@ -135,7 +136,7 @@ enum WatermarkCompressionAttackTests {
                 extractSucceeded: false,
                 textRoundTripPassed: false,
                 extractedText: nil,
-                jpegBytes: jpeg.count,
+                jpegBytes: jpegBytes,
                 attackedPx: (pxW, pxH),
                 quality: clampedQ
             )
@@ -166,13 +167,15 @@ enum WatermarkCompressionAttackTests {
 
         // Helper to test a single quality. Returns (case, attackedImage?).
         func testQuality(_ q0: Double) async -> (SweepCase, UIImage?) {
-            let q = min(max(q0, 0.05), 0.95)
-            guard let (attacked, jpegBytes) = recompressJpeg(image: watermarked, quality: q) else {
+            let q = ImageCompressionUtils.clampQuality(q0)
+            guard let recompressed = ImageCompressionUtils.recompressJPEG(image: watermarked, quality: q) else {
                 return (
                     SweepCase(quality: q, jpegBytes: 0, saveSucceeded: false, extractSucceeded: false, textRoundTripPassed: false, extractedText: nil),
                     nil
                 )
             }
+            let attacked = recompressed.image
+            let jpegBytes = recompressed.jpegBytes
             let extracted: String?
             do {
                 extracted = try await service.extractWatermark(from: attacked)
@@ -285,11 +288,3 @@ enum WatermarkCompressionAttackTests {
         )
     }
 }
-
-private func recompressJpeg(image: UIImage, quality: Double) -> (UIImage, Int)? {
-    let q = min(max(quality, 0.05), 0.95)
-    guard let jpeg = image.jpegData(compressionQuality: q),
-          let attacked = UIImage(data: jpeg) else { return nil }
-    return (attacked, jpeg.count)
-}
-
