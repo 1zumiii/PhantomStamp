@@ -20,6 +20,7 @@ enum MatrixOperationsTests {
         var dctConstantDcOnlyPassed: Bool
         var dctIdctRoundTripPassed: Bool
         var sliceImagePassed: Bool
+        var stripUpdateAndReassemblePassed: Bool
 
         var varianceConstant: Float
         var varianceRamp: Float
@@ -27,6 +28,7 @@ enum MatrixOperationsTests {
         var roundTripMaxAbsError: Float
         var roundTripMAE: Float
         var sliceImageCheckCount: Int
+        var stripUpdateAndReassembleCheckCount: Int
     }
 
     /// Runs all validations and returns a metrics report.
@@ -84,6 +86,8 @@ enum MatrixOperationsTests {
         // 7) sliceImage: basic correctness (8-aligned crop + strip sizing + pixel mapping).
         let sliceResult = validateSliceImage(service: service)
 
+        // 8) updateStripInPlace + reassembleStrips: correct overwrite, preserve cropped margins.
+        let stripWriteBackResult = validateStripUpdateAndReassemble(service: service)
 
         return Report(
             varianceConstantPassed: varianceConstantPassed,
@@ -91,12 +95,14 @@ enum MatrixOperationsTests {
             dctConstantDcOnlyPassed: dctConstantDcOnlyPassed,
             dctIdctRoundTripPassed: dctIdctRoundTripPassed && embedExtractPassed && embedPipelinePassed,
             sliceImagePassed: sliceResult.passed,
+            stripUpdateAndReassemblePassed: stripWriteBackResult.passed,
             varianceConstant: vConst,
             varianceRamp: vRamp,
             dctConstantMaxNonDCAbs: maxNonDCAbs,
             roundTripMaxAbsError: maxAbsError,
             roundTripMAE: mae,
-            sliceImageCheckCount: sliceResult.checkCount
+            sliceImageCheckCount: sliceResult.checkCount,
+            stripUpdateAndReassembleCheckCount: stripWriteBackResult.checkCount
         )
     }
 
@@ -104,7 +110,13 @@ enum MatrixOperationsTests {
     static func runAllAndPrint() {
         #if DEBUG
         let r = runAll()
-        let passed = r.varianceConstantPassed && r.varianceRampPassed && r.dctConstantDcOnlyPassed && r.dctIdctRoundTripPassed && r.sliceImagePassed
+        let passed =
+            r.varianceConstantPassed
+            && r.varianceRampPassed
+            && r.dctConstantDcOnlyPassed
+            && r.dctIdctRoundTripPassed
+            && r.sliceImagePassed
+            && r.stripUpdateAndReassemblePassed
         let status = passed ? "PASS" : "FAIL"
         print("[MatrixOperationsTests] \(status) DSP / DCT / Slice")
         print("  - variance (constant→0):    \(r.varianceConstantPassed ? "PASS" : "FAIL")  value=\(String(format: "%.6f", r.varianceConstant))")
@@ -112,6 +124,7 @@ enum MatrixOperationsTests {
         print("  - DCT constant (non-DC≈0):  \(r.dctConstantDcOnlyPassed ? "PASS" : "FAIL")  maxNonDC=\(String(format: "%.6f", r.dctConstantMaxNonDCAbs))")
         print("  - DCT↔IDCT round-trip:      \(r.dctIdctRoundTripPassed ? "PASS" : "FAIL")  max=\(String(format: "%.6f", r.roundTripMaxAbsError)) mae=\(String(format: "%.6f", r.roundTripMAE))")
         print("  - sliceImage:               \(r.sliceImagePassed ? "PASS" : "FAIL")  checks=\(r.sliceImageCheckCount)")
+        print("  - strip write-back:         \(r.stripUpdateAndReassemblePassed ? "PASS" : "FAIL")  checks=\(r.stripUpdateAndReassembleCheckCount)")
         #endif
     }
 
@@ -223,6 +236,90 @@ enum MatrixOperationsTests {
                 let expectedLast = m.data[globalY * m.width + 15]
                 let actualLast = s.pixels[sy * s.width + 15]
                 guard check(actualLast == expectedLast) else { return (false, checks) }
+            }
+        }
+
+        return (true, checks)
+    }
+
+    private static func validateStripUpdateAndReassemble(service: WatermarkService) -> (passed: Bool, checkCount: Int) {
+        // Use non-8-aligned matrix to verify that right/bottom margins are preserved.
+        // width=19 => validWidth=16, height=26 => validHeight=24
+        var original = Matrix(width: 19, height: 26, data: [])
+        original.data = [UInt8](repeating: 0, count: original.width * original.height)
+
+        // Fill with a deterministic pattern, and make margins distinct so we can detect accidental overwrites.
+        // - Core area (potentially overwritten by strips): (y*width+x)%251
+        // - Right margin columns x=16..18: 240
+        // - Bottom margin rows y=24..25: 241
+        for y in 0..<original.height {
+            for x in 0..<original.width {
+                if y >= 24 {
+                    original.data[y * original.width + x] = 241
+                } else if x >= 16 {
+                    original.data[y * original.width + x] = 240
+                } else {
+                    original.data[y * original.width + x] = UInt8((y * original.width + x) % 251)
+                }
+            }
+        }
+
+        let validWidth = (original.width / 8) * 8
+        let validHeight = (original.height / 8) * 8
+
+        // Slice and then "process" strips by setting their pixels to a known marker per strip.
+        var strips = service.sliceImage(original, heightPerStrip: 10) // safeStripHeight=8 => 3 strips
+
+        var checks = 0
+        func check(_ cond: Bool) -> Bool { checks += 1; return cond }
+
+        guard check(strips.count == validHeight / 8) else { return (false, checks) }
+
+        // Simulate async processing order reversal and ensure updateStripInPlace still writes correct strip.
+        let processed = strips.enumerated().map { (i, s) -> ImageStrip in
+            var out = s
+            let marker = UInt8(10 + i) // 10,11,12...
+            out.pixels = [UInt8](repeating: marker, count: s.width * s.height)
+            return out
+        }.reversed()
+
+        for p in processed {
+            service.updateStripInPlace(&strips, with: p)
+        }
+
+        // Reassemble into a copy of the original.
+        var reassembled = original
+        service.reassembleStrips(strips, into: &reassembled)
+
+        // 1) Core area [0..<validWidth, 0..<validHeight] must be overwritten by markers.
+        // Verify a couple of points per strip.
+        for (i, s) in strips.enumerated() {
+            let expected = UInt8(10 + i)
+            let samplePoints = [(x: 0, y: 0), (x: 7, y: 3), (x: validWidth - 1, y: 7)]
+            for sp in samplePoints {
+                let globalY = s.globalYOffset + sp.y
+                let idx = globalY * reassembled.width + sp.x
+                guard check(reassembled.data[idx] == expected) else { return (false, checks) }
+            }
+        }
+
+        // 2) Right margin x in [validWidth..<width) for y < validHeight must stay at 240.
+        if validWidth < original.width {
+            for y in 0..<validHeight {
+                for x in validWidth..<original.width {
+                    let idx = y * original.width + x
+                    guard check(reassembled.data[idx] == 240) else { return (false, checks) }
+                }
+            }
+        }
+
+        // 3) Bottom margin y in [validHeight..<height) must stay at 241 (all columns).
+        if validHeight < original.height {
+            for y in validHeight..<original.height {
+                for x in 0..<original.width {
+                    let idx = y * original.width + x
+                    guard check(reassembled.data[idx] == 241) else { return (false, checks) }
+                }
             }
         }
 

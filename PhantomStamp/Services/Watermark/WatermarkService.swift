@@ -64,7 +64,7 @@ class WatermarkService: WatermarkServiceProtocol {
         let yChannel = ycbcrImage.Y
         reportProgress(step: .colorConversion, percentage: prepEnd + (colorEnd - prepEnd) * 0.55)
 
-        // TODO: 将 Y 通道按行切分为多个条带（高度必须是 8 的倍数）。限定算法范围，详见「尺寸校验 - 8的倍数」页面
+        // slice the Y channel into multiple strips (the height must be a multiple of 8)
         let stripHeight = 80
         var imageStrips = sliceImage(yChannel, heightPerStrip: stripHeight)
         reportProgress(step: .colorConversion, percentage: colorEnd)
@@ -103,9 +103,11 @@ class WatermarkService: WatermarkServiceProtocol {
         // Step 4: Reassemble → (stripsEnd, 1.0]
         // ==========================================
         reportProgress(step: .reassembling, percentage: stripsEnd)
-        // TODO: 先裁剪回原来的尺寸
-        // TODO: 组装处理后的条带，替换原 YCbCr 的 Y 通道，并转回 RGB 的 UIImage
-        ycbcrImage.Y = reassembleStrips(imageStrips)
+        
+        // overwrite the processed strips back to the original Y channel matrix.
+        // the extra 1~7 pixels on the right side and bottom of the original matrix will be kept intact, and not be destroyed.
+        reassembleStrips(imageStrips, into: &ycbcrImage.Y)
+        
         reportProgress(step: .reassembling, percentage: stripsEnd + (1 - stripsEnd) * 0.55)
 
         guard let finalImage = convertToUIImage(from: ycbcrImage) else {
@@ -117,30 +119,30 @@ class WatermarkService: WatermarkServiceProtocol {
     }
     
     // ==========================================
-    // 提取水印
+    // Extract Watermark
     // ==========================================
     func extractWatermark(from image: UIImage) async throws -> String {
-        // 1. 图像预处理
+        // 1. image preprocessing
         guard let ycbcrImage = convertToYCbCr(image: image) else {
             throw WatermarkError.processingError
         }
         let yChannel = ycbcrImage.Y
         
-        // 2. 物理与逻辑对齐 (应对平移裁切攻击)
-        // TODO: 执行 64 次网格偏移扫描，配合滑动窗口寻找同步头
+        // 2. physical and logical alignment (to handle translation and cropping attacks)
+        // TODO: execute 64 grid offset scans, and use sliding window to find the sync header
         guard let gridOffset = findGridOffsetAndSyncMarker(in: yChannel) else {
             throw WatermarkError.extractFailed
         }
         
-        // 3. 数据提取
-        // TODO: 基于找到的精确网格基准点，提取全图所有的 8x8 块中的比特流
+        // 3. data extraction
+        // TODO: based on the exact grid base point found, extract the bit stream in all 8x8 blocks of the entire image
         let rawExtractedBits = extractBitsWithOffset(yChannel, offset: gridOffset)
         
-        // 4. 数据恢复与解码
-        // TODO: 通过多数表决 (Majority Voting) 合并冗余数据
+        // 4. data recovery and decoding
+        // TODO: merge redundant data through majority voting (Majority Voting)
         let votedBits = applyMajorityVoting(to: rawExtractedBits)
         
-        // TODO: 移除同步头，将纯数据送入 FEC 解码器纠错
+        // TODO: remove the sync header, and send the pure data to the FEC decoder for error correction
         guard let correctedText = decodeFEC(bits: votedBits) else {
             throw WatermarkError.extractFailed
         }

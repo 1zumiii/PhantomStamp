@@ -113,6 +113,41 @@ extension WatermarkService{
         
         return strips
     }
+    
+    /// overwrite the processed strip back to the original strips array.
+    /// the extra 1~7 pixels on the right side and bottom of the original matrix will be kept intact, and not be destroyed.
+    func updateStripInPlace(_ strips: inout [ImageStrip], with processedStrip: ImageStrip) {
+        // find the strip in the original array by the globalYOffset, and replace the memory directly
+        if let index = strips.firstIndex(where: { $0.globalYOffset == processedStrip.globalYOffset }) {
+            strips[index] = processedStrip
+        }
+    }
+    
+    /// overwrite the processed strips back to the original Y channel matrix.
+    /// the extra 1~7 pixels on the right side and bottom of the original matrix will be kept intact, and not be destroyed.
+    func reassembleStrips(_ strips: [ImageStrip], into originalMatrix: inout Matrix) {
+        let originalWidth = originalMatrix.width
+        
+        // use pointer to skip the Swift array out-of-bounds check, and maximize the loop performance
+        originalMatrix.data.withUnsafeMutableBufferPointer { matrixPtr in
+            for strip in strips {
+                let stripWidth = strip.width
+                let stripHeight = strip.height
+                let startY = strip.globalYOffset
+                
+                strip.pixels.withUnsafeBufferPointer { stripPtr in
+                    for row in 0..<stripHeight {
+                        let dstRowStart = (startY + row) * originalWidth
+                        let srcRowStart = row * stripWidth
+                        
+                        for col in 0..<stripWidth {
+                            matrixPtr[dstRowStart + col] = stripPtr[srcRowStart + col]
+                        }
+                    }
+                }
+            }
+        }
+    }
 }
 
 // MARK: - vDSP-based 8×8 DCT/IDCT
