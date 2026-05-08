@@ -29,7 +29,7 @@ extension WatermarkService {
     //func embedBitIntoFrequencies(_ freqBlock: inout Matrix8x8, bit: Int) { }
     
     // 提取专用
-    func findGridOffsetAndSyncMarker(in matrix: Matrix) -> CGPoint? { return nil }
+    // func findGridOffsetAndSyncMarker(in matrix: Matrix) -> CGPoint? { return nil }
     func extractBitsWithOffset(_ matrix: Matrix, offset: CGPoint) -> [[Int]] { return [] }
     func applyMajorityVoting(to bits: [[Int]]) -> [Int] { return [] }
 }

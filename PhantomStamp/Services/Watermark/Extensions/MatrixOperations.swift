@@ -148,6 +148,126 @@ extension WatermarkService{
             }
         }
     }
+    
+    /// find the grid offset and sync marker in the matrix.
+    /// the grid offset is the starting point of the sync marker.
+    /// the sync marker is the sequence of bits that indicates the start of the watermark data.
+    func findGridOffsetAndSyncMarker(in matrix: Matrix) -> CGPoint? {
+        let syncMarker = getSyncMarkerBits()
+        let tolerance = 4 // tolerance: allow up to 4 mismatches in 32 bits (to resist JPEG compression-induced noise)
+        
+        // to ensure we can slide and find at least one complete sync header, we define a search area.
+        // extract up to 30x30 macroblocks (240x240 pixels) in the top-left corner for verification, enough to cover all W cases, avoid performance explosion by extracting the entire image 64 times.
+        let searchBlockLimit = 30
+        
+        // Return the globally best match across all 64 pixel offsets.
+        // Returning the first hit is fragile because local noise can satisfy the tolerance threshold early.
+        var bestMatchCount = -1
+        var bestOffset: CGPoint?
+        #if DEBUG
+        var bestDetails: (offsetX: Int, offsetY: Int, bx: Int, by: Int, w: Int) = (0, 0, 0, 0, 0)
+        #endif
+        
+        // 1. pixel-level scan: 64 physical offset scans
+        for offsetY in 0..<Matrix8x8.side {
+            for offsetX in 0..<Matrix8x8.side {
+                
+                let maxRows = min(searchBlockLimit, (matrix.height - offsetY) / Matrix8x8.side)
+                let maxCols = min(searchBlockLimit, (matrix.width - offsetX) / Matrix8x8.side)
+                
+                // if the minimum number of blocks is not enough, it means the image is too small or at the edge, skip directly
+                if maxRows < 4 || maxCols < 8 { continue }
+                
+                // core optimization: pre-batch extract the bits under the current offset, avoid repeating the heavy DCT computation in the sliding window enumeration
+                var bitGrid = [[Int]](repeating: [Int](repeating: 0, count: maxCols), count: maxRows)
+                for r in 0..<maxRows {
+                    for c in 0..<maxCols {
+                        let block = extractSpatialBlock(from: matrix, x: offsetX + c * Matrix8x8.side, y: offsetY + r * Matrix8x8.side)
+                        let freqBlock = performDCT(block)
+                        bitGrid[r][c] = extractBitFromFrequencies(freqBlock)
+                    }
+                }
+                
+                // 2. block-level sliding window: find the starting point of the macroblock that is cut off (bx, by)
+                for by in 0..<maxRows {
+                    for bx in 0..<maxCols {
+                        
+                        // 3. enumerate possible macroblock side lengths W
+                        // because the payload maximum is 16 bytes, plus FEC and sync header, the calculated side length W must fall between 8 and 18
+                        for w in 8...18 {
+                            // calculate the extreme row and column positions to read 32 bits under the current W, to prevent array out of bounds
+                            let maxRowNeeded = by + (32 / w) + 1
+                            let maxColNeeded = bx + min(32, w)
+                            
+                            if maxRowNeeded > maxRows || maxColNeeded > maxCols {
+                                continue
+                            }
+                            
+                            var matchCount = 0
+                            for i in 0..<32 {
+                                let r = by + (i / w)
+                                let c = bx + (i % w)
+                                if bitGrid[r][c] == syncMarker[i] {
+                                    matchCount += 1
+                                }
+                            }
+                            
+                            if matchCount > bestMatchCount {
+                                bestMatchCount = matchCount
+                                bestOffset = CGPoint(x: offsetX, y: offsetY)
+                                #if DEBUG
+                                bestDetails = (offsetX, offsetY, bx, by, w)
+                                #endif
+                            }
+                            
+                            // Perfect hit: safe early-exit.
+                            if matchCount == 32 {
+                                #if DEBUG
+                                print("[WatermarkService] DEBUG gridOffset best=32/32 offset=(\(offsetX),\(offsetY)) bx=\(bx) by=\(by) w=\(w)")
+                                #endif
+                                return CGPoint(x: offsetX, y: offsetY)
+                            }
+                        }
+                    }
+                }
+            }
+        }
+        
+        if bestMatchCount >= (32 - tolerance), let bestOffset {
+            #if DEBUG
+            print("[WatermarkService] DEBUG gridOffset best=\(bestMatchCount)/32 offset=(\(bestDetails.offsetX),\(bestDetails.offsetY)) bx=\(bestDetails.bx) by=\(bestDetails.by) w=\(bestDetails.w)")
+            #endif
+            return bestOffset
+        }
+        
+        #if DEBUG
+        if let bestOffset {
+            print("[WatermarkService] DEBUG gridOffset no-hit best=\(bestMatchCount)/32 offset=(\(Int(bestOffset.x)),\(Int(bestOffset.y)))")
+        } else {
+            print("[WatermarkService] DEBUG gridOffset no-hit best=<none>")
+        }
+        #endif
+        return nil
+    }
+
+    // MARK: - Helper
+
+    /// extract the 8x8 spatial domain block from the global Y channel matrix based on the absolute coordinates
+    private func extractSpatialBlock(from matrix: Matrix, x: Int, y: Int) -> Matrix8x8 {
+        var block = Matrix8x8()
+        matrix.data.withUnsafeBufferPointer { ptr in
+            block.values.withUnsafeMutableBufferPointer { blockPtr in
+                for row in 0..<Matrix8x8.side {
+                    let srcStart = (y + row) * matrix.width + x
+                    let dstStart = row * Matrix8x8.side
+                    for col in 0..<Matrix8x8.side {
+                        blockPtr[dstStart + col] = Float(ptr[srcStart + col])
+                    }
+                }
+            }
+        }
+        return block
+    }
 }
 
 // MARK: - vDSP-based 8×8 DCT/IDCT
@@ -214,7 +334,7 @@ private enum DCT8x8vDSP {
                 }
 
                 matrix.withUnsafeMutableBufferPointer { dst in
-                    dst.baseAddress!.assign(from: outPtr, count: Matrix8x8.elementCount)
+                    dst.baseAddress!.update(from: outPtr, count: Matrix8x8.elementCount)
                 }
             }
         }
@@ -250,7 +370,7 @@ private enum DCT8x8vDSP {
                 }
 
                 matrix.withUnsafeMutableBufferPointer { dst in
-                    dst.baseAddress!.assign(from: outPtr, count: Matrix8x8.elementCount)
+                    dst.baseAddress!.update(from: outPtr, count: Matrix8x8.elementCount)
                 }
             }
         }
