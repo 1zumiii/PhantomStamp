@@ -11,6 +11,10 @@ extension AppConstants {
     enum Notifications {
         // Fixed notification channel name
         static let watermarkProgress = Notification.Name("WatermarkProgress")
+        /// Batch-level progress for multi-file processing (completed / total).
+        static let watermarkBatchProgress = Notification.Name("WatermarkBatchProgress")
+        /// UI ack: per-file progress reached 100% and queue drained (for sequential batch pacing).
+        static let watermarkPerFileProgressDidDrain = Notification.Name("WatermarkPerFileProgressDidDrain")
         /// Broadcast to show a full-screen progress overlay (embed/extract session start).
         static let watermarkProgressOverlayDidStart = Notification.Name("WatermarkProgressOverlayDidStart")
         /// Broadcast to hide the full-screen progress overlay (embed/extract session end).
@@ -43,6 +47,20 @@ extension AppConstants {
 struct ProgressPayload {
     let step: AppConstants.WatermarkStep
     let percentage: Double // 0.0 to 1.0
+}
+
+/// Multi-file batch progress payload for UI overlays.
+struct BatchProgressPayload: Sendable {
+    let completed: Int
+    let total: Int
+    /// 0-based index of the file currently being processed.
+    /// When `current` changes, the UI should reset the per-file progress bar.
+    let current: Int
+}
+
+/// UI ack payload indicating the current file's progress display drained.
+struct PerFileProgressDrainPayload: Sendable {
+    let current: Int
 }
 
 /// Demo-only payload for UI progress overlays (English copy).

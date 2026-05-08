@@ -21,6 +21,7 @@ struct TestPage: View {
             VStack(alignment: .leading, spacing: 16) {
                 header
                 testsCard
+                batchCard
                 attacksCard
                 compressionCard
                 Spacer(minLength: 18)
@@ -98,6 +99,19 @@ struct TestPage: View {
                 style: .normal
             ) {
                 Task { await runCropAttackTestOnBundledImage() }
+            }
+        }
+    }
+
+    private var batchCard: some View {
+        card(title: "Batch (multi-file)", systemImage: "square.stack.3d.up") {
+            testRow(
+                title: "Multi-file embed (×5)",
+                subtitle: "Sequential embed for multiple files. Shows batch progress bar.",
+                runTitle: "Run",
+                style: .normal
+            ) {
+                Task { await runMultiFileEmbedTestOnBundledImage() }
             }
         }
     }
@@ -314,6 +328,26 @@ struct TestPage: View {
         }
     }
 
+    private func runMultiFileEmbedTestOnBundledImage() async {
+        isLoading = true
+        defer { isLoading = false }
+
+        let r = await WatermarkMultiFileTests.runMultiFileEmbedOnBundledTestImg(text: "Batch水印OK", fileCount: 5)
+        let ok = r.imageLoaded && r.embedSucceeded
+        let status = ok ? "PASS" : "FAIL"
+        print("[TestPage] MultiFileEmbed \(status) files=\(r.fileCount) totalMs=\(String(format: "%.2f", r.totalMs))")
+
+        if let outs = r.outputImages {
+            // Save a couple of outputs for quick inspection (best effort).
+            if let first = outs.first { await saveToSystemPhotoAlbumIfPossible(first) }
+            if outs.count > 1, let last = outs.last { await saveToSystemPhotoAlbumIfPossible(last) }
+        }
+
+        if !ok {
+            present("Multi-file embed failed.")
+        }
+    }
+
     private func runCompressionAttackTestOnBundledImage() async {
         isLoading = true
         defer { isLoading = false }
@@ -376,7 +410,7 @@ struct TestPage: View {
 
 #Preview {
     NavigationStack {
-        TestPage(watermarkService: PreviewWatermarkService(), settingsStore: UserSettingsStore())
+        TestPage(watermarkService: WatermarkService(), settingsStore: UserSettingsStore())
     }
 }
 
