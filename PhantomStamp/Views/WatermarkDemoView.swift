@@ -201,6 +201,44 @@ struct WatermarkDemoView: View {
         }
     }
 
+    private func runCropAttackTestOnBundledImage() async {
+        isLoading = true
+        defer { isLoading = false }
+
+        NotificationCenter.default.post(name: AppConstants.Notifications.watermarkProgressOverlayDidStart, object: nil)
+        NotificationCenter.default.post(
+            name: AppConstants.Notifications.watermarkProgress,
+            object: nil,
+            userInfo: ["payload": ProgressPayload(step: .preparation, percentage: 0.05)]
+        )
+
+        let r = await WatermarkCropAttackTests.runAllCrop10PercentOnBundledTestImg()
+        let ok = r.imageLoaded && !r.cases.isEmpty && r.cases.allSatisfy { $0.embedSucceeded && $0.cropSucceeded && $0.extractSucceeded && $0.textRoundTripPassed }
+        let status = ok ? "PASS" : "FAIL"
+        print("[WatermarkDemoView] CropAttack \(status) cases=\(r.cases.count)")
+        for c in r.cases {
+            let cropInfo = c.cropPx.map { "\($0.w)x\($0.h)px" } ?? "nil"
+            let caseOk = c.embedSucceeded && c.cropSucceeded && c.extractSucceeded && c.textRoundTripPassed
+            print("  - case=\(c.kind.rawValue) \(caseOk ? "PASS" : "FAIL") extracted=\(c.extractedText ?? "nil") crop=\(cropInfo) saved=\(c.saveSucceeded)")
+        }
+
+        NotificationCenter.default.post(
+            name: AppConstants.Notifications.watermarkProgress,
+            object: nil,
+            userInfo: ["payload": ProgressPayload(step: .reassembling, percentage: 1)]
+        )
+        NotificationCenter.default.post(name: AppConstants.Notifications.watermarkProgressOverlayDidEnd, object: nil)
+
+        if !ok {
+            let details = r.cases.map { c in
+                let caseOk = c.embedSucceeded && c.cropSucceeded && c.extractSucceeded && c.textRoundTripPassed
+                return "\(c.kind.rawValue)=\(caseOk ? "PASS" : "FAIL") extracted=\(c.extractedText ?? "nil") saved=\(c.saveSucceeded)"
+            }.joined(separator: "\n")
+            let msg = "CropAttack failed: imageLoaded=\(r.imageLoaded)\n\(details)"
+            present(NSError(domain: "WatermarkCropAttack", code: -1, userInfo: [NSLocalizedDescriptionKey: msg]))
+        }
+    }
+
     private func present(_ error: Error) {
         #if DEBUG
         print("[WatermarkDemoView] ERROR: \(error)")
@@ -312,6 +350,17 @@ struct WatermarkDemoView: View {
                 Task { await runEndToEndTestOnBundledImage() }
             } label: {
                 Label("Run E2E Test (TestImg)", systemImage: "checkmark.seal")
+                    .frame(maxWidth: .infinity)
+                    .padding(.vertical, 4)
+            }
+            .buttonStyle(.bordered)
+            .controlSize(.large)
+            .disabled(isLoading)
+
+            Button {
+                Task { await runCropAttackTestOnBundledImage() }
+            } label: {
+                Label("Run Crop Attack Test (TestImg)", systemImage: "crop")
                     .frame(maxWidth: .infinity)
                     .padding(.vertical, 4)
             }
