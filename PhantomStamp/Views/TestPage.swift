@@ -15,6 +15,7 @@ struct TestPage: View {
     @State private var isLoading = false
     @State private var alertMessage = ""
     @State private var showAlert = false
+    @State private var multiFileCount: Int = 5
 
     var body: some View {
         ScrollView {
@@ -105,13 +106,82 @@ struct TestPage: View {
 
     private var batchCard: some View {
         card(title: "Batch (multi-file)", systemImage: "square.stack.3d.up") {
-            testRow(
-                title: "Multi-file embed (×5)",
-                subtitle: "Sequential embed for multiple files. Shows batch progress bar.",
-                runTitle: "Run",
-                style: .normal
-            ) {
-                Task { await runMultiFileEmbedTestOnBundledImage() }
+            VStack(alignment: .leading, spacing: 12) {
+                HStack(alignment: .firstTextBaseline, spacing: 12) {
+                    VStack(alignment: .leading, spacing: 3) {
+                        Text("Multi-file embed (×\(multiFileCount))")
+                            .font(.callout.weight(.semibold))
+                            .foregroundStyle(.primary)
+                        Text("Sequential embed for multiple files. Shows batch progress bar.")
+                            .font(.caption)
+                            .foregroundStyle(.secondary)
+                            .fixedSize(horizontal: false, vertical: true)
+                    }
+                    Spacer(minLength: 10)
+                }
+
+                HStack {
+                    Text("Images")
+                        .font(.footnote.weight(.semibold))
+                        .foregroundStyle(.secondary)
+
+                    Spacer()
+
+                    HStack(spacing: 10) {
+                        HStack(spacing: 4) {
+                            Button {
+                                multiFileCount = max(2, multiFileCount - 1)
+                            } label: {
+                                Image(systemName: "minus")
+                                    .font(.footnote.weight(.semibold))
+                                    .frame(width: 24, height: 25)
+                                    .contentShape(Rectangle())
+                            }
+                            .buttonStyle(.plain)
+                            .foregroundStyle(.secondary)
+                            .disabled(isLoading || multiFileCount <= 2)
+
+                            Text("\(multiFileCount)")
+                                .font(.footnote.monospacedDigit().weight(.semibold))
+                                .foregroundStyle(.secondary)
+                                .frame(minWidth: 14)
+
+                            Button {
+                                multiFileCount = min(6, multiFileCount + 1)
+                            } label: {
+                                Image(systemName: "plus")
+                                    .font(.footnote.weight(.semibold))
+                                    .frame(width: 24, height: 25)
+                                    .contentShape(Rectangle())
+                            }
+                            .buttonStyle(.plain)
+                            .foregroundStyle(.secondary)
+                            .disabled(isLoading || multiFileCount >= 6)
+                        }
+                        .padding(.horizontal, 0.5)
+                        .padding(.vertical, 2)
+                        .background(.thinMaterial, in: Capsule(style: .continuous))
+                        .overlay {
+                            Capsule(style: .continuous)
+                                .strokeBorder(Color.primary.opacity(0.08), lineWidth: 1)
+                        }
+                        .accessibilityElement(children: .ignore)
+                        .accessibilityLabel("Images count")
+                        .accessibilityValue("\(multiFileCount)")
+
+                        Button {
+                            Task { await runMultiFileEmbedTestOnBundledImage(fileCount: multiFileCount) }
+                        } label: {
+                            Text("Run")
+                                .font(.callout.weight(.semibold))
+                                .padding(.horizontal, 12)
+                        }
+                        .frame(width: 80, height: 32)
+                        .modifier(RunButtonStyleModifier(style: .normal))
+                        .controlSize(.small)
+                        .disabled(isLoading)
+                    }
+                }
             }
         }
     }
@@ -328,11 +398,11 @@ struct TestPage: View {
         }
     }
 
-    private func runMultiFileEmbedTestOnBundledImage() async {
+    private func runMultiFileEmbedTestOnBundledImage(fileCount: Int) async {
         isLoading = true
         defer { isLoading = false }
 
-        let r = await WatermarkMultiFileTests.runMultiFileEmbedOnBundledTestImg(text: "Batch水印OK", fileCount: 5)
+        let r = await WatermarkMultiFileTests.runMultiFileEmbedOnBundledTestImg(text: "Batch水印OK", fileCount: fileCount)
         let ok = r.imageLoaded && r.embedSucceeded
         let status = ok ? "PASS" : "FAIL"
         print("[TestPage] MultiFileEmbed \(status) files=\(r.fileCount) totalMs=\(String(format: "%.2f", r.totalMs))")
