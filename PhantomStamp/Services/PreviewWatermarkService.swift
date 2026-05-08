@@ -48,34 +48,10 @@ private extension PreviewWatermarkService {
                 detail: "Image pipeline (YCbCr round-trip)…",
                 percentage: 0.10,
                 run: {
-                    let t0 = CFAbsoluteTimeGetCurrent()
-                    ImagePipelineTests.runAllBundledAndPrint()
-                    let dtMs = (CFAbsoluteTimeGetCurrent() - t0) * 1000
-                    print("[Timing] ImagePipelineTests.runAllBundledAndPrint took \(String(format: "%.2f", dtMs)) ms")
+                    // Keep detailed timing inside the centralized runner.
+                    WatermarkDebugTests.runAllAndPrint()
                 }
             ),
-            Step(
-                title: "Running Tests",
-                detail: "Matrix ops (DCT / slice / sync)…",
-                percentage: 0.55,
-                run: {
-                    let t0 = CFAbsoluteTimeGetCurrent()
-                    MatrixOperationsTests.runAllAndPrint()
-                    let dtMs = (CFAbsoluteTimeGetCurrent() - t0) * 1000
-                    print("[Timing] MatrixOperationsTests.runAllAndPrint took \(String(format: "%.2f", dtMs)) ms")
-                }
-            ),
-            Step(
-                title: "Running Tests",
-                detail: "Data processing (FEC / sync / tile)…",
-                percentage: 0.88,
-                run: {
-                    let t0 = CFAbsoluteTimeGetCurrent()
-                    DataProcessingTests.runAllAndPrint()
-                    let dtMs = (CFAbsoluteTimeGetCurrent() - t0) * 1000
-                    print("[Timing] DataProcessingTests.runAllAndPrint took \(String(format: "%.2f", dtMs)) ms")
-                }
-            )
         ]
 
         for s in steps {
