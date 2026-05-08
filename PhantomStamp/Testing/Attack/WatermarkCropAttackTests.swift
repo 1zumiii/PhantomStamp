@@ -73,8 +73,68 @@ enum WatermarkCropAttackTests {
         var out: [CaseReport] = []
         out.reserveCapacity(3)
 
-        for kind in [CropKind.right10, .left10, .top10] {
-            out.append(await runSingleCropCase(kind: kind, percent: 0.10, watermarked: watermarked, expectedText: text, service: service))
+        let kinds: [CropKind] = [.right10, .left10, .top10]
+        var croppedImages: [UIImage?] = []
+        croppedImages.reserveCapacity(kinds.count)
+        var saveSucceededByKind: [CropKind: Bool] = [:]
+        var cropPxByKind: [CropKind: (w: Int, h: Int)] = [:]
+
+        for kind in kinds {
+            guard let cropped = crop(image: watermarked, kind: kind, percent: 0.10) else {
+                croppedImages.append(nil)
+                continue
+            }
+            croppedImages.append(cropped)
+
+            let pxW = Int(cropped.size.width * cropped.scale)
+            let pxH = Int(cropped.size.height * cropped.scale)
+            cropPxByKind[kind] = (pxW, pxH)
+
+            var saveSucceeded = false
+            do {
+                try await PhotoLibraryExporter.saveToPhotoLibrary(cropped)
+                saveSucceeded = true
+            } catch {
+                saveSucceeded = false
+            }
+            saveSucceededByKind[kind] = saveSucceeded
+        }
+
+        let imagesForBatch = croppedImages.compactMap { $0 }
+        let extractedBatch = await service.extractWatermarkBestEffort(from: imagesForBatch)
+        var extractedIter = extractedBatch.makeIterator()
+
+        for kind in kinds {
+            if croppedImages[kinds.firstIndex(of: kind) ?? 0] != nil {
+                let extracted = extractedIter.next() ?? nil
+                let saveOk = saveSucceededByKind[kind] ?? false
+                let cropPx = cropPxByKind[kind]
+                out.append(
+                    CaseReport(
+                        kind: kind,
+                        embedSucceeded: true,
+                        cropSucceeded: true,
+                        saveSucceeded: saveOk,
+                        extractSucceeded: (extracted != nil),
+                        textRoundTripPassed: (extracted == text),
+                        extractedText: extracted,
+                        cropPx: cropPx
+                    )
+                )
+            } else {
+                out.append(
+                    CaseReport(
+                        kind: kind,
+                        embedSucceeded: true,
+                        cropSucceeded: false,
+                        saveSucceeded: false,
+                        extractSucceeded: false,
+                        textRoundTripPassed: false,
+                        extractedText: nil,
+                        cropPx: nil
+                    )
+                )
+            }
         }
 
         return Report(imageLoaded: true, cases: out)
@@ -85,63 +145,6 @@ enum WatermarkCropAttackTests {
         let r = await runAllCrop10PercentOnBundledTestImg()
         return r.cases.first(where: { $0.kind == .right10 })
             ?? CaseReport(kind: .right10, embedSucceeded: false, cropSucceeded: false, saveSucceeded: false, extractSucceeded: false, textRoundTripPassed: false, extractedText: nil, cropPx: nil)
-    }
-
-    private static func runSingleCropCase(
-        kind: CropKind,
-        percent: Double,
-        watermarked: UIImage,
-        expectedText: String,
-        service: WatermarkService
-    ) async -> CaseReport {
-        guard let cropped = crop(image: watermarked, kind: kind, percent: percent) else {
-            return CaseReport(
-                kind: kind,
-                embedSucceeded: true,
-                cropSucceeded: false,
-                saveSucceeded: false,
-                extractSucceeded: false,
-                textRoundTripPassed: false,
-                extractedText: nil,
-                cropPx: nil
-            )
-        }
-
-        let pxW = Int(cropped.size.width * cropped.scale)
-        let pxH = Int(cropped.size.height * cropped.scale)
-
-        var saveSucceeded = false
-        do {
-            try await PhotoLibraryExporter.saveToPhotoLibrary(cropped)
-            saveSucceeded = true
-        } catch {
-            saveSucceeded = false
-        }
-
-        do {
-            let extracted = try await service.extractWatermark(from: cropped)
-            return CaseReport(
-                kind: kind,
-                embedSucceeded: true,
-                cropSucceeded: true,
-                saveSucceeded: saveSucceeded,
-                extractSucceeded: true,
-                textRoundTripPassed: (extracted == expectedText),
-                extractedText: extracted,
-                cropPx: (pxW, pxH)
-            )
-        } catch {
-            return CaseReport(
-                kind: kind,
-                embedSucceeded: true,
-                cropSucceeded: true,
-                saveSucceeded: saveSucceeded,
-                extractSucceeded: false,
-                textRoundTripPassed: false,
-                extractedText: nil,
-                cropPx: (pxW, pxH)
-            )
-        }
     }
 
     /// Crop image using pixel-precise `cgImage` cropping.

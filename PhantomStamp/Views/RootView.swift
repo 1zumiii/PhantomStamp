@@ -64,6 +64,6 @@ struct RootView: View {
   let schema = Schema([HistoryEntry.self])
   let config = ModelConfiguration(schema: schema, isStoredInMemoryOnly: true)
   let container = try! ModelContainer(for: schema, configurations: [config])
-  return RootView(watermarkService: PreviewWatermarkService())
+  return RootView(watermarkService: WatermarkService())
     .modelContainer(container)
 }

@@ -339,7 +339,7 @@ struct WatermarkInsertDemoView: View {
 
 #Preview {
     NavigationStack {
-        WatermarkInsertDemoView(watermarkService: PreviewWatermarkService(), settingsStore: UserSettingsStore())
+        WatermarkInsertDemoView(watermarkService: WatermarkService(), settingsStore: UserSettingsStore())
     }
 }
 
