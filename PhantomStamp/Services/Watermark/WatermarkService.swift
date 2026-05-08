@@ -9,7 +9,7 @@ import Accelerate
 class WatermarkService: WatermarkServiceProtocol {
     
     // ==========================================
-    // 嵌入水印
+    // Embedding Watermark
     // ==========================================
     func embedWatermark(into image: UIImage, text: String) async throws -> UIImage {
         
@@ -43,14 +43,14 @@ class WatermarkService: WatermarkServiceProtocol {
         }
         reportProgress(step: .preparation, percentage: prepEnd * 0.35)
 
-        // TODO: 将文本转为二进制并应用前向纠错码 (FEC)
+        // Convert the text to binary and apply Forward Error Correction (FEC)
         let eccBits = encodeFEC(text: text)
         reportProgress(step: .preparation, percentage: prepEnd * 0.65)
 
-        // TODO: 拼接同步头，构成完整的单个水印周期
+        // Concatenate the sync header, and form a complete single watermark period
         let syncBits = getSyncMarkerBits()
         let payloadBits = syncBits + eccBits
-        // TODO: 将一维数据流转为二维宏块（防裁剪的光栅断裂问题）
+        // Convert the one-dimensional data stream to a two-dimensional macroblock (to prevent raster断裂问题)
         let macroblock = build2DTile(from: payloadBits)
         reportProgress(step: .preparation, percentage: prepEnd)
 
@@ -79,7 +79,7 @@ class WatermarkService: WatermarkServiceProtocol {
         try await withThrowingTaskGroup(of: ImageStrip.self) { group in
             for strip in imageStrips {
                 group.addTask {
-                    // 强制内存回收，防止大图切片运算导致 OOM 静默崩溃
+                    // force memory recycling to prevent OOM silent crash caused by large image slicing computation
                     autoreleasepool {
                         self.processSingleStripForEmbedding(strip: strip, macroblock: macroblock)
                     }

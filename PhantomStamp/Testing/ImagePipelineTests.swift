@@ -85,14 +85,12 @@ enum ImagePipelineTests {
     static func runAllBundledAndPrint() {
         #if DEBUG
         if let r = runBundledTestImgYCbCrRoundTrip() {
-            print(
-                "[ImagePipelineTests] TestImg YCbCr round-trip \(r.width)×\(r.height) " +
-                    "MAE_rgb=\(String(format: "%.4f", r.meanAbsoluteErrorRGB)) " +
-                    "max_rgb=\(r.maxAbsoluteErrorRGB) " +
-                    "pass(heuristic)=\(r.passedHeuristic)"
-            )
+            let status = r.passedHeuristic ? "PASS" : "FAIL"
+            print("[ImagePipelineTests] \(status) YCbCr Round-Trip — \(bundledTestAssetName) \(r.width)×\(r.height)")
+            print("  - MAE_rgb: \(String(format: "%.4f", r.meanAbsoluteErrorRGB)) (≤ \(String(format: "%.1f", YCbCrRoundTripReport.meanAbsPassThreshold)))")
+            print("  - max_rgb: \(r.maxAbsoluteErrorRGB) (≤ \(YCbCrRoundTripReport.maxAbsPassThreshold))")
         } else {
-            print("[ImagePipelineTests] FAILED: missing \(bundledTestAssetName) or round-trip / raster mismatch.")
+            print("[ImagePipelineTests] FAIL YCbCr Round-Trip — missing \(bundledTestAssetName) or round-trip / raster mismatch")
         }
         #endif
     }

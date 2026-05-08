@@ -19,12 +19,14 @@ enum MatrixOperationsTests {
         var varianceRampPassed: Bool
         var dctConstantDcOnlyPassed: Bool
         var dctIdctRoundTripPassed: Bool
+        var sliceImagePassed: Bool
 
         var varianceConstant: Float
         var varianceRamp: Float
         var dctConstantMaxNonDCAbs: Float
         var roundTripMaxAbsError: Float
         var roundTripMAE: Float
+        var sliceImageCheckCount: Int
     }
 
     /// Runs all validations and returns a metrics report.
@@ -79,16 +81,22 @@ enum MatrixOperationsTests {
         let extractedAfter = service.extractBitFromFrequencies(freqAfter)
         let embedPipelinePassed = (extractedAfter == 1)
 
+        // 7) sliceImage: basic correctness (8-aligned crop + strip sizing + pixel mapping).
+        let sliceResult = validateSliceImage(service: service)
+
 
         return Report(
             varianceConstantPassed: varianceConstantPassed,
             varianceRampPassed: varianceRampPassed,
             dctConstantDcOnlyPassed: dctConstantDcOnlyPassed,
-            dctIdctRoundTripPassed: dctIdctRoundTripPassed && embedExtractPassed && embedPipelinePassed,            varianceConstant: vConst,
+            dctIdctRoundTripPassed: dctIdctRoundTripPassed && embedExtractPassed && embedPipelinePassed,
+            sliceImagePassed: sliceResult.passed,
+            varianceConstant: vConst,
             varianceRamp: vRamp,
             dctConstantMaxNonDCAbs: maxNonDCAbs,
             roundTripMaxAbsError: maxAbsError,
-            roundTripMAE: mae
+            roundTripMAE: mae,
+            sliceImageCheckCount: sliceResult.checkCount
         )
     }
 
@@ -96,15 +104,14 @@ enum MatrixOperationsTests {
     static func runAllAndPrint() {
         #if DEBUG
         let r = runAll()
-        let passed = r.varianceConstantPassed && r.varianceRampPassed && r.dctConstantDcOnlyPassed && r.dctIdctRoundTripPassed
-        print(
-            "[MatrixOperationsTests] pass=\(passed) " +
-                "var(const)=\(String(format: "%.6f", r.varianceConstant)) " +
-                "var(ramp)=\(String(format: "%.6f", r.varianceRamp)) " +
-                "dct(nonDC|max)=\(String(format: "%.6f", r.dctConstantMaxNonDCAbs)) " +
-                "rt(max)=\(String(format: "%.6f", r.roundTripMaxAbsError)) " +
-                "rt(mae)=\(String(format: "%.6f", r.roundTripMAE))"
-        )
+        let passed = r.varianceConstantPassed && r.varianceRampPassed && r.dctConstantDcOnlyPassed && r.dctIdctRoundTripPassed && r.sliceImagePassed
+        let status = passed ? "PASS" : "FAIL"
+        print("[MatrixOperationsTests] \(status) DSP / DCT / Slice")
+        print("  - variance (constant→0):    \(r.varianceConstantPassed ? "PASS" : "FAIL")  value=\(String(format: "%.6f", r.varianceConstant))")
+        print("  - variance (ramp→341.25):   \(r.varianceRampPassed ? "PASS" : "FAIL")  value=\(String(format: "%.6f", r.varianceRamp))")
+        print("  - DCT constant (non-DC≈0):  \(r.dctConstantDcOnlyPassed ? "PASS" : "FAIL")  maxNonDC=\(String(format: "%.6f", r.dctConstantMaxNonDCAbs))")
+        print("  - DCT↔IDCT round-trip:      \(r.dctIdctRoundTripPassed ? "PASS" : "FAIL")  max=\(String(format: "%.6f", r.roundTripMaxAbsError)) mae=\(String(format: "%.6f", r.roundTripMAE))")
+        print("  - sliceImage:               \(r.sliceImagePassed ? "PASS" : "FAIL")  checks=\(r.sliceImageCheckCount)")
         #endif
     }
 
@@ -156,6 +163,70 @@ enum MatrixOperationsTests {
             let x = next() >> 40
             return Float(x) / Float(1 << 24) // [0, 1)
         }
+    }
+
+    // MARK: - sliceImage validation
+
+    /// Returns (passed, checkCount) so the report can surface how many invariants we checked.
+    private static func validateSliceImage(service: WatermarkService) -> (passed: Bool, checkCount: Int) {
+        // Make a small matrix with dimensions not divisible by 8 to ensure cropping is applied.
+        // width=19 => validWidth=16, height=26 => validHeight=24
+        var m = Matrix(width: 19, height: 26, data: [])
+        m.data = [UInt8](repeating: 0, count: m.width * m.height)
+
+        // Fill with a deterministic, row-major pattern so we can validate mapping precisely.
+        // value = (y * width + x) % 251 (keep within UInt8 range and avoid simple 256 wrap symmetry)
+        for y in 0..<m.height {
+            for x in 0..<m.width {
+                m.data[y * m.width + x] = UInt8((y * m.width + x) % 251)
+            }
+        }
+
+        let strips = service.sliceImage(m, heightPerStrip: 10) // safeStripHeight should round down to 8
+
+        var checks = 0
+        func check(_ cond: Bool) -> Bool { checks += 1; return cond }
+
+        // Expect validHeight=24 sliced by 8 => 3 strips
+        guard check(strips.count == 3) else { return (false, checks) }
+
+        // Each strip should be width=16, height=8, offsets 0/8/16 and pixel count = 128
+        for (i, s) in strips.enumerated() {
+            let expectedYOffset = i * 8
+            guard check(s.width == 16) else { return (false, checks) }
+            guard check(s.height == 8) else { return (false, checks) }
+            guard check(s.globalXOffset == 0) else { return (false, checks) }
+            guard check(s.globalYOffset == expectedYOffset) else { return (false, checks) }
+            guard check(s.pixels.count == 16 * 8) else { return (false, checks) }
+        }
+
+        // Verify a few sample points per strip map back to original matrix exactly (within cropped area).
+        // We only check inside validWidth (0..15) and validHeight (0..23).
+        let sampleXs = [0, 7, 15]
+        let sampleYsInStrip = [0, 3, 7]
+        for s in strips {
+            for sy in sampleYsInStrip {
+                for sx in sampleXs {
+                    let globalY = s.globalYOffset + sy
+                    let expected = m.data[globalY * m.width + sx]
+                    let actual = s.pixels[sy * s.width + sx]
+                    guard check(actual == expected) else { return (false, checks) }
+                }
+            }
+        }
+
+        // Verify cropping: the original x=16..18 columns must NOT exist in strips.
+        // So the last pixel in each strip row should correspond to original x=15.
+        for s in strips {
+            for sy in 0..<s.height {
+                let globalY = s.globalYOffset + sy
+                let expectedLast = m.data[globalY * m.width + 15]
+                let actualLast = s.pixels[sy * s.width + 15]
+                guard check(actualLast == expectedLast) else { return (false, checks) }
+            }
+        }
+
+        return (true, checks)
     }
 }
 

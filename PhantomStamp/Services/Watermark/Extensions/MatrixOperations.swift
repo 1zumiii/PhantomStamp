@@ -53,6 +53,66 @@ extension WatermarkService{
 
         return Matrix8x8(values: buf)
     }
+    
+    /// Slices an image into strips of a specified height.
+    ///
+    /// - Parameters:
+    ///   - channel: The image to slice.
+    ///   - heightPerStrip: The height of each strip.
+    /// - Returns: An array of image strips.
+    func sliceImage(_ channel: Matrix, heightPerStrip: Int) -> [ImageStrip] {
+        // 1. set the valid width and height, and ensure the heightPerStrip is a multiple of 8
+        let validWidth = (channel.width / Matrix8x8.side) * Matrix8x8.side
+        let validHeight = (channel.height / Matrix8x8.side) * Matrix8x8.side
+        
+        // if the image is less than 8x8, return empty
+        guard validWidth >= 8, validHeight >= 8 else { return [] }
+        
+        // ensure the heightPerStrip is a multiple of 8, otherwise round down to the nearest multiple of 8
+        let safeStripHeight = (heightPerStrip / Matrix8x8.side) * Matrix8x8.side
+        guard safeStripHeight >= 8 else { return [] }
+        
+        var strips: [ImageStrip] = []
+        var currentY = 0
+        
+        // 2. only slice in the valid height validHeight
+        while currentY < validHeight {
+            // calculate the actual height of the current strip (the last strip may be less than safeStripHeight)
+            let actualStripHeight = min(safeStripHeight, validHeight - currentY)
+            
+            var strip = ImageStrip()
+            strip.width = validWidth
+            strip.height = actualStripHeight
+            strip.globalXOffset = 0
+            strip.globalYOffset = currentY
+            
+            // pre-allocate the memory for the strip
+            var stripPixels = [UInt8](repeating: 0, count: validWidth * actualStripHeight)
+            
+            // 3. copy the original image data to the strip
+            stripPixels.withUnsafeMutableBufferPointer { stripPtr in
+                channel.data.withUnsafeBufferPointer { channelPtr in
+                    guard let dstBase = stripPtr.baseAddress, let srcBase = channelPtr.baseAddress else { return }
+                    for row in 0..<actualStripHeight {
+                        // note: when reading from the original image, the step is channel.width
+                        let srcRowStart = (currentY + row) * channel.width
+                        // when writing to the strip, the step is validWidth
+                        let dstRowStart = row * validWidth
+                        
+                        // only copy the validWidth length, the extra 1~7 pixels on the right side of the original image are perfectly discarded
+                        dstBase.advanced(by: dstRowStart).update(from: srcBase.advanced(by: srcRowStart), count: validWidth)
+                    }
+                }
+            }
+            
+            strip.pixels = stripPixels
+            strips.append(strip)
+            
+            currentY += actualStripHeight
+        }
+        
+        return strips
+    }
 }
 
 // MARK: - vDSP-based 8×8 DCT/IDCT

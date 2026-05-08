@@ -17,7 +17,7 @@ extension WatermarkService {
     // 色彩与矩阵
     // func convertToYCbCr(image: UIImage) -> YCbCrImage? { return nil } 已移至ImageProcessing
     // func convertToUIImage(from ycbcr: YCbCrImage) -> UIImage? { return nil } 已移至ImageProcessing
-    func sliceImage(_ channel: Matrix, heightPerStrip: Int) -> [ImageStrip] { return [] }
+    // func sliceImage(_ channel: Matrix, heightPerStrip: Int) -> [ImageStrip] { return [] }
     func updateStripInPlace(_ strips: inout [ImageStrip], with processedStrip: ImageStrip) { }
     func reassembleStrips(_ strips: [ImageStrip]) -> Matrix { return Matrix() }
     
