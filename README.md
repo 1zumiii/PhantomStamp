@@ -15,33 +15,34 @@ During digital content distribution, creators face several core pain points:
 
 ## 3. Technical Principles
 
-PhantomStamp's core competency lies in how its underlying algorithm processes image signals:
+PhantomStamp's core competency lies in how its underlying algorithm processes image signals and guarantees data integrity:
 
 ### 3.1 Discrete Cosine Transform (DCT)
 
 The app leverages Apple's official **Accelerate (vDSP)** framework to transform the image from the spatial domain (pixel matrix) to the frequency domain. In the frequency domain, the image is decomposed into different frequency components.
 
-### 3.2 Mid-Frequency Embedding Strategy
+### 3.2 Adaptive Visual Masking (Mid-Frequency Embedding)
 
-Based on the characteristics of the Human Visual System (HVS), the algorithm embeds the watermark bitstream into the **mid-frequency coefficients**:
+Based on the characteristics of the Human Visual System (HVS), the algorithm embeds the watermark into the **mid-frequency coefficients** (e.g., utilizing symmetry points). 
+Crucially, it employs an **Adaptive Quantization Step ($Q$)**: The algorithm calculates the mean absolute AC magnitude of each $8 \times 8$ block to dynamically assess texture complexity. Smooth areas receive a lighter embedding to preserve pristine visual quality, while highly textured areas receive a stronger embedding to maximize robustness against compression.
 
-- **Avoiding Low Frequencies:** Ensures no visible alterations or artifacts are introduced to the overall tone and lighting of the image.
-- **Avoiding High Frequencies:** Ensures the watermark data survives high-frequency filtering operations like JPEG compression, guaranteeing robustness.
+### 3.3 Data Link Layer Security (FEC & Interleaving)
 
-### 3.3 Blind Extraction Technology
+To combat localized burst errors caused by image damage or heavy compression artifacts, the copyright payload is rigorously protected before embedding:
+- **Extended Hamming(8,4) Code:** Provides SECDED (Single Error Correction, Double Error Detection) capabilities.
+- **Bit-level Block Interleaving:** Scatters adjacent bits of the codeword across different spatial areas, ensuring that localized pixel damage won't wipe out an entire Hamming codeword.
 
-The extraction algorithm does not require the original image. By analyzing the magnitude relationships between specific frequency coefficients within 8 \times 8 pixel blocks, the app can reversely recover the hidden binary sequence from a seemingly untouched image.
+### 3.4 Blind Extraction & Global Majority Voting
 
-### 3.4 Sync Markers & Redundancy
-
-- **Sync Markers:** Specific bit sequences are embedded within the data stream to help the extraction algorithm realign the grid origin if the image suffers from translation attacks (e.g., cropping).
-- **2D Tiling:** The watermark payload is redundantly tiled across the entire image. Even if the image is heavily cropped, the complete copyright information can still be extracted from the remaining valid fragments.
+The extraction algorithm operates entirely blindly (requires no original image):
+- **64-Offset Sliding Window Scan:** Re-aligns the grid origin perfectly even if the image suffers from severe translation or cropping attacks.
+- **Global Majority Voting:** Because the 2D watermark tile is redundantly paved across the entire image, the algorithm squeezes every bit of surviving data from all valid fragments (including edge-cropped macroblocks) to vote for the ultimate true payload, demonstrating extreme resistance—capable of surviving JPEG compression qualities down to ~51%.
 
 ## 4. Technical Highlights
 
-- **High-Performance Concurrency:** Utilizes Swift Concurrency (`async/await`) and `TaskGroup` to slice and process large images concurrently. This maximizes multi-core CPU performance and guarantees a responsive UI without blocking the main thread.
-- **Low Overhead Optimization:** Calls the SIMD instruction sets of the Accelerate framework for matrix operations, significantly reducing computational overhead on mobile devices.
-- **Loosely Coupled Architecture:** Adopts the MVVM design pattern to completely decouple complex mathematical transformation logic from the View layer, ensuring code extensibility, testability, and isolated collaboration via GitHub.
+- **High-Performance Concurrency & OOM Prevention:** Utilizes Swift Concurrency (`async/await`) and `TaskGroup` to slice and process large images (e.g., 4K resolutions) concurrently. Dedicated `autoreleasepool` scopes within strip processing enforce strict memory recycling, preventing Out-Of-Memory (OOM) silent crashes during heavy matrix operations.
+- **Low Overhead Optimization:** Calls the SIMD instruction sets of the Accelerate framework for matrix operations, significantly reducing computational overhead and battery consumption on mobile devices.
+- **Loosely Coupled Architecture:** Adopts the MVVM design pattern to completely decouple complex mathematical transformation logic from the View layer, ensuring code extensibility, testability, and isolated collaboration.
 
 ## 5. Tech Stack
 
