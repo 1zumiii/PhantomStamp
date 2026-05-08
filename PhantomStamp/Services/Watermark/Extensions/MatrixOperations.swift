@@ -252,8 +252,11 @@ extension WatermarkService{
 
     // MARK: - Helper
 
-    /// extract the 8x8 spatial domain block from the global Y channel matrix based on the absolute coordinates
-    private func extractSpatialBlock(from matrix: Matrix, x: Int, y: Int) -> Matrix8x8 {
+    /// Extract the 8×8 spatial-domain block from the global Y channel matrix based on absolute coordinates.
+    ///
+    /// - Note: Used by both alignment scan and extraction paths (implemented in separate extension files),
+    ///   so this must be at least `internal` visibility (not `private`).
+    func extractSpatialBlock(from matrix: Matrix, x: Int, y: Int) -> Matrix8x8 {
         var block = Matrix8x8()
         matrix.data.withUnsafeBufferPointer { ptr in
             block.values.withUnsafeMutableBufferPointer { blockPtr in

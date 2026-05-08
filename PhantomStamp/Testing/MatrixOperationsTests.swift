@@ -7,6 +7,7 @@
 //
 
 import Foundation
+import CoreGraphics
 
 /// Manual / DEBUG-entry validation for ``WatermarkService`` DSP primitives:
 /// - ``WatermarkService/calculateVariance(_:)``
@@ -22,6 +23,7 @@ enum MatrixOperationsTests {
         var sliceImagePassed: Bool
         var stripUpdateAndReassemblePassed: Bool
         var gridOffsetAndSyncMarkerPassed: Bool
+        var extractBitsAndVotingPassed: Bool
 
         var varianceConstant: Float
         var varianceRamp: Float
@@ -31,6 +33,7 @@ enum MatrixOperationsTests {
         var sliceImageCheckCount: Int
         var stripUpdateAndReassembleCheckCount: Int
         var gridOffsetAndSyncMarkerCheckCount: Int
+        var extractBitsAndVotingCheckCount: Int
     }
 
     /// Runs all validations and returns a metrics report.
@@ -93,6 +96,9 @@ enum MatrixOperationsTests {
 
         // 9) findGridOffsetAndSyncMarker: 64 offsets + sliding window + unknown W enum.
         let gridOffsetResult = validateFindGridOffsetAndSyncMarker(service: service)
+        
+        // 10) extractBitsWithOffset + applyMajorityVoting: extraction grid + macro-tile voting.
+        let extractAndVoteResult = validateExtractBitsAndMajorityVoting(service: service)
 
         return Report(
             varianceConstantPassed: varianceConstantPassed,
@@ -102,6 +108,7 @@ enum MatrixOperationsTests {
             sliceImagePassed: sliceResult.passed,
             stripUpdateAndReassemblePassed: stripWriteBackResult.passed,
             gridOffsetAndSyncMarkerPassed: gridOffsetResult.passed,
+            extractBitsAndVotingPassed: extractAndVoteResult.passed,
             varianceConstant: vConst,
             varianceRamp: vRamp,
             dctConstantMaxNonDCAbs: maxNonDCAbs,
@@ -109,7 +116,8 @@ enum MatrixOperationsTests {
             roundTripMAE: mae,
             sliceImageCheckCount: sliceResult.checkCount,
             stripUpdateAndReassembleCheckCount: stripWriteBackResult.checkCount,
-            gridOffsetAndSyncMarkerCheckCount: gridOffsetResult.checkCount
+            gridOffsetAndSyncMarkerCheckCount: gridOffsetResult.checkCount,
+            extractBitsAndVotingCheckCount: extractAndVoteResult.checkCount
         )
     }
 
@@ -125,6 +133,7 @@ enum MatrixOperationsTests {
             && r.sliceImagePassed
             && r.stripUpdateAndReassemblePassed
             && r.gridOffsetAndSyncMarkerPassed
+            && r.extractBitsAndVotingPassed
         let status = passed ? "PASS" : "FAIL"
         print("[MatrixOperationsTests] \(status) DSP / DCT / Slice")
         print("  - variance (constant→0):    \(r.varianceConstantPassed ? "PASS" : "FAIL")  value=\(String(format: "%.6f", r.varianceConstant))")
@@ -134,6 +143,7 @@ enum MatrixOperationsTests {
         print("  - sliceImage:               \(r.sliceImagePassed ? "PASS" : "FAIL")  checks=\(r.sliceImageCheckCount)")
         print("  - strip write-back:         \(r.stripUpdateAndReassemblePassed ? "PASS" : "FAIL")  checks=\(r.stripUpdateAndReassembleCheckCount)")
         print("  - grid offset + sync scan:  \(r.gridOffsetAndSyncMarkerPassed ? "PASS" : "FAIL")  checks=\(r.gridOffsetAndSyncMarkerCheckCount)")
+        print("  - extract + majority vote:  \(r.extractBitsAndVotingPassed ? "PASS" : "FAIL")  checks=\(r.extractBitsAndVotingCheckCount)")
         #endif
     }
 
@@ -383,23 +393,20 @@ enum MatrixOperationsTests {
                 writeSpatialBlock(&m, spatial, x: px, y: py)
             }
             
-            #if DEBUG
-            print("[MatrixOperationsTests] DEBUG gridOffset case: \(tc.name)")
-            debugPrintMatrixWindow(
-                m,
-                x: max(0, tc.expectedOffsetX + tc.bx * 8 - 4),
-                y: max(0, tc.expectedOffsetY + tc.by * 8 - 4),
-                w: 16,
-                h: 16,
-                label: "pixel window near sync start"
-            )
-            #endif
-            
             let got = service.findGridOffsetAndSyncMarker(in: m)
             guard check(got != nil) else { return (false, checks) }
             guard let p = got else { return (false, checks) }
             if Int(p.x) != tc.expectedOffsetX || Int(p.y) != tc.expectedOffsetY {
                 #if DEBUG
+                print("[MatrixOperationsTests] DEBUG gridOffset case: \(tc.name)")
+                debugPrintMatrixWindow(
+                    m,
+                    x: max(0, tc.expectedOffsetX + tc.bx * 8 - 4),
+                    y: max(0, tc.expectedOffsetY + tc.by * 8 - 4),
+                    w: 16,
+                    h: 16,
+                    label: "pixel window near sync start"
+                )
                 print("[MatrixOperationsTests] DEBUG gridOffset case mismatch: got (\(Int(p.x)),\(Int(p.y))) expected (\(tc.expectedOffsetX),\(tc.expectedOffsetY))")
                 #endif
                 return (false, checks)
@@ -439,6 +446,124 @@ enum MatrixOperationsTests {
         }
     }
     
+    // MARK: - extractBitsWithOffset + applyMajorityVoting validation
+    
+    private static func validateExtractBitsAndMajorityVoting(service: WatermarkService) -> (passed: Bool, checkCount: Int) {
+        var checks = 0
+        func check(_ cond: Bool) -> Bool { checks += 1; return cond }
+        
+        // Part A: `extractBitsWithOffset` should recover bits on the aligned 8×8 grid at a pixel offset.
+        do {
+            let offsetX = 4
+            let offsetY = 1
+            let rows = 12
+            let cols = 10
+            // Make dimensions *exactly* fit `rows × cols` blocks at the given offset.
+            // `extractBitsWithOffset` computes:
+            //   maxRows = (height - startY) / 8
+            //   maxCols = (width  - startX) / 8
+            // so any extra margin would increase maxRows/maxCols and break our expectation checks.
+            let width = offsetX + cols * 8
+            let height = offsetY + rows * 8
+            
+            var m = Matrix(width: width, height: height, data: [UInt8](repeating: 0, count: width * height))
+            var rng = SplitMix64(state: 0x1357_2468)
+            for i in 0..<m.data.count {
+                let u = rng.nextUnitFloat()
+                m.data[i] = UInt8(clamping: Int((u * 90.0 + 80.0).rounded())) // 80..170
+            }
+            
+            func expectedBit(r: Int, c: Int) -> Int {
+                ((r * 17 + c * 31 + 1) & 1)
+            }
+            
+            // Stamp a sparse subset of blocks to keep this test fast.
+            for r in 0..<rows {
+                for c in 0..<cols {
+                    if (r + c) % 3 != 0 { continue }
+                    let bit = expectedBit(r: r, c: c)
+                    let px = offsetX + c * 8
+                    let py = offsetY + r * 8
+                    let spatial = makeSpatialBlockForEmbeddedBit(
+                        service: service,
+                        bit: bit,
+                        seed: UInt64(0xEE00_0000 + r * 256 + c)
+                    )
+                    writeSpatialBlock(&m, spatial, x: px, y: py)
+                }
+            }
+            
+            let grid = service.extractBitsWithOffset(m, offset: CGPoint(x: offsetX, y: offsetY))
+            #if DEBUG
+            if grid.count != rows || grid.first?.count != cols {
+                print("[MatrixOperationsTests] DEBUG extractBits: got grid=\(grid.count)x\(grid.first?.count ?? -1) expected=\(rows)x\(cols) (matrix=\(width)x\(height) offset=\(offsetX),\(offsetY))")
+            }
+            #endif
+            guard check(grid.count == rows) else { return (false, checks) }
+            guard check(grid.first?.count == cols) else { return (false, checks) }
+            
+            for r in 0..<rows {
+                for c in 0..<cols {
+                    if (r + c) % 3 != 0 { continue }
+                    guard check(grid[r][c] == expectedBit(r: r, c: c)) else { return (false, checks) }
+                }
+            }
+        }
+        
+        // Part B: `applyMajorityVoting` should recover a repeated macro-tile.
+        do {
+            let sync = getSyncMarkerBits()
+            let w = 11
+            let originX = 2
+            let originY = 4
+            let macro = makeMacroTileBits(w: w, sync: sync, seed: 0xCAFE_BEEF)
+            
+            let rows = 40
+            let cols = 43
+            var grid = [[Int]](repeating: [Int](repeating: 0, count: cols), count: rows)
+            for r in 0..<rows {
+                for c in 0..<cols {
+                    let tr = (r - originY).positiveMod(w)
+                    let tc = (c - originX).positiveMod(w)
+                    grid[r][c] = macro[tr * w + tc]
+                }
+            }
+            
+            // Inject light noise; the sync relocation uses tolerance 4, and voting should smooth the rest.
+            var noiseRng = SplitMix64(state: 0xDEAD_BEEF)
+            for r in 0..<rows {
+                for c in 0..<cols {
+                    if noiseRng.nextUnitFloat() < 0.02 { grid[r][c] ^= 1 }
+                }
+            }
+            
+            let voted = service.applyMajorityVoting(to: grid)
+            guard check(voted.count == w * w) else { return (false, checks) }
+            for i in 0..<(w * w) {
+                guard check(voted[i] == macro[i]) else { return (false, checks) }
+            }
+        }
+        
+        // Part C: if sync isn't present, the method should fail closed.
+        do {
+            let grid = [[Int]](repeating: [Int](repeating: 0, count: 20), count: 20)
+            let voted = service.applyMajorityVoting(to: grid)
+            guard check(voted.isEmpty) else { return (false, checks) }
+        }
+        
+        return (true, checks)
+    }
+    
+    private static func makeMacroTileBits(w: Int, sync: [Int], seed: UInt64) -> [Int] {
+        precondition((8...18).contains(w))
+        precondition(sync.count == 32)
+        var rng = SplitMix64(state: seed)
+        var out = [Int](repeating: 0, count: w * w)
+        for i in 0..<32 { out[i] = sync[i] }
+        for i in 32..<out.count { out[i] = rng.nextUnitFloat() < 0.5 ? 0 : 1 }
+        return out
+    }
+    
     #if DEBUG
     private static func debugPrintMatrixWindow(_ matrix: Matrix, x: Int, y: Int, w: Int, h: Int, label: String) {
         let x0 = max(0, min(x, matrix.width))
@@ -457,5 +582,12 @@ enum MatrixOperationsTests {
         }
     }
     #endif
+}
+
+private extension Int {
+    func positiveMod(_ m: Int) -> Int {
+        let r = self % m
+        return r >= 0 ? r : (r + m)
+    }
 }
 
