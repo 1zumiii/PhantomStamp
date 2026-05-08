@@ -23,8 +23,8 @@ The app leverages Apple's official **Accelerate (vDSP)** framework to transform 
 
 ### 3.2 Adaptive Visual Masking (Mid-Frequency Embedding)
 
-Based on the characteristics of the Human Visual System (HVS), the algorithm embeds the watermark into the **mid-frequency coefficients** (e.g., utilizing symmetry points). 
-Crucially, it employs an **Adaptive Quantization Step ($Q$)**: The algorithm calculates the mean absolute AC magnitude of each $8 \times 8$ block to dynamically assess texture complexity. Smooth areas receive a lighter embedding to preserve pristine visual quality, while highly textured areas receive a stronger embedding to maximize robustness against compression.
+Based on the characteristics of the Human Visual System (HVS), the algorithm embeds the watermark into the **mid-frequency coefficients** (e.g., utilizing symmetry points).
+Crucially, it employs an **Adaptive Quantization Step ($Q$)**: The algorithm calculates the mean absolute AC magnitude of each $8 \times 8$ block to dynamically assess texture complexity. Smooth areas receive a lighter embedding to preserve pristine visual quality. Highly textured areas receive a stronger embedding to maximize robustness against compression.
 
 ### 3.3 Data Link Layer Security (FEC & Interleaving)
 
