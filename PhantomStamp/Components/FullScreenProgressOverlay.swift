@@ -21,6 +21,7 @@ struct FullScreenWatermarkProgressOverlay: View {
     @State private var dotsPhase: Int = 0
     @State private var dotsTask: Task<Void, Never>?
     @State private var shimmerPhase: CGFloat = -1
+    @State private var isShimmerRunning: Bool = false
 
     var body: some View {
         ZStack {
@@ -132,6 +133,7 @@ struct FullScreenWatermarkProgressOverlay: View {
             vm.cancel()
             dotsTask?.cancel()
             dotsTask = nil
+            isShimmerRunning = false
         }
         .accessibilityElement(children: .contain)
         .task {
@@ -150,10 +152,27 @@ struct FullScreenWatermarkProgressOverlay: View {
                     }
                 }
             }
-            if shimmerPhase == -1 {
-                shimmerPhase = -1
+        }
+        .onChange(of: vm.isVisible) { _, newValue in
+            if newValue {
+                guard !isShimmerRunning else { return }
+                isShimmerRunning = true
+
+                // Reset shimmer position without animation; then start a single repeating animation.
+                var t = Transaction()
+                t.animation = nil
+                withTransaction(t) {
+                    shimmerPhase = -1
+                }
                 withAnimation(.linear(duration: 1.25).repeatForever(autoreverses: false)) {
                     shimmerPhase = 1.0
+                }
+            } else {
+                isShimmerRunning = false
+                var t = Transaction()
+                t.animation = nil
+                withTransaction(t) {
+                    shimmerPhase = -1
                 }
             }
         }

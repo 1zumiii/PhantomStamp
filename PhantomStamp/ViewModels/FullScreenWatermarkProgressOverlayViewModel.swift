@@ -29,7 +29,7 @@ final class FullScreenWatermarkProgressOverlayViewModel {
     private(set) var displayFileIndex: Int = 0
     private var lastDrainAckCurrent: Int = -1
 
-    private var hideWorkItem: DispatchWorkItem?
+    private var hideTask: Task<Void, Never>?
 
     // Progress event buffering / throttling (adaptive)
     private var pendingProgress = MinHeap<QueuedProgress>(areSorted: QueuedProgress.priorityOrder)
@@ -38,15 +38,15 @@ final class FullScreenWatermarkProgressOverlayViewModel {
     private var endRequested: Bool = false
 
     func cancel() {
-        hideWorkItem?.cancel()
-        hideWorkItem = nil
+        hideTask?.cancel()
+        hideTask = nil
         progressPumpTask?.cancel()
         progressPumpTask = nil
     }
 
     func startIfNeeded() {
-        hideWorkItem?.cancel()
-        hideWorkItem = nil
+        hideTask?.cancel()
+        hideTask = nil
         title = "Watermark"
         pendingProgress.removeAll(keepingCapacity: true)
         progressPumpTask?.cancel()
@@ -69,9 +69,11 @@ final class FullScreenWatermarkProgressOverlayViewModel {
     }
 
     private func scheduleHide() {
-        hideWorkItem?.cancel()
-        let item = DispatchWorkItem { [weak self] in
-            guard let self else { return }
+        hideTask?.cancel()
+        hideTask = Task { @MainActor [weak self] in
+            // Keep visible briefly at completion.
+            try? await Task.sleep(nanoseconds: 1_250_000_000)
+            guard !Task.isCancelled, let self else { return }
             withAnimation(.easeOut(duration: 0.18)) {
                 self.isVisible = false
             }
@@ -80,9 +82,6 @@ final class FullScreenWatermarkProgressOverlayViewModel {
             self.batchTotal = 0
             self.batchCurrent = 0
         }
-        hideWorkItem = item
-        // Keep visible briefly at completion.
-        DispatchQueue.main.asyncAfter(deadline: .now() + 1.25, execute: item)
     }
 
     // MARK: - Progress queue (priority + throttling)
