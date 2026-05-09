@@ -104,30 +104,6 @@ struct FullScreenWatermarkProgressOverlay: View {
             }
         }
         .animation(.easeOut(duration: 0.18), value: vm.isVisible)
-        .onReceive(NotificationCenter.default.publisher(for: AppConstants.Notifications.watermarkProgressOverlayDidStart)) { _ in
-            Task { @MainActor in
-                vm.startIfNeeded()
-            }
-        }
-        .onReceive(NotificationCenter.default.publisher(for: AppConstants.Notifications.watermarkProgressOverlayDidEnd)) { _ in
-            Task { @MainActor in
-                vm.requestEndAndHideWhenDrained()
-            }
-        }
-        .onReceive(NotificationCenter.default.publisher(for: AppConstants.Notifications.watermarkProgress)) { notification in
-            guard let payload = notification.userInfo?["payload"] as? ProgressPayload else { return }
-            Task { @MainActor in
-                // If callers forgot to post start, show on first progress event.
-                if !vm.isVisible { vm.startIfNeeded() }
-                vm.enqueueProgress(payload)
-            }
-        }
-        .onReceive(NotificationCenter.default.publisher(for: AppConstants.Notifications.watermarkBatchProgress)) { notification in
-            guard let payload = notification.userInfo?["payload"] as? BatchProgressPayload else { return }
-            Task { @MainActor in
-                vm.handleBatchProgress(payload)
-            }
-        }
         .onDisappear {
             // Ensure background tasks stop if the view is removed.
             vm.cancel()
@@ -137,6 +113,8 @@ struct FullScreenWatermarkProgressOverlay: View {
         }
         .accessibilityElement(children: .contain)
         .task {
+            vm.bindNotificationsIfNeeded()
+
             // Start liveness animations once.
             if dotsTask == nil {
                 dotsTask = Task { @MainActor in
