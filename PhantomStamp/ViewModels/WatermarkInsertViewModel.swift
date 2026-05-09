@@ -51,9 +51,15 @@ final class WatermarkInsertViewModel {
         !selectedPhotoItems.isEmpty && isPayloadLengthValid && !isEmbedding && !showSuccessOverlay
     }
 
-    func appendImages(_ images: [UIImage]) {
-        guard !images.isEmpty else { return }
-        selectedPhotoItems.append(contentsOf: images.map { SelectedPhotoItem(image: $0) })
+    func appendPickedItems(_ items: [SelectedPhotoItem]) {
+        guard !items.isEmpty else { return }
+        let start = selectedPhotoItems.count
+        let adjusted: [SelectedPhotoItem] = items.enumerated().map { offset, item in
+            guard item.displayName == SelectedPhotoItem.missingFileNamePlaceholder else { return item }
+            let n = start + offset + 1
+            return SelectedPhotoItem(id: item.id, image: item.image, suggestedName: "Image \(n)")
+        }
+        selectedPhotoItems.append(contentsOf: adjusted)
     }
 
     func removePhoto(id: UUID) {

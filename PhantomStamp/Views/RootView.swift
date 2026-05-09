@@ -35,7 +35,7 @@ struct RootView: View {
         title: AppConstants.Copy.Tab.settings,
         systemImage: AppConstants.Symbol.tabSettings
       ) {
-        SettingsView(settingsStore: settingsStore)
+        SettingsView(watermarkService: watermarkService, settingsStore: settingsStore)
       },
     ]
 
