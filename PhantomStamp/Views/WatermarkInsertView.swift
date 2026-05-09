@@ -221,23 +221,48 @@ struct WatermarkInsertView: View {
                     Button {
                         vm.dismissSuccessOverlayAndResetUploadState()
                     } label: {
-                        Text("Insert more")
-                            .font(.subheadline.weight(.semibold))
-                            .frame(maxWidth: .infinity)
-                            .padding(.vertical, 12)
+                        HStack(spacing: 10) {
+                            Image(systemName: "rectangle.stack.badge.plus")
+                                .font(.body.weight(.semibold))
+                            Text("Insert more")
+                                .font(.subheadline.weight(.semibold))
+                        }
+                        .foregroundStyle(Color.white.opacity(0.95))
+                        .frame(maxWidth: .infinity)
+                        .padding(.vertical, 14)
+                        .background {
+                            RoundedRectangle(cornerRadius: 14, style: .continuous)
+                                .fill(
+                                    LinearGradient(
+                                        colors: [
+                                            Color(red: 0.38, green: 0.22, blue: 0.72),
+                                            Color(red: 0.18, green: 0.42, blue: 0.78),
+                                        ],
+                                        startPoint: .leading,
+                                        endPoint: .trailing
+                                    )
+                                )
+                                .overlay {
+                                    RoundedRectangle(cornerRadius: 14, style: .continuous)
+                                        .strokeBorder(Color.white.opacity(0.28), lineWidth: 1)
+                                }
+                        }
+                        .shadow(color: Color(red: 0.35, green: 0.2, blue: 0.65).opacity(0.45), radius: 16, x: 0, y: 8)
                     }
-                    .buttonStyle(.borderedProminent)
-                    .padding(.horizontal, 24)
+                    .buttonStyle(.plain)
+                    .padding(.horizontal, 20)
                 }
                 .padding(20)
             }
             .allowsHitTesting(true)
     }
 
+    /// Fixed strip height so the Uploaded section keeps layout before any picks arrive.
     private var uploadedThumbnailsRow: some View {
         let items = vm.selectedPhotoItems
         let visible = Array(items.prefix(thumbnailStripMaxVisible))
-        let overflow = max(0, items.count - visible.count)
+        let count = items.count
+        let manageEnabled = count > 0 && !vm.isEmbedding && !vm.showSuccessOverlay
 
         return ScrollView(.horizontal) {
             HStack(spacing: 10) {
@@ -245,38 +270,50 @@ struct WatermarkInsertView: View {
                     thumbnailCell(for: item.image)
                 }
 
-                if overflow > 0 {
-                    Button {
-                        showOverflowSheet = true
-                    } label: {
-                        RoundedRectangle(cornerRadius: 14, style: .continuous)
-                            .fill(Color(uiColor: .tertiarySystemGroupedBackground))
-                            .overlay {
-                                RoundedRectangle(cornerRadius: 14, style: .continuous)
-                                    .strokeBorder(Color.primary.opacity(0.10), lineWidth: 1)
-                            }
-                            .frame(width: 58, height: 58)
-                            .overlay {
-                                Image(systemName: "square.grid.2x2.fill")
-                                    .font(.body.weight(.semibold))
-                                    .foregroundStyle(.secondary)
-                            }
-                            .overlay(alignment: .topTrailing) {
-                                Text("\(items.count)")
-                                    .font(.caption2.weight(.bold))
-                                    .foregroundStyle(.white)
-                                    .padding(4)
-                                    .background(Circle().fill(Color.accentColor))
-                                    .offset(x: 4, y: -4)
-                            }
-                    }
-                    .buttonStyle(.plain)
-                    .accessibilityLabel("View all \(items.count) uploads")
+                // Always show the gallery/manage affordance; disabled when there is nothing to manage.
+                Button {
+                    guard manageEnabled else { return }
+                    showOverflowSheet = true
+                } label: {
+                    manageUploadedChip(totalCount: count)
                 }
+                .buttonStyle(.plain)
+                .disabled(!manageEnabled)
+                .opacity(manageEnabled ? 1 : 0.42)
+                .accessibilityLabel(count > 0 ? "View all \(count) uploads" : "Manage uploads, no photos selected")
             }
-            .padding(.vertical, 2)
+            .padding(.vertical, 4)
+            .frame(minHeight: thumbnailStripMinHeight, alignment: .center)
         }
         .scrollIndicators(.hidden)
+        .frame(minHeight: thumbnailStripMinHeight + 8)
+    }
+
+    private var thumbnailStripMinHeight: CGFloat { 62 }
+
+    private func manageUploadedChip(totalCount: Int) -> some View {
+        RoundedRectangle(cornerRadius: 14, style: .continuous)
+            .fill(Color(uiColor: .tertiarySystemGroupedBackground))
+            .overlay {
+                RoundedRectangle(cornerRadius: 14, style: .continuous)
+                    .strokeBorder(Color.primary.opacity(0.12), lineWidth: 1)
+            }
+            .frame(width: 58, height: 58)
+            .overlay {
+                Image(systemName: "square.grid.2x2.fill")
+                    .font(.body.weight(.semibold))
+                    .foregroundStyle(.secondary)
+            }
+            .overlay(alignment: .topTrailing) {
+                if totalCount > 0 {
+                    Text("\(totalCount)")
+                        .font(.caption2.weight(.bold))
+                        .foregroundStyle(.white)
+                        .padding(4)
+                        .background(Circle().fill(Color.accentColor))
+                        .offset(x: 4, y: -4)
+                }
+            }
     }
 
     private func thumbnailCell(for uiImage: UIImage) -> some View {
@@ -302,21 +339,39 @@ struct WatermarkInsertView: View {
                     .font(.caption.weight(.semibold))
                     .foregroundStyle(.secondary)
 
-                TextField(
-                    "Enter \(WatermarkInsertViewModel.payloadMinLength)–\(WatermarkInsertViewModel.payloadMaxLength) characters",
-                    text: payloadTextBinding
-                )
-                .textInputAutocapitalization(.sentences)
-                .autocorrectionDisabled(false)
-                .textFieldStyle(.roundedBorder)
-                .disabled(vm.isEmbedding || vm.showSuccessOverlay)
+                // Inline character budget on the trailing edge of the field.
+                HStack(spacing: 10) {
+                    TextField(
+                        "Watermark message",
+                        text: payloadTextBinding,
+                        axis: .vertical
+                    )
+                    .lineLimit(1...3)
+                    .textInputAutocapitalization(.sentences)
+                    .autocorrectionDisabled(false)
+                    .textFieldStyle(.plain)
+                    .disabled(vm.isEmbedding || vm.showSuccessOverlay)
 
-                HStack {
-                    Text(lengthHint)
-                        .font(.caption)
-                        .foregroundStyle(vm.isPayloadLengthValid ? Color.secondary : Color.orange)
-                    Spacer()
+                    Text(payloadCountLabel)
+                        .font(.caption.monospacedDigit().weight(.medium))
+                        .foregroundStyle(payloadCountColor)
+                        .padding(.leading, 4)
                 }
+                .padding(.horizontal, 12)
+                .padding(.vertical, 10)
+                .background {
+                    RoundedRectangle(cornerRadius: 10, style: .continuous)
+                        .fill(Color(uiColor: .tertiarySystemGroupedBackground))
+                }
+                .overlay {
+                    RoundedRectangle(cornerRadius: 10, style: .continuous)
+                        .strokeBorder(Color.primary.opacity(0.12), lineWidth: 1)
+                }
+
+                Text(payloadHintBelowField)
+                    .font(.caption)
+                    .foregroundStyle(vm.isPayloadLengthValid ? Color.secondary : Color.orange)
+                    .fixedSize(horizontal: false, vertical: true)
             }
         }
         .padding(18)
@@ -330,9 +385,17 @@ struct WatermarkInsertView: View {
         }
     }
 
-    private var lengthHint: String {
-        let n = vm.trimmedPayload.count
-        return "\(n)/\(WatermarkInsertViewModel.payloadMaxLength) • Minimum \(WatermarkInsertViewModel.payloadMinLength) characters (trimmed)"
+    private var payloadCountLabel: String {
+        "\(vm.trimmedPayload.count)/\(WatermarkInsertViewModel.payloadMaxLength)"
+    }
+
+    private var payloadCountColor: Color {
+        vm.isPayloadLengthValid ? Color.secondary : Color.orange
+    }
+
+    /// Guidance only (counts live on the right inside the field container).
+    private var payloadHintBelowField: String {
+        "Required: \(WatermarkInsertViewModel.payloadMinLength)–\(WatermarkInsertViewModel.payloadMaxLength) non-empty characters after trimming spaces."
     }
 
     private var floatingActions: some View {
