@@ -135,9 +135,10 @@ class WatermarkService: WatermarkServiceProtocol {
             try await withThrowingTaskGroup(of: ImageStrip.self) { group in
                 for strip in imageStrips {
                     group.addTask {
-                        // force memory recycling to prevent OOM silent crash caused by large image slicing computation
-                        autoreleasepool {
-                            self.processSingleStripForEmbedding(strip: strip, macroblock: macroblock)
+                        await MainActor.run {
+                            autoreleasepool {
+                                self.processSingleStripForEmbedding(strip: strip, macroblock: macroblock)
+                            }
                         }
                     }
                 }
