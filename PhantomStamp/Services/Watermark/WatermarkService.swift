@@ -105,6 +105,10 @@ class WatermarkService: WatermarkServiceProtocol {
             // Step 2: Color / layout → (prepEnd, colorEnd]
             // ==========================================
             reportProgress(step: .colorConversion, percentage: prepEnd)
+            // `convertToYCbCr` can take a long time on large images. Without an intermediate tick, the UI may
+            // appear to "start" around ~14–15% (next post after Y is ready) because the bar never paints 10%.
+            let colorMidDuringConvert = prepEnd + (colorEnd - prepEnd) * 0.22
+            reportProgress(step: .colorConversion, percentage: colorMidDuringConvert)
             guard var ycbcrImage = convertToYCbCr(image: image) else {
                 #if DEBUG
                 let pxW = Int(image.size.width * image.scale)
@@ -211,13 +215,16 @@ class WatermarkService: WatermarkServiceProtocol {
 
         do {
             reportProgress(step: .preparation, percentage: 0)
+            // Same issue as embedding: the first heavy step is YCbCr conversion. If we only report 0 and then
+            // jump straight to ~18%, single-file runs look like the bar starts "in the middle".
+            reportProgress(step: .preparation, percentage: 0.06)
 
         // 1. image preprocessing
         guard let ycbcrImage = convertToYCbCr(image: image) else {
             throw WatermarkError.processingError
         }
         let yChannel = ycbcrImage.Y
-            reportProgress(step: .colorConversion, percentage: 0.18)
+            reportProgress(step: .colorConversion, percentage: 0.12)
         
         // 2. physical and logical alignment (to handle translation and cropping attacks)
         // execute 64 grid offset scans, and use sliding window to find the sync header

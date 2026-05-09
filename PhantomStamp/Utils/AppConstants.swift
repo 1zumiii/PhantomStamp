@@ -2,7 +2,7 @@
 //  AppConstants.swift
 //  PhantomStamp
 //
-//  集中存放魔法数字、文案、UserDefaults Key、SF Symbol 名等，便于统一修改与检索。
+//  Centralize constants for numbers, text, UserDefaults keys, SF Symbol names, etc., for easy modification and retrieval.
 //
 
 import CoreGraphics
@@ -19,7 +19,7 @@ enum AppConstants {
     // MARK: - UserDefaults
 
     enum UserDefaultsKey {
-        /// 仅控制「嵌入水印」是否写入历史（提取不记录）。
+        /// Only control whether watermark embedding is recorded in history (extraction is not recorded).
         static let autoLogWatermarkEmbed = "phantomstamp.settings.autoLogWatermarkEmbed"
         static let compactHistoryList = "phantomstamp.settings.compactHistoryList"
     }
@@ -29,22 +29,22 @@ enum AppConstants {
         static let compactHistoryList = false
     }
 
-    // MARK: - 历史记录 kind（SwiftData `HistoryEntry.kind`）
+    // MARK: - History record kind (SwiftData `HistoryEntry.kind`)
 
     enum HistoryRecordKind {
         static let watermarkEmbedded = "watermark.embedded"
     }
 
-    // MARK: - 水印（Mock / Real 延时与占位）
+    // MARK: - Watermark (Mock / Real delay and placeholder)
 
     enum Watermark {
         static let mockEmbedDelayNanoseconds: UInt64 = 2_000_000_000
         static let mockExtractDelayNanoseconds: UInt64 = 1_000_000_000
-        /// 条带高度（像素）；完整实现要求图像高度为该值的整数倍且与 8 对齐策略一致。
+        /// Strip height (pixels); the image height must be a multiple of this value and aligned with 8 for the algorithm to work.
         static let stripHeightPixels = 80
-        /// 平滑块方差阈值，低于则跳过嵌入（隐蔽性）。
+        /// Smooth block variance threshold, below which embedding is skipped for stealth (privacy).
         static let smoothBlockVarianceThreshold: Float = 10.5
-        /// 最小边长（点），小于则 `WatermarkService` 抛 `imageTooSmall`（与算法伪代码一致）。
+        /// Minimum side length (points), below which `WatermarkService` throws `imageTooSmall` (matches algorithm pseudocode).
         static let minimumImageSidePoints: CGFloat = 128
         static let mockExtractResultText = "Test_Copyright_2026"
         static let embedSampleText = "MyText"
@@ -61,7 +61,7 @@ enum AppConstants {
         static let marketingUnknown = "0"
     }
 
-    // MARK: - 调试 / 错误
+    // MARK: - Debug / Error
 
     enum Debug {
         static let launchLogPrefix = "[PhantomStamp] launch, marketing version = "
@@ -71,7 +71,7 @@ enum AppConstants {
         static let modelContainerPrefix = "Could not create ModelContainer: "
     }
 
-    // MARK: - 布局
+    // MARK: - Layout
 
     enum Layout {
         static let watermarkSectionSpacing: CGFloat = 20
@@ -92,7 +92,7 @@ enum AppConstants {
         static let tabSettings = "gearshape.fill"
     }
 
-    // MARK: - 文案（UI）
+    // MARK: - Text (UI)
 
     enum Copy {
 
@@ -103,22 +103,22 @@ enum AppConstants {
         }
 
         enum Watermark {
-            static let navigationTitle = "测试页面"
-            static let alertTitle = "提示"
-            static let embedButton = "嵌入水印"
-            static let extractButton = "提取水印"
-            static let okButton = "好的"
-            static let sectionPreview = "预览"
-            static let sectionActions = "操作"
-            static let sectionExtractResult = "提取结果"
-            static let extractPlaceholder = "提取水印后，结果将显示在此"
-            static let processing = "处理中…"
-            static let embedChipFormat = "示例文案 · %@"
-            static let tipArchitectureTitle = "依赖注入"
-            static let tipHistoryTitle = "历史"
-            static let captionDependencyInjection = "视图只依赖 WatermarkServiceProtocol；运行时使用 WatermarkService，SwiftUI Preview 使用 PreviewWatermarkService；单元测试使用 Tests 内 Mock。"
-            static let captionHistoryHintWhenLogging = "仅「嵌入水印」成功时会写入历史（可在「设置」关闭）。"
-            static let captionHistoryHintWhenNotLogging = "已关闭：嵌入水印成功时不会写入历史。"
+            static let navigationTitle = "Test Page"
+            static let alertTitle = "Alert"
+            static let embedButton = "Embed Watermark"
+            static let extractButton = "Extract Watermark"
+            static let okButton = "OK"
+            static let sectionPreview = "Preview"
+            static let sectionActions = "Actions"
+            static let sectionExtractResult = "Extract Result"
+            static let extractPlaceholder = "The result will be displayed here after extracting the watermark."
+            static let processing = "Processing…"
+            static let embedChipFormat = "Example Text · %@"
+            static let tipArchitectureTitle = "DependencyInjection"
+            static let tipHistoryTitle = "History"
+            static let captionDependencyInjection = "The view only depends on WatermarkServiceProtocol; at runtime, use WatermarkService; for SwiftUI Preview, use PreviewWatermarkService; for unit tests, use Mock in Tests."
+            static let captionHistoryHintWhenLogging = "Only when watermark embedding is successful will it be recorded in history (can be disabled in Settings)."
+            static let captionHistoryHintWhenNotLogging = "Disabled: watermark embedding is not recorded when successful."
         }
         // AppConstants.Copy.History.navigationTitle
         enum History {

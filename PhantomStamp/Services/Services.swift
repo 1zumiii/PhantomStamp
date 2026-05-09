@@ -2,7 +2,7 @@
 //  Services.swift
 //  PhantomStamp
 //
-//  SwiftData 保存封装（历史写入见 `HistoryRecordService`）。
+//  
 //
 
 import Foundation
