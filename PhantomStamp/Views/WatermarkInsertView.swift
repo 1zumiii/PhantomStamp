@@ -398,6 +398,78 @@ struct WatermarkInsertView: View {
         "Required: \(WatermarkInsertViewModel.payloadMinLength)–\(WatermarkInsertViewModel.payloadMaxLength) non-empty characters after trimming spaces."
     }
 
+    private var embedFABReady: Bool {
+        vm.canStartEmbed && !vm.isEmbedding
+    }
+
+    private var embedFABIconColor: Color {
+        if vm.isEmbedding { return Color.white.opacity(0.92) }
+        if vm.canStartEmbed { return .white }
+        // Idle: noticeably darker glyph than the gray fill so sparkles stay readable (not “white on white”).
+        return Color(uiColor: .label).opacity(0.82)
+    }
+
+    /// Bright gradient when ready or running.
+    private var embedFABGradient: LinearGradient {
+        LinearGradient(
+            colors: [
+                Color(red: 0.32, green: 0.55, blue: 1.00),
+                Color(red: 0.35, green: 0.85, blue: 0.95),
+                Color(red: 0.88, green: 0.42, blue: 0.98),
+            ],
+            startPoint: .topLeading,
+            endPoint: .bottomTrailing
+        )
+    }
+
+    /// Idle embed uses a **step grayer** surface than the reset button (`secondarySystemGroupedBackground`) so it reads as non-interactive.
+    private var embedFABIdleFill: LinearGradient {
+        LinearGradient(
+            colors: [
+                Color(uiColor: .systemGray5),
+                Color(uiColor: .systemGray6),
+            ],
+            startPoint: .top,
+            endPoint: .bottom
+        )
+    }
+
+    @ViewBuilder
+    private var embedFABBackgroundFill: some View {
+        let shape = RoundedRectangle(cornerRadius: 16, style: .continuous)
+        if vm.canStartEmbed || vm.isEmbedding {
+            shape.fill(embedFABGradient)
+        } else {
+            shape.fill(embedFABIdleFill)
+        }
+    }
+
+    private var embedFABStrokeColor: Color {
+        if embedFABReady { return Color.white.opacity(0.45) }
+        if vm.isEmbedding { return Color.white.opacity(0.18) }
+        // Slightly stronger edge on gray idle pill vs. reset’s light chrome.
+        return Color.black.opacity(0.10)
+    }
+
+    private var embedFABShadowColor: Color {
+        if embedFABReady {
+            return Color(red: 0.38, green: 0.42, blue: 1.0).opacity(0.5)
+        }
+        if vm.isEmbedding {
+            return Color.black.opacity(0.2)
+        }
+        // Flatter than reset so the nearby white-ish button feels “primary” among floaters.
+        return Color.black.opacity(0.05)
+    }
+
+    private var embedFABShadowRadius: CGFloat {
+        embedFABReady ? 26 : (vm.isEmbedding ? 20 : 9)
+    }
+
+    private var embedFABShadowY: CGFloat {
+        embedFABReady ? 16 : 8
+    }
+
     private var floatingActions: some View {
         VStack {
             Spacer()
@@ -428,36 +500,35 @@ struct WatermarkInsertView: View {
                 .accessibilityLabel("Reset draft")
 
                 Button {
+                    guard vm.canStartEmbed else { return }
                     Task { await vm.embedWatermark() }
                 } label: {
                     Image(systemName: vm.isEmbedding ? "hourglass" : "sparkles")
                         .font(.body.weight(.semibold))
+                        .symbolEffect(.pulse, options: .repeating, isActive: vm.canStartEmbed && !vm.isEmbedding)
                         .frame(width: 52, height: 52)
                         .contentShape(Rectangle())
                 }
                 .buttonStyle(.plain)
-                .foregroundStyle(.white)
+                .foregroundStyle(embedFABIconColor)
                 .background {
-                    RoundedRectangle(cornerRadius: 16, style: .continuous)
-                        .fill(
-                            LinearGradient(
-                                colors: [
-                                    Color(red: 0.32, green: 0.55, blue: 1.00),
-                                    Color(red: 0.35, green: 0.85, blue: 0.95),
-                                    Color(red: 0.88, green: 0.42, blue: 0.98),
-                                ],
-                                startPoint: .topLeading,
-                                endPoint: .bottomTrailing
-                            )
-                        )
+                    embedFABBackgroundFill
                 }
                 .overlay {
                     RoundedRectangle(cornerRadius: 16, style: .continuous)
-                        .strokeBorder(Color.white.opacity(0.18), lineWidth: 1)
+                        .strokeBorder(embedFABStrokeColor, lineWidth: embedFABReady ? 1.5 : 1)
                 }
-                .shadow(color: Color.black.opacity(0.18), radius: 24, x: 0, y: 14)
-                .disabled(!vm.canStartEmbed || vm.isEmbedding)
-                .accessibilityLabel("Insert watermark")
+                .shadow(color: embedFABShadowColor, radius: embedFABShadowRadius, x: 0, y: embedFABShadowY)
+                .scaleEffect(embedFABReady ? 1.04 : 1.0)
+                .animation(.spring(response: 0.32, dampingFraction: 0.72), value: embedFABReady)
+                .animation(.easeOut(duration: 0.2), value: vm.isEmbedding)
+                // Use hit-testing instead of `.disabled` so SwiftUI does not apply extra gray wash over our styling.
+                .allowsHitTesting(vm.canStartEmbed)
+                .accessibilityLabel(
+                    vm.canStartEmbed
+                        ? "Insert watermark"
+                        : "Insert watermark, unavailable until photos and watermark text are valid."
+                )
             }
         }
     }
