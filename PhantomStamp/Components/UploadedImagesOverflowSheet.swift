@@ -13,19 +13,6 @@ struct UploadedImagesOverflowSheet: View {
     let items: [SelectedPhotoItem]
     let onRemove: (UUID) -> Void
 
-    /// Stable list rows with human-readable ordinals (not tied to array position after edits).
-    private struct IndexedRow: Identifiable {
-        let id: UUID
-        let ordinal: Int
-        let item: SelectedPhotoItem
-    }
-
-    private var indexedRows: [IndexedRow] {
-        items.enumerated().map { idx, item in
-            IndexedRow(id: item.id, ordinal: idx + 1, item: item)
-        }
-    }
-
     var body: some View {
         NavigationStack {
             sheetInnerBody
@@ -49,8 +36,8 @@ struct UploadedImagesOverflowSheet: View {
         } else {
             List {
                 Section {
-                    ForEach(indexedRows) { row in
-                        uploadedRow(indexDisplay: row.ordinal, item: row.item)
+                    ForEach(items) { item in
+                        uploadedRow(item: item)
                     }
                 } header: {
                     Text("\(items.count) photo\(items.count == 1 ? "" : "s")")
@@ -67,7 +54,7 @@ struct UploadedImagesOverflowSheet: View {
         }
     }
 
-    private func uploadedRow(indexDisplay: Int, item: SelectedPhotoItem) -> some View {
+    private func uploadedRow(item: SelectedPhotoItem) -> some View {
         HStack(spacing: 14) {
             Image(uiImage: item.image)
                 .resizable()
@@ -75,10 +62,13 @@ struct UploadedImagesOverflowSheet: View {
                 .frame(width: 56, height: 56)
                 .clipShape(RoundedRectangle(cornerRadius: 12, style: .continuous))
 
-            Text("Image \(indexDisplay)")
+            Text(item.displayName)
                 .font(.body.weight(.medium))
-
-            Spacer(minLength: 8)
+                .foregroundStyle(.primary)
+                .lineLimit(1)
+                .truncationMode(.tail)
+                .frame(maxWidth: .infinity, alignment: .leading)
+                .layoutPriority(0)
 
             Button(role: .destructive) {
                 onRemove(item.id)
@@ -90,7 +80,8 @@ struct UploadedImagesOverflowSheet: View {
                     .contentShape(Rectangle())
             }
             .buttonStyle(.borderless)
-            .accessibilityLabel("Remove image \(indexDisplay)")
+            .layoutPriority(1)
+            .accessibilityLabel("Remove \(item.displayName)")
         }
         .padding(.vertical, 4)
     }

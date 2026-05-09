@@ -6,11 +6,11 @@
 import Foundation
 import SwiftData
 
-/// 应用内操作历史（SwiftData 持久化）。
+/// Application history (persistent with SwiftData).
 @Model
 final class HistoryEntry {
     var createdAt: Date
-    /// 分类标识，如 `item.added`、`item.removed`。
+    /// Classification identifier, such as `item.added`、`item.removed`.
     var kind: String
     var message: String
 

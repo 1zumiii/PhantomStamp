@@ -8,11 +8,23 @@
 import UIKit
 
 struct SelectedPhotoItem: Identifiable {
+    /// Shown when the system does not provide a file name (e.g. limited photo access). Replaced with `Image N` when appending to the draft.
+    static let missingFileNamePlaceholder = "Untitled"
+
     let id: UUID
     let image: UIImage
+    /// Human-readable file name from the picker when available (e.g. `IMG_1234.JPG`).
+    let displayName: String
 
-    init(id: UUID = UUID(), image: UIImage) {
+    init(id: UUID = UUID(), image: UIImage, suggestedName: String? = nil) {
         self.id = id
         self.image = image
+        let trimmed = suggestedName?.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
+        if trimmed.isEmpty {
+            self.displayName = Self.missingFileNamePlaceholder
+        } else {
+            let last = (trimmed as NSString).lastPathComponent
+            self.displayName = last.isEmpty ? Self.missingFileNamePlaceholder : last
+        }
     }
 }

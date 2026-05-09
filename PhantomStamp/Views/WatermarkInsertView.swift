@@ -42,11 +42,14 @@ struct WatermarkInsertView: View {
             .navigationBarTitleDisplayMode(.large)
             .toolbar {
                 ToolbarItem(placement: .topBarTrailing) {
-                    NavigationLink {
-                        RobustnessTestingView(watermarkService: watermarkService, settingsStore: settingsStore)
+                    Button {
+                        vm.resetDraft()
+                        photoPickerItems = []
                     } label: {
-                        Label("Tools", systemImage: "wrench.and.screwdriver")
+                        Label("Reset", systemImage: "arrow.counterclockwise")
                     }
+                    .disabled(vm.isEmbedding)
+                    .accessibilityLabel("Reset draft")
                 }
             }
 
@@ -63,9 +66,9 @@ struct WatermarkInsertView: View {
         .onChange(of: photoPickerItems) { _, items in
             guard !items.isEmpty else { return }
             Task {
-                let loaded = await ImagePickerSupport.loadImages(from: items)
+                let loaded = await ImagePickerSupport.loadPickedImages(from: items)
                 await MainActor.run {
-                    vm.appendImages(loaded)
+                    vm.appendPickedItems(loaded)
                     photoPickerItems = []
                 }
             }
@@ -404,8 +407,8 @@ struct WatermarkInsertView: View {
     private var embedFABIconColor: Color {
         if vm.isEmbedding { return Color.white.opacity(0.92) }
         if vm.canStartEmbed { return .white }
-        // Idle: noticeably darker glyph than the gray fill so sparkles stay readable (not “white on white”).
-        return Color(uiColor: .label).opacity(0.82)
+        // Idle: same low-contrast treatment as the disabled “manage uploads” chip (`.secondary` on tertiary fill).
+        return Color.secondary
     }
 
     /// Bright gradient when ready or running.
@@ -421,33 +424,20 @@ struct WatermarkInsertView: View {
         )
     }
 
-    /// Idle embed uses a **step grayer** surface than the reset button (`secondarySystemGroupedBackground`) so it reads as non-interactive.
-    private var embedFABIdleFill: LinearGradient {
-        LinearGradient(
-            colors: [
-                Color(uiColor: .systemGray5),
-                Color(uiColor: .systemGray6),
-            ],
-            startPoint: .top,
-            endPoint: .bottom
-        )
-    }
-
     @ViewBuilder
     private var embedFABBackgroundFill: some View {
         let shape = RoundedRectangle(cornerRadius: 16, style: .continuous)
         if vm.canStartEmbed || vm.isEmbedding {
             shape.fill(embedFABGradient)
         } else {
-            shape.fill(embedFABIdleFill)
+            shape.fill(Color(uiColor: .tertiarySystemGroupedBackground))
         }
     }
 
     private var embedFABStrokeColor: Color {
         if embedFABReady { return Color.white.opacity(0.45) }
         if vm.isEmbedding { return Color.white.opacity(0.18) }
-        // Slightly stronger edge on gray idle pill vs. reset’s light chrome.
-        return Color.black.opacity(0.10)
+        return Color.primary.opacity(0.12)
     }
 
     private var embedFABShadowColor: Color {
@@ -457,16 +447,20 @@ struct WatermarkInsertView: View {
         if vm.isEmbedding {
             return Color.black.opacity(0.2)
         }
-        // Flatter than reset so the nearby white-ish button feels “primary” among floaters.
-        return Color.black.opacity(0.05)
+        return Color.black.opacity(0.04)
     }
 
     private var embedFABShadowRadius: CGFloat {
-        embedFABReady ? 26 : (vm.isEmbedding ? 20 : 9)
+        embedFABReady ? 26 : (vm.isEmbedding ? 20 : 6)
     }
 
     private var embedFABShadowY: CGFloat {
-        embedFABReady ? 16 : 8
+        embedFABReady ? 16 : 6
+    }
+
+    /// Matches `manageUploadedChip` when there is nothing to open: same fill + dimmed with `0.42` opacity.
+    private var embedFABInactiveDimOpacity: Double {
+        (embedFABReady || vm.isEmbedding) ? 1.0 : 0.42
     }
 
     private var floatingActions: some View {
@@ -474,29 +468,6 @@ struct WatermarkInsertView: View {
             Spacer()
             HStack(spacing: 12) {
                 Spacer()
-
-                Button {
-                    vm.resetDraft()
-                    photoPickerItems = []
-                } label: {
-                    Image(systemName: "arrow.counterclockwise")
-                        .font(.body.weight(.semibold))
-                        .frame(width: 52, height: 52)
-                        .contentShape(Rectangle())
-                }
-                .buttonStyle(.plain)
-                .foregroundStyle(.primary)
-                .background {
-                    RoundedRectangle(cornerRadius: 16, style: .continuous)
-                        .fill(Color(uiColor: .secondarySystemGroupedBackground))
-                }
-                .overlay {
-                    RoundedRectangle(cornerRadius: 16, style: .continuous)
-                        .strokeBorder(Color.primary.opacity(0.10), lineWidth: 1)
-                }
-                .shadow(color: Color.black.opacity(0.14), radius: 18, x: 0, y: 10)
-                .disabled(vm.isEmbedding)
-                .accessibilityLabel("Reset draft")
 
                 Button {
                     guard vm.canStartEmbed else { return }
@@ -519,6 +490,7 @@ struct WatermarkInsertView: View {
                 }
                 .shadow(color: embedFABShadowColor, radius: embedFABShadowRadius, x: 0, y: embedFABShadowY)
                 .scaleEffect(embedFABReady ? 1.04 : 1.0)
+                .opacity(embedFABInactiveDimOpacity)
                 .animation(.spring(response: 0.32, dampingFraction: 0.72), value: embedFABReady)
                 .animation(.easeOut(duration: 0.2), value: vm.isEmbedding)
                 // Use hit-testing instead of `.disabled` so SwiftUI does not apply extra gray wash over our styling.
