@@ -56,7 +56,6 @@ struct WatermarkInsertView: View {
         }
         .sheet(isPresented: $showOverflowSheet) {
             UploadedImagesOverflowSheet(items: vm.selectedPhotoItems, onRemove: { vm.removePhoto(id: $0) })
-                .presentationDetents([.medium, .large])
         }
         .onChange(of: vm.selectedPhotoItems.count) { _, count in
             if count == 0 { showOverflowSheet = false }
