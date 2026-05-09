@@ -8,7 +8,7 @@
 import SwiftUI
 import UIKit
 
-struct TestPage: View {
+struct RobustnessTestingView: View {
     let watermarkService: any WatermarkServiceProtocol
     var settingsStore: UserSettingsStore
 
@@ -480,7 +480,7 @@ struct TestPage: View {
 
 #Preview {
     NavigationStack {
-        TestPage(watermarkService: WatermarkService(), settingsStore: UserSettingsStore())
+        RobustnessTestingView(watermarkService: WatermarkService(), settingsStore: UserSettingsStore())
     }
 }
 

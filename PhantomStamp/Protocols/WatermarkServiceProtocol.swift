@@ -11,6 +11,9 @@ protocol WatermarkServiceProtocol {
     /// 将文本水印嵌入位图；耗时操作须在后台友好实现（必要时内部切换线程）。
     func embedWatermark(into image: UIImage, text: String) async throws -> UIImage
 
+    /// Embed sequentially into multiple images (posts batch progress notifications).
+    func embedWatermark(into images: [UIImage], text: String) async throws -> [UIImage]
+
     /// 从位图中提取水印文本。
     func extractWatermark(from image: UIImage) async throws -> String
 }
