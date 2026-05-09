@@ -15,36 +15,16 @@ import SwiftUI
 /// - Update: `AppConstants.Notifications.watermarkProgress` with `userInfo["payload"] as ProgressPayload`
 /// - Hide: `AppConstants.Notifications.watermarkProgressOverlayDidEnd`
 struct FullScreenWatermarkProgressOverlay: View {
-    @State private var isVisible = false
-    @State private var title: String = "Watermark"
-    @State private var detail: String = AppConstants.WatermarkStep.preparation.rawValue
-    @State private var progress: Double = 0
-    @State private var progressTextValue: Double = 0
-    @State private var hideWorkItem: DispatchWorkItem?
+    @State private var vm = FullScreenWatermarkProgressOverlayViewModel()
 
     // Liveness signals
     @State private var dotsPhase: Int = 0
     @State private var dotsTask: Task<Void, Never>?
     @State private var shimmerPhase: CGFloat = -1
 
-    // Progress event buffering / throttling (adaptive)
-    @State private var pendingProgress: [QueuedProgress] = []
-    @State private var progressPumpTask: Task<Void, Never>?
-    @State private var lastProgressApplyInstant: ContinuousClock.Instant?
-    @State private var endRequested: Bool = false
-
-    // Batch (multi-file) progress
-    @State private var batchCompleted: Int = 0
-    @State private var batchTotal: Int = 0
-    /// Logical batch index reported by the service (may advance before UI finishes animating).
-    @State private var batchCurrent: Int = 0
-    /// The file index currently shown by the per-file progress bar.
-    @State private var displayFileIndex: Int = 0
-    @State private var lastDrainAckCurrent: Int = -1
-
     var body: some View {
         ZStack {
-            if isVisible {
+            if vm.isVisible {
                 Rectangle()
                     .fill(.ultraThinMaterial)
                     .ignoresSafeArea()
@@ -57,7 +37,7 @@ struct FullScreenWatermarkProgressOverlay: View {
                             .symbolEffect(.pulse, options: .repeating)
 
                         VStack(alignment: .leading, spacing: 2) {
-                            Text(title)
+                            Text(vm.title)
                                 .font(.headline.weight(.semibold))
                             Text(detailWithDots)
                                 .font(.caption)
@@ -67,13 +47,13 @@ struct FullScreenWatermarkProgressOverlay: View {
 
                         Spacer()
 
-                        if batchTotal > 1 {
+                        if vm.batchTotal > 1 {
                             batchBadge
                                 .transition(.opacity.combined(with: .scale(scale: 0.98)))
                         }
                     }
 
-                    ProgressView(value: progress, total: 1.0)
+                    ProgressView(value: vm.progress, total: 1.0)
                         .tint(.accentColor)
                         .overlay {
                             GeometryReader { geo in
@@ -91,11 +71,11 @@ struct FullScreenWatermarkProgressOverlay: View {
                                     .blendMode(.plusLighter)
                                     .allowsHitTesting(false)
                             }
-                            .mask(ProgressView(value: progress, total: 1.0).tint(.white))
+                            .mask(ProgressView(value: vm.progress, total: 1.0).tint(.white))
                         }
 
                     HStack {
-                        Text("\(Int(progressTextValue * 100))%")
+                        Text("\(Int(vm.progressTextValue * 100))%")
                             .font(.caption.monospacedDigit().weight(.semibold))
                             .foregroundStyle(.secondary)
                         ProgressView()
@@ -122,63 +102,72 @@ struct FullScreenWatermarkProgressOverlay: View {
                 .transition(.opacity.combined(with: .scale(scale: 0.98)))
             }
         }
-        .animation(.easeOut(duration: 0.18), value: isVisible)
+        .animation(.easeOut(duration: 0.18), value: vm.isVisible)
         .onReceive(NotificationCenter.default.publisher(for: AppConstants.Notifications.watermarkProgressOverlayDidStart)) { _ in
             Task { @MainActor in
-                startIfNeeded()
+                vm.startIfNeeded()
             }
         }
         .onReceive(NotificationCenter.default.publisher(for: AppConstants.Notifications.watermarkProgressOverlayDidEnd)) { _ in
             Task { @MainActor in
-                requestEndAndHideWhenDrained()
+                vm.requestEndAndHideWhenDrained()
             }
         }
         .onReceive(NotificationCenter.default.publisher(for: AppConstants.Notifications.watermarkProgress)) { notification in
             guard let payload = notification.userInfo?["payload"] as? ProgressPayload else { return }
             Task { @MainActor in
                 // If callers forgot to post start, show on first progress event.
-                if !isVisible { startIfNeeded() }
-                enqueueProgress(payload)
+                if !vm.isVisible { vm.startIfNeeded() }
+                vm.enqueueProgress(payload)
             }
         }
         .onReceive(NotificationCenter.default.publisher(for: AppConstants.Notifications.watermarkBatchProgress)) { notification in
             guard let payload = notification.userInfo?["payload"] as? BatchProgressPayload else { return }
             Task { @MainActor in
-                let nextCurrent = max(0, payload.current)
-                batchCurrent = nextCurrent
-                // With strict backend pacing (awaiting drain ACK), it's safe to switch immediately.
-                let hasNextFile = nextCurrent < max(0, payload.total)
-                if hasNextFile, nextCurrent != displayFileIndex {
-                    pendingProgress.removeAll(keepingCapacity: true)
-                    progressPumpTask?.cancel()
-                    progressPumpTask = nil
-                    lastProgressApplyInstant = nil
-                    lastDrainAckCurrent = -1
-
-                    var t = Transaction()
-                    t.animation = nil
-                    withTransaction(t) {
-                        progress = 0
-                        progressTextValue = 0
-                    }
-                    displayFileIndex = nextCurrent
-                    ensureProgressPump()
-                }
-                batchCompleted = max(0, payload.completed)
-                batchTotal = max(0, payload.total)
+                vm.handleBatchProgress(payload)
             }
         }
+        .onDisappear {
+            // Ensure background tasks stop if the view is removed.
+            vm.cancel()
+            dotsTask?.cancel()
+            dotsTask = nil
+        }
         .accessibilityElement(children: .contain)
+        .task {
+            // Start liveness animations once.
+            if dotsTask == nil {
+                dotsTask = Task { @MainActor in
+                    dotsPhase = 0
+                    while !Task.isCancelled {
+                        if vm.isVisible {
+                            try? await Task.sleep(nanoseconds: 250_000_000)
+                            dotsPhase = (dotsPhase + 1) % 4
+                        } else {
+                            if dotsPhase != 0 { dotsPhase = 0 }
+                            try? await Task.sleep(nanoseconds: 200_000_000)
+                        }
+                    }
+                }
+            }
+            if shimmerPhase == -1 {
+                shimmerPhase = -1
+                withAnimation(.linear(duration: 1.25).repeatForever(autoreverses: false)) {
+                    shimmerPhase = 1.0
+                }
+            }
+        }
     }
 
     private var detailWithDots: String {
         let dots = String(repeating: "·", count: dotsPhase)
-        return dots.isEmpty ? detail : "\(detail) \(dots)"
+        let base = vm.detail
+        return dots.isEmpty ? base : "\(base) \(dots)"
     }
 
     private var batchBadge: some View {
-        let total = max(batchTotal, 1)
-        let completedClamped = min(max(batchCompleted, 0), total)
+        let total = max(vm.batchTotal, 1)
+        let completedClamped = min(max(vm.batchCompleted, 0), total)
         let p = Double(completedClamped) / Double(total)
 
         return ZStack {
@@ -201,178 +190,7 @@ struct FullScreenWatermarkProgressOverlay: View {
                 .foregroundStyle(.secondary)
         }
         .frame(width: 28, height: 28)
-        .accessibilityLabel("文件 \(completedClamped) / \(total)")
-    }
-
-    @MainActor
-    private func startIfNeeded() {
-        hideWorkItem?.cancel()
-        hideWorkItem = nil
-        title = "Watermark"
-        pendingProgress.removeAll(keepingCapacity: true)
-        progressPumpTask?.cancel()
-        progressPumpTask = nil
-
-        // Reset progress without animation to avoid "100% -> 0%" rewind effect between runs.
-        var t = Transaction()
-        t.animation = nil
-        withTransaction(t) {
-            progress = 0
-            progressTextValue = 0
-        }
-        isVisible = true
-        endRequested = false
-        lastProgressApplyInstant = nil
-        lastDrainAckCurrent = -1
-        displayFileIndex = batchCurrent
-
-        dotsTask?.cancel()
-        dotsTask = Task { @MainActor in
-            dotsPhase = 0
-            while isVisible, !Task.isCancelled {
-                try? await Task.sleep(nanoseconds: 250_000_000)
-                dotsPhase = (dotsPhase + 1) % 4
-            }
-        }
-        shimmerPhase = -1
-        withAnimation(.linear(duration: 1.25).repeatForever(autoreverses: false)) {
-            shimmerPhase = 1.0
-        }
-
-        ensureProgressPump()
-    }
-
-    @MainActor
-    private func scheduleHide() {
-        hideWorkItem?.cancel()
-        let item = DispatchWorkItem {
-            withAnimation(.easeOut(duration: 0.18)) {
-                isVisible = false
-            }
-            // Clear batch state when the overlay ends.
-            batchCompleted = 0
-            batchTotal = 0
-            batchCurrent = 0
-        }
-        hideWorkItem = item
-        // Keep visible briefly at completion.
-        DispatchQueue.main.asyncAfter(deadline: .now() + 1.25, execute: item)
-    }
-
-    // MARK: - Progress queue (priority + throttling)
-
-    private struct QueuedProgress: Sendable {
-        let step: AppConstants.WatermarkStep
-        let percentage: Double
-        let enqueuedAt: UInt64
-    }
-
-    @MainActor
-    private func enqueueProgress(_ payload: ProgressPayload) {
-        let target = min(max(payload.percentage, 0), 1)
-        pendingProgress.append(
-            .init(
-                step: payload.step,
-                percentage: target,
-                enqueuedAt: DispatchTime.now().uptimeNanoseconds
-            )
-        )
-
-        // NOTE:
-        // Do NOT auto-hide on completion during batch processing.
-        // Batch runs are explicitly ended by `watermarkProgressOverlayDidEnd`.
-        if target >= 1.0 - 1e-9, batchTotal <= 1 {
-            endRequested = true
-        }
-
-        ensureProgressPump()
-    }
-
-    @MainActor
-    private func requestEndAndHideWhenDrained() {
-        endRequested = true
-        ensureProgressPump()
-    }
-
-    @MainActor
-    private func ensureProgressPump() {
-        guard progressPumpTask == nil else { return }
-        progressPumpTask = Task { @MainActor in
-            let clock = ContinuousClock()
-            defer { progressPumpTask = nil }
-
-            while isVisible, !Task.isCancelled {
-                if pendingProgress.isEmpty {
-                    // If we're in batch mode and the UI has fully displayed completion for the current file,
-                    // send an ack so the service can safely advance to the next file.
-                    if batchTotal > 1,
-                       progress >= 1.0 - 1e-9,
-                       lastDrainAckCurrent != displayFileIndex
-                    {
-                        lastDrainAckCurrent = displayFileIndex
-                        NotificationCenter.default.post(
-                            name: AppConstants.Notifications.watermarkPerFileProgressDidDrain,
-                            object: nil,
-                            userInfo: ["payload": PerFileProgressDrainPayload(current: displayFileIndex)]
-                        )
-                    }
-
-                    if endRequested {
-                        scheduleHide()
-                        break
-                    }
-                    // Idle briefly; avoid a tight loop.
-                    try? await Task.sleep(nanoseconds: 50_000_000)
-                    continue
-                }
-
-                // Priority queue behavior: always take the smallest progress first.
-                pendingProgress.sort {
-                    if $0.percentage != $1.percentage { return $0.percentage < $1.percentage }
-                    return $0.enqueuedAt < $1.enqueuedAt
-                }
-                let next: QueuedProgress
-                next = pendingProgress.removeFirst()
-
-                // Enforce minimum time between *applied* updates (adaptive + fast-forward under backlog).
-                let qCount = pendingProgress.count
-                let dynamicMinInterval = qCount > 2 ? 0.01 : 0.10
-
-                let deltaForInterval = abs(next.percentage - progress)
-                let intervalSeconds = min(max(deltaForInterval * 10.0, dynamicMinInterval), 1.00)
-                if let last = lastProgressApplyInstant {
-                    let elapsed = last.duration(to: clock.now)
-                    let minInterval = Duration.seconds(intervalSeconds)
-                    if elapsed < minInterval {
-                        try? await clock.sleep(for: (minInterval - elapsed))
-                    }
-                }
-
-                detail = next.step.rawValue
-
-                let target = next.percentage
-                // Drop stale regressions (can happen with concurrent notifications arriving out of order).
-                if target < progress - 1e-9 {
-                    continue
-                }
-
-                // Update the percent label without animation (avoid "counting" feel).
-                var tNoAnim = Transaction()
-                tNoAnim.animation = nil
-                withTransaction(tNoAnim) {
-                    progressTextValue = target
-                }
-
-                // Animation duration should also adapt to backlog.
-                let dynamicAnimDuration = qCount > 2
-                    ? 0.10
-                    : min(max(0.20, 0.25 + deltaForInterval * 0.7), 0.90)
-                withAnimation(.easeInOut(duration: dynamicAnimDuration)) {
-                    progress = target
-                }
-                lastProgressApplyInstant = clock.now
-            }
-        }
+        .accessibilityLabel("File \(completedClamped) / \(total)")
     }
 }
 

@@ -29,21 +29,21 @@ extension AppConstants {
     // Fixed all possible operation stages
     enum WatermarkStep: String {
         // Embedding pipeline (frequency-domain watermark).
-        case preparation = "Preparing payload..."
-        case fecEncoding = "Applying FEC..."
-        case macroblockBuild = "Building 2D tile..."
+        case preparation = "Preparing payload"
+        case fecEncoding = "Applying FEC"
+        case macroblockBuild = "Building 2D tile"
 
-        case colorConversion = "Extracting luminance (Y)..."
-        case stripSlicing = "Slicing luminance into strips..."
+        case colorConversion = "Extracting luminance (Y)"
+        case stripSlicing = "Slicing luminance into strips"
 
-        case processingStrips = "Embedding bits into DCT blocks..."
+        case processingStrips = "Embedding bits into DCT blocks"
 
-        case reassembling = "Reassembling luminance..."
-        case rgbRebuild = "Rebuilding final image..."
+        case reassembling = "Reassembling luminance"
+        case rgbRebuild = "Rebuilding final image"
     }
 }
 
-// 专门用于广播的进度载体
+/// Single-file progress payload for UI overlays.
 struct ProgressPayload {
     let step: AppConstants.WatermarkStep
     let percentage: Double // 0.0 to 1.0
