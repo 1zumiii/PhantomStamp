@@ -20,7 +20,7 @@ struct RootView: View {
         systemImage: AppConstants.Symbol.tabWatermark
       ) {
         NavigationStack {
-          WatermarkInsertDemoView(watermarkService: watermarkService, settingsStore: settingsStore)
+          WatermarkInsertView(watermarkService: watermarkService, settingsStore: settingsStore)
         }
       },
       BottomNavItem(
