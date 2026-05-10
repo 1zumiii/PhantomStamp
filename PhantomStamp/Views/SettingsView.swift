@@ -6,9 +6,9 @@
 import SwiftUI
 
 struct SettingsView: View {
+    let watermarkService: any WatermarkServiceProtocol
     @Bindable var settingsStore: UserSettingsStore
     @State private var showAbout = false
-    @State private var showDebugTools = false
 
     var body: some View {
         NavigationStack {
@@ -29,6 +29,15 @@ struct SettingsView: View {
                         .foregroundStyle(.secondary)
                 } header: {
                     Text(AppConstants.Copy.Settings.sectionAppearance)
+                }
+
+                Section {
+                    Toggle(AppConstants.Copy.Settings.toggleWatermarkOperationNotifications, isOn: $settingsStore.watermarkOperationNotificationsEnabled)
+                    Text(AppConstants.Copy.Settings.footnoteWatermarkOperationNotifications)
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
+                } header: {
+                    Text(AppConstants.Copy.Settings.sectionNotifications)
                 }
 
                 // MARK: - Card-style rows (UI examples)
@@ -76,26 +85,22 @@ struct SettingsView: View {
                 }
 
                 Section {
-                    Button {
-                        showDebugTools.toggle()
+                    NavigationLink {
+                        RobustnessTestingView(watermarkService: watermarkService, settingsStore: settingsStore)
                     } label: {
                         HStack(spacing: 12) {
-                            Image(systemName: "hammer.fill")
+                            Image(systemName: "wrench.and.screwdriver")
                                 .foregroundStyle(.teal)
                             VStack(alignment: .leading, spacing: 2) {
-                                Text("Debug tools")
+                                Text("Test page")
                                     .font(.subheadline.weight(.semibold))
-                                Text("Run UI and algorithm smoke checks")
+                                Text("Watermark robustness and manual smoke checks")
                                     .font(.caption)
                                     .foregroundStyle(.secondary)
                             }
                             Spacer()
-                            Image(systemName: "chevron.right")
-                                .font(.footnote.weight(.semibold))
-                                .foregroundStyle(.tertiary)
                         }
                     }
-                    .buttonStyle(.plain)
 
                     Button(role: .destructive) {
                         // UI-only placeholder (no real destructive action).
@@ -138,11 +143,6 @@ struct SettingsView: View {
             }
             .navigationTitle(AppConstants.Copy.Settings.navigationTitle)
             .alert("Account", isPresented: $showAbout) {
-                Button("OK", role: .cancel) {}
-            } message: {
-                Text("UI-only placeholder.")
-            }
-            .alert("Debug tools", isPresented: $showDebugTools) {
                 Button("OK", role: .cancel) {}
             } message: {
                 Text("UI-only placeholder.")
@@ -190,5 +190,5 @@ struct SettingsView: View {
 }
 
 #Preview {
-    SettingsView(settingsStore: UserSettingsStore())
+    SettingsView(watermarkService: WatermarkService(), settingsStore: UserSettingsStore())
 }

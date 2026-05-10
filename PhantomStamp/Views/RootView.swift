@@ -9,6 +9,7 @@ import SwiftUI
 struct RootView: View {
   let watermarkService: any WatermarkServiceProtocol
 
+  @Environment(\.modelContext) private var modelContext
   @State private var settingsStore = UserSettingsStore()
   @State private var tab: AnyHashable = AnyHashable("watermark")
 
@@ -20,7 +21,7 @@ struct RootView: View {
         systemImage: AppConstants.Symbol.tabWatermark
       ) {
         NavigationStack {
-          WatermarkInsertDemoView(watermarkService: watermarkService, settingsStore: settingsStore)
+          WatermarkInsertView(watermarkService: watermarkService, settingsStore: settingsStore)
         }
       },
       BottomNavItem(
@@ -35,7 +36,7 @@ struct RootView: View {
         title: AppConstants.Copy.Tab.settings,
         systemImage: AppConstants.Symbol.tabSettings
       ) {
-        SettingsView(settingsStore: settingsStore)
+        SettingsView(watermarkService: watermarkService, settingsStore: settingsStore)
       },
     ]
 
@@ -53,17 +54,22 @@ struct RootView: View {
         BottomNavBar(items: items, selection: $tab)
       }
 
-      // Demo-only full-screen overlay for `WatermarkInsertDemoView`.
-      FullScreenDemoProgressOverlay()
+      // Full-screen overlay (used for both demos and real watermark operations).
+      FullScreenWatermarkProgressOverlay()
         .zIndex(1000)
+    }
+    .onAppear {
+      guard let svc = watermarkService as? WatermarkService else { return }
+      svc.historyModelContext = modelContext
+      svc.settingsStore = settingsStore
     }
   }
 }
 
 #Preview {
-  let schema = Schema([HistoryEntry.self])
+  let schema = Schema([HistoryEntry.self, WatermarkHistoryRecord.self])
   let config = ModelConfiguration(schema: schema, isStoredInMemoryOnly: true)
   let container = try! ModelContainer(for: schema, configurations: [config])
-  return RootView(watermarkService: PreviewWatermarkService())
+  return RootView(watermarkService: WatermarkService())
     .modelContainer(container)
 }

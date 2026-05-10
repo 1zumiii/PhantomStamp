@@ -5,16 +5,88 @@
 
 import UIKit
 import Accelerate
+import SwiftData
 
 class WatermarkService: WatermarkServiceProtocol {
+    /// When set from the UI host (see `RootView.onAppear`), completed embed/extract attempts append a `WatermarkHistoryRecord`.
+    var historyModelContext: ModelContext?
+
+    /// When set from `RootView`, embed/extract honors notification + embed-history toggles in `UserSettingsStore`.
+    weak var settingsStore: UserSettingsStore?
+
+    /// When > 0, single-file embed/extract APIs suppress per-image local notifications; batch APIs send one summary at the end.
+    private var batchUserNotificationDepth = 0
+
+    private var shouldSuppressSingleOperationNotification: Bool {
+        batchUserNotificationDepth > 0
+    }
+
+    private func userAllowsWatermarkNotifications() async -> Bool {
+        await MainActor.run {
+            settingsStore?.watermarkOperationNotificationsEnabled ?? AppConstants.SettingsDefault.watermarkOperationNotifications
+        }
+    }
+
+    private func userAllowsEmbedHistoryRecords() async -> Bool {
+        await MainActor.run {
+            settingsStore?.autoLogWatermarkEmbedToHistory ?? AppConstants.SettingsDefault.autoLogWatermarkEmbed
+        }
+    }
+
+    /// Delivers `UserNotifications` only when the user enabled alerts in Settings (system authorization is still required inside the notification service).
+    private func deliverWatermarkNotificationIfAllowed(_ work: () async -> Void) async {
+        guard await userAllowsWatermarkNotifications() else { return }
+        await work()
+    }
+    private func awaitPerFileProgressDrain(current: Int, timeoutSeconds: Double = 60.0) async -> Bool {
+        // If the overlay isn't listening (e.g. tests or headless runs), don't block forever.
+        let deadlineNs = UInt64(timeoutSeconds * 1_000_000_000)
+
+        return await withTaskGroup(of: Bool.self) { group in
+            group.addTask {
+                // `AppConstants.Notifications` may be main-actor isolated under Swift 6 default isolation.
+                let name = await MainActor.run { AppConstants.Notifications.watermarkPerFileProgressDidDrain }
+                let stream = NotificationCenter.default.notifications(
+                    named: name,
+                    object: nil
+                )
+                for await n in stream {
+                    guard let payload = n.userInfo?["payload"] as? PerFileProgressDrainPayload else { continue }
+                    if payload.current == current {
+                        return true
+                    }
+                }
+                return false
+            }
+            group.addTask {
+                try? await Task.sleep(nanoseconds: deadlineNs)
+                return false
+            }
+            let first = await group.next() ?? false
+            group.cancelAll()
+            return first
+        }
+    }
     
     // ==========================================
-    // 嵌入水印
+    // Embedding Watermark
     // ==========================================
     func embedWatermark(into image: UIImage, text: String) async throws -> UIImage {
+        try await embedWatermark(into: image, text: text, shouldHideProgressbar: true)
+    }
+
+    /// Embed watermark into a single image.
+    /// - Parameter shouldHideProgressbar: If false, the overlay will stay visible (useful for multi-file sequential processing).
+    func embedWatermark(into image: UIImage, text: String, shouldHideProgressbar: Bool = true) async throws -> UIImage {
+        #if DEBUG
+        // Debug-only: prints internal data-layer checks. Disable by default to avoid noisy logs in demos.
+        // debugTestDataLayer()
+        #endif
         
-        debugTestDataLayer()
-        
+        if shouldHideProgressbar {
+            NotificationCenter.default.post(name: AppConstants.Notifications.watermarkProgressOverlayDidStart, object: nil)
+        }
+
         // Internal helper method to report progress
         func reportProgress(step: AppConstants.WatermarkStep, percentage: Double) {
             let clamped = min(max(percentage, 0), 1)
@@ -27,125 +99,490 @@ class WatermarkService: WatermarkServiceProtocol {
         }
         
 
-        // Overall budget (must sum to 1.0): strip work dominates CPU time.
-        let prepEnd = 0.10          // 10% — validation + payload / macroblock
-        let colorEnd = 0.18         // 8% — YCbCr + slicing
-        let stripsEnd = 0.90        // 72% — concurrent strip embedding (largest share)
-        // remaining 10% — reassemble Y + RGB rebuild
-        
-        // ==========================================
-        // Step 1: Data preparation → [0, prepEnd]
-        // ==========================================
-        reportProgress(step: .preparation, percentage: 0)
-        let minSize: CGFloat = 128.0
-        if image.size.width < minSize || image.size.height < minSize {
-            throw WatermarkError.imageTooSmall
-        }
-        reportProgress(step: .preparation, percentage: prepEnd * 0.35)
+        // Progress budget (roughly sums to 1.0).
+        //
+        // Empirically on large images, the "reassemble + RGB rebuild" stage can dominate,
+        // so we reserve a meaningful slice of the bar for it to avoid the UI looking "stuck".
+        let prepEnd = 0.10          // validation + payload / macroblock
+        let colorEnd = 0.20         // YCbCr + slicing
+        let stripsEnd = 0.70        // concurrent strip embedding
+        // remaining 30% — reassemble Y + RGB rebuild
 
-        // TODO: 将文本转为二进制并应用前向纠错码 (FEC)
-        let eccBits = encodeFEC(text: text)
-        reportProgress(step: .preparation, percentage: prepEnd * 0.65)
+        let historyStarted = CFAbsoluteTimeGetCurrent()
 
-        // TODO: 拼接同步头，构成完整的单个水印周期
-        let syncBits = getSyncMarkerBits()
-        let payloadBits = syncBits + eccBits
-        // TODO: 将一维数据流转为二维宏块（防裁剪的光栅断裂问题）
-        let macroblock = build2DTile(from: payloadBits)
-        reportProgress(step: .preparation, percentage: prepEnd)
+        do {
+            // ==========================================
+            // Step 1: Prepare payload + build 2D tile → [0, prepEnd]
+            // ==========================================
+            reportProgress(step: .preparation, percentage: 0)
+            let minSize: CGFloat = 128.0
+            if image.size.width < minSize || image.size.height < minSize {
+                throw WatermarkError.imageTooSmall
+            }
+            reportProgress(step: .preparation, percentage: prepEnd * 0.20)
 
-        // ==========================================
-        // Step 2: Color / layout → (prepEnd, colorEnd]
-        // ==========================================
-        reportProgress(step: .colorConversion, percentage: prepEnd)
-        guard var ycbcrImage = convertToYCbCr(image: image) else {
-            throw WatermarkError.processingError
-        }
-        let yChannel = ycbcrImage.Y
-        reportProgress(step: .colorConversion, percentage: prepEnd + (colorEnd - prepEnd) * 0.55)
+            // Convert the text to binary and apply Forward Error Correction (FEC)
+            reportProgress(step: .fecEncoding, percentage: prepEnd * 0.35)
+            let eccBits = encodeFEC(text: text)
+            reportProgress(step: .fecEncoding, percentage: prepEnd * 0.55)
 
-        // TODO: 将 Y 通道按行切分为多个条带（高度必须是 8 的倍数）。限定算法范围，详见「尺寸校验 - 8的倍数」页面
-        let stripHeight = 80
-        var imageStrips = sliceImage(yChannel, heightPerStrip: stripHeight)
-        reportProgress(step: .colorConversion, percentage: colorEnd)
+            // Concatenate the sync header, and form a complete single watermark period
+            let syncBits = getSyncMarkerBits()
+            let payloadBits = syncBits + eccBits
+            reportProgress(step: .macroblockBuild, percentage: prepEnd * 0.80)
+            // Convert the one-dimensional data stream to a two-dimensional macroblock (to prevent raster断裂问题)
+            let macroblock = build2DTile(from: payloadBits)
+            reportProgress(step: .macroblockBuild, percentage: prepEnd)
 
-        // ==========================================
-        // Step 3: Strip processing → (colorEnd, stripsEnd]  (main cost)
-        // ==========================================
-        let stripSpan = stripsEnd - colorEnd
-        reportProgress(step: .processingStrips, percentage: colorEnd)
+            // ==========================================
+            // Step 2: Color / layout → (prepEnd, colorEnd]
+            // ==========================================
+            reportProgress(step: .colorConversion, percentage: prepEnd)
+            // `convertToYCbCr` can take a long time on large images. Without an intermediate tick, the UI may
+            // appear to "start" around ~14–15% (next post after Y is ready) because the bar never paints 10%.
+            let colorMidDuringConvert = prepEnd + (colorEnd - prepEnd) * 0.22
+            reportProgress(step: .colorConversion, percentage: colorMidDuringConvert)
+            guard var ycbcrImage = convertToYCbCr(image: image) else {
+                #if DEBUG
+                let pxW = Int(image.size.width * image.scale)
+                let pxH = Int(image.size.height * image.scale)
+                print("[WatermarkService] convertToYCbCr failed (image=\(pxW)x\(pxH)px scale=\(image.scale) orientation=\(image.imageOrientation.rawValue))")
+                #endif
+                throw WatermarkError.processingError
+            }
+            let yChannel = ycbcrImage.Y
+            reportProgress(step: .colorConversion, percentage: prepEnd + (colorEnd - prepEnd) * 0.45)
 
-        let stripCount = imageStrips.count
-        try await withThrowingTaskGroup(of: ImageStrip.self) { group in
-            for strip in imageStrips {
-                group.addTask {
-                    // 强制内存回收，防止大图切片运算导致 OOM 静默崩溃
-                    autoreleasepool {
-                        self.processSingleStripForEmbedding(strip: strip, macroblock: macroblock)
+            // slice the Y channel into multiple strips (the height must be a multiple of 8)
+            let stripHeight = 80
+            var imageStrips = sliceImage(yChannel, heightPerStrip: stripHeight)
+            reportProgress(step: .stripSlicing, percentage: colorEnd)
+
+            // ==========================================
+            // Step 3: Strip processing → (colorEnd, stripsEnd]
+            // ==========================================
+            let stripSpan = stripsEnd - colorEnd
+            reportProgress(step: .processingStrips, percentage: colorEnd)
+
+            let stripCount = imageStrips.count
+            try await withThrowingTaskGroup(of: ImageStrip.self) { group in
+                for strip in imageStrips {
+                    group.addTask {
+                        // force memory recycling to prevent OOM silent crash caused by large image slicing computation
+                        autoreleasepool {
+                            self.processSingleStripForEmbedding(strip: strip, macroblock: macroblock)
+                        }
+                    }
+                }
+
+                var completedStrips = 0
+                for try await processedStrip in group {
+                    // overwrite the processed strip back to the original strips array (located by `globalYOffset`).
+                    updateStripInPlace(&imageStrips, with: processedStrip)
+                    completedStrips += 1
+                    if stripCount > 0 {
+                        let t = colorEnd + stripSpan * Double(completedStrips) / Double(stripCount)
+                        reportProgress(step: .processingStrips, percentage: t)
                     }
                 }
             }
+            reportProgress(step: .processingStrips, percentage: stripsEnd)
 
-            var completedStrips = 0
-            for try await processedStrip in group {
-                // TODO: 根据条带的全局坐标，将其写回总的 Y 通道矩阵结构中
-                updateStripInPlace(&imageStrips, with: processedStrip)
-                completedStrips += 1
-                if stripCount > 0 {
-                    let t = colorEnd + stripSpan * Double(completedStrips) / Double(stripCount)
-                    reportProgress(step: .processingStrips, percentage: t)
+            // ==========================================
+            // Step 4: Reassemble → (stripsEnd, 1.0]
+            // ==========================================
+            reportProgress(step: .reassembling, percentage: stripsEnd)
+            
+            // overwrite the processed strips back to the original Y channel matrix.
+            // the extra 1~7 pixels on the right side and bottom of the original matrix will be kept intact, and not be destroyed.
+            reportProgress(step: .reassembling, percentage: stripsEnd + (1 - stripsEnd) * 0.18)
+            reassembleStrips(imageStrips, into: &ycbcrImage.Y)
+            reportProgress(step: .reassembling, percentage: stripsEnd + (1 - stripsEnd) * 0.52)
+            
+            // Final color conversion back to UIImage.
+            reportProgress(step: .rgbRebuild, percentage: stripsEnd + (1 - stripsEnd) * 0.72)
+
+            guard let finalImage = convertToUIImage(from: ycbcrImage) else {
+                #if DEBUG
+                print("[WatermarkService] convertToUIImage failed (Y=\(ycbcrImage.Y.width)x\(ycbcrImage.Y.height), Cb=\(ycbcrImage.Cb.width)x\(ycbcrImage.Cb.height), Cr=\(ycbcrImage.Cr.width)x\(ycbcrImage.Cr.height))")
+                #endif
+                throw WatermarkError.processingError
+            }
+            reportProgress(step: .reassembling, percentage: 1)
+
+            if shouldHideProgressbar {
+                NotificationCenter.default.post(name: AppConstants.Notifications.watermarkProgressOverlayDidEnd, object: nil)
+            }
+            await persistEmbedHistoryIfNeeded(
+                succeeded: true,
+                text: text,
+                inputImage: image,
+                outputImage: finalImage,
+                error: nil,
+                startedAt: historyStarted
+            )
+            if !shouldSuppressSingleOperationNotification {
+                await deliverWatermarkNotificationIfAllowed {
+                    await WatermarkOperationNotificationService.notifySingleEmbedFinished(success: true, error: nil)
                 }
             }
+            return finalImage
+        } catch {
+            if shouldHideProgressbar {
+                NotificationCenter.default.post(name: AppConstants.Notifications.watermarkProgressOverlayDidEnd, object: nil)
+            }
+            await persistEmbedHistoryIfNeeded(
+                succeeded: false,
+                text: text,
+                inputImage: image,
+                outputImage: nil,
+                error: error,
+                startedAt: historyStarted
+            )
+            if !shouldSuppressSingleOperationNotification {
+                await deliverWatermarkNotificationIfAllowed {
+                    await WatermarkOperationNotificationService.notifySingleEmbedFinished(success: false, error: error)
+                }
+            }
+            throw error
         }
-        reportProgress(step: .processingStrips, percentage: stripsEnd)
-
-        // ==========================================
-        // Step 4: Reassemble → (stripsEnd, 1.0]
-        // ==========================================
-        reportProgress(step: .reassembling, percentage: stripsEnd)
-        // TODO: 先裁剪回原来的尺寸
-        // TODO: 组装处理后的条带，替换原 YCbCr 的 Y 通道，并转回 RGB 的 UIImage
-        ycbcrImage.Y = reassembleStrips(imageStrips)
-        reportProgress(step: .reassembling, percentage: stripsEnd + (1 - stripsEnd) * 0.55)
-
-        guard let finalImage = convertToUIImage(from: ycbcrImage) else {
-            throw WatermarkError.processingError
-        }
-        reportProgress(step: .reassembling, percentage: 1)
-
-        return finalImage
     }
     
     // ==========================================
-    // 提取水印
+    // Extract Watermark
     // ==========================================
     func extractWatermark(from image: UIImage) async throws -> String {
-        // 1. 图像预处理
+        try await extractWatermark(from: image, shouldHideProgressbar: true)
+    }
+
+    /// Extract watermark from a single image.
+    /// - Parameter shouldHideProgressbar: If false, the overlay will stay visible (useful for multi-file sequential processing).
+    func extractWatermark(from image: UIImage, shouldHideProgressbar: Bool = true) async throws -> String {
+        if shouldHideProgressbar {
+            NotificationCenter.default.post(name: AppConstants.Notifications.watermarkProgressOverlayDidStart, object: nil)
+        }
+
+        func reportProgress(step: AppConstants.WatermarkStep, percentage: Double) {
+            let clamped = min(max(percentage, 0), 1)
+            let payload = ProgressPayload(step: step, percentage: clamped)
+            NotificationCenter.default.post(
+                name: AppConstants.Notifications.watermarkProgress,
+                object: nil,
+                userInfo: ["payload": payload]
+            )
+        }
+
+        let historyStarted = CFAbsoluteTimeGetCurrent()
+
+        do {
+            reportProgress(step: .preparation, percentage: 0)
+            // Same issue as embedding: the first heavy step is YCbCr conversion. If we only report 0 and then
+            // jump straight to ~18%, single-file runs look like the bar starts "in the middle".
+            reportProgress(step: .preparation, percentage: 0.06)
+
+        // 1. image preprocessing
         guard let ycbcrImage = convertToYCbCr(image: image) else {
             throw WatermarkError.processingError
         }
         let yChannel = ycbcrImage.Y
+            reportProgress(step: .colorConversion, percentage: 0.12)
         
-        // 2. 物理与逻辑对齐 (应对平移裁切攻击)
-        // TODO: 执行 64 次网格偏移扫描，配合滑动窗口寻找同步头
+        // 2. physical and logical alignment (to handle translation and cropping attacks)
+        // execute 64 grid offset scans, and use sliding window to find the sync header
         guard let gridOffset = findGridOffsetAndSyncMarker(in: yChannel) else {
             throw WatermarkError.extractFailed
         }
+            reportProgress(step: .processingStrips, percentage: 0.55)
         
-        // 3. 数据提取
-        // TODO: 基于找到的精确网格基准点，提取全图所有的 8x8 块中的比特流
+        // 3. data extraction
+        // based on the exact grid base point found, extract the bit stream in all 8x8 blocks of the entire image
         let rawExtractedBits = extractBitsWithOffset(yChannel, offset: gridOffset)
+            reportProgress(step: .processingStrips, percentage: 0.72)
         
-        // 4. 数据恢复与解码
-        // TODO: 通过多数表决 (Majority Voting) 合并冗余数据
+        // 4. data recovery and decoding
+        // merge redundant data through majority voting (Majority Voting)
         let votedBits = applyMajorityVoting(to: rawExtractedBits)
+            reportProgress(step: .reassembling, percentage: 0.85)
+
+        #if DEBUG
+        let rows = rawExtractedBits.count
+        let cols = rawExtractedBits.first?.count ?? 0
+        print("[WatermarkService] DEBUG extract: gridOffset=(\(Int(gridOffset.x)),\(Int(gridOffset.y))) rawBits=\(rows)x\(cols) votedBits=\(votedBits.count)")
+        #endif
         
-        // TODO: 移除同步头，将纯数据送入 FEC 解码器纠错
-        guard let correctedText = decodeFEC(bits: votedBits) else {
-            throw WatermarkError.extractFailed
+        // remove the sync header, and send the pure data to the FEC decoder for error correction
+        let syncCount = getSyncMarkerBits().count
+        let payloadBits = votedBits.count >= syncCount ? Array(votedBits.dropFirst(syncCount)) : []
+
+        #if DEBUG
+        if !payloadBits.isEmpty {
+            func bitsToByteLocal(_ bits: [Int]) -> Int {
+                var v = 0
+                for b in bits.prefix(8) { v = (v << 1) | (b & 1) }
+                return v
+            }
+            let lenByte = payloadBits.count >= 8 ? bitsToByteLocal(Array(payloadBits.prefix(8))) : -1
+            let payloadPreview = payloadBits.prefix(24).map(String.init).joined()
+            print("[WatermarkService] DEBUG extract: syncCount=\(syncCount) payloadBits=\(payloadBits.count) lenByte(raw)=\(lenByte) payloadPreview=\(payloadPreview)")
+        } else {
+            print("[WatermarkService] DEBUG extract: payloadBits empty (votedBits too short)")
         }
-        
-        return correctedText
+        #endif
+        // Decode FEC with length-guessed truncation.
+        // Reason:
+        // `payloadBits` comes from a `w*w` macro-tile, which can contain padding zeros beyond the real eccBits.
+        // Feeding those extra bits into Hamming84 decode can introduce additional erroneous codewords and
+        // cause decodeFEC to fail.
+        func eccBitCount(messageLengthBytes: Int) -> Int {
+            let rawBits = 8 + messageLengthBytes * 8
+            let paddedRaw = ((rawBits + 3) / 4) * 4
+            let codewordBits = (paddedRaw / 4) * 8
+            return codewordBits
+        }
+
+        for lenGuess in 1...16 {
+            let eccCount = eccBitCount(messageLengthBytes: lenGuess)
+            guard payloadBits.count >= eccCount else { continue }
+            let eccBits = Array(payloadBits.prefix(eccCount))
+            if let correctedText = decodeFEC(bits: eccBits) {
+                reportProgress(step: .reassembling, percentage: 1.0)
+                if shouldHideProgressbar {
+                    NotificationCenter.default.post(name: AppConstants.Notifications.watermarkProgressOverlayDidEnd, object: nil)
+                }
+                await persistExtractHistoryIfNeeded(
+                    succeeded: true,
+                    image: image,
+                    extractedText: correctedText,
+                    error: nil,
+                    startedAt: historyStarted
+                )
+                if !shouldSuppressSingleOperationNotification {
+                    await deliverWatermarkNotificationIfAllowed {
+                        await WatermarkOperationNotificationService.notifySingleExtractFinished(
+                            success: true,
+                            extractedText: correctedText,
+                            error: nil
+                        )
+                    }
+                }
+                return correctedText
+            }
+        }
+
+        throw WatermarkError.extractFailed
+        } catch {
+            if shouldHideProgressbar {
+                NotificationCenter.default.post(name: AppConstants.Notifications.watermarkProgressOverlayDidEnd, object: nil)
+            }
+            await persistExtractHistoryIfNeeded(
+                succeeded: false,
+                image: image,
+                extractedText: nil,
+                error: error,
+                startedAt: historyStarted
+            )
+            if !shouldSuppressSingleOperationNotification {
+                await deliverWatermarkNotificationIfAllowed {
+                    await WatermarkOperationNotificationService.notifySingleExtractFinished(success: false, extractedText: nil, error: error)
+                }
+            }
+            throw error
+        }
+    }
+
+    // ==========================================
+    // Multi-file (sequential) APIs
+    // ==========================================
+
+    /// Sequentially embed watermark into multiple images (no outer concurrency).
+    func embedWatermark(into images: [UIImage], text: String) async throws -> [UIImage] {
+        guard !images.isEmpty else { return [] }
+
+        batchUserNotificationDepth += 1
+        defer { batchUserNotificationDepth -= 1 }
+
+        NotificationCenter.default.post(name: AppConstants.Notifications.watermarkProgressOverlayDidStart, object: nil)
+        NotificationCenter.default.post(
+            name: AppConstants.Notifications.watermarkBatchProgress,
+            object: nil,
+            userInfo: ["payload": BatchProgressPayload(completed: 0, total: images.count, current: 0)]
+        )
+
+        var outputs: [UIImage] = []
+        outputs.reserveCapacity(images.count)
+
+        do {
+            for (idx, img) in images.enumerated() {
+                NotificationCenter.default.post(
+                    name: AppConstants.Notifications.watermarkBatchProgress,
+                    object: nil,
+                    userInfo: ["payload": BatchProgressPayload(completed: idx, total: images.count, current: idx)]
+                )
+                let watermarked = try await embedWatermark(into: img, text: text, shouldHideProgressbar: false)
+                outputs.append(watermarked)
+                // Pace batch: wait until the per-file progress bar is fully displayed.
+                _ = await awaitPerFileProgressDrain(current: idx)
+                NotificationCenter.default.post(
+                    name: AppConstants.Notifications.watermarkBatchProgress,
+                    object: nil,
+                    userInfo: ["payload": BatchProgressPayload(completed: idx + 1, total: images.count, current: idx + 1)]
+                )
+            }
+
+            NotificationCenter.default.post(name: AppConstants.Notifications.watermarkProgressOverlayDidEnd, object: nil)
+            await deliverWatermarkNotificationIfAllowed {
+                await WatermarkOperationNotificationService.notifyBatchEmbedFinished(succeeded: outputs.count, failed: 0)
+            }
+            return outputs
+        } catch {
+            NotificationCenter.default.post(name: AppConstants.Notifications.watermarkProgressOverlayDidEnd, object: nil)
+            let failed = max(0, images.count - outputs.count)
+            await deliverWatermarkNotificationIfAllowed {
+                await WatermarkOperationNotificationService.notifyBatchEmbedFinished(succeeded: outputs.count, failed: failed)
+            }
+            throw error
+        }
+    }
+
+    /// Sequentially extract watermark from multiple images (no outer concurrency).
+    func extractWatermark(from images: [UIImage]) async throws -> [String] {
+        guard !images.isEmpty else { return [] }
+
+        batchUserNotificationDepth += 1
+        defer { batchUserNotificationDepth -= 1 }
+
+        NotificationCenter.default.post(name: AppConstants.Notifications.watermarkProgressOverlayDidStart, object: nil)
+        NotificationCenter.default.post(
+            name: AppConstants.Notifications.watermarkBatchProgress,
+            object: nil,
+            userInfo: ["payload": BatchProgressPayload(completed: 0, total: images.count, current: 0)]
+        )
+
+        var outputs: [String] = []
+        outputs.reserveCapacity(images.count)
+
+        do {
+            for (idx, img) in images.enumerated() {
+                NotificationCenter.default.post(
+                    name: AppConstants.Notifications.watermarkBatchProgress,
+                    object: nil,
+                    userInfo: ["payload": BatchProgressPayload(completed: idx, total: images.count, current: idx)]
+                )
+                let extracted = try await extractWatermark(from: img, shouldHideProgressbar: false)
+                outputs.append(extracted)
+                _ = await awaitPerFileProgressDrain(current: idx)
+                NotificationCenter.default.post(
+                    name: AppConstants.Notifications.watermarkBatchProgress,
+                    object: nil,
+                    userInfo: ["payload": BatchProgressPayload(completed: idx + 1, total: images.count, current: idx + 1)]
+                )
+            }
+
+            NotificationCenter.default.post(name: AppConstants.Notifications.watermarkProgressOverlayDidEnd, object: nil)
+            await deliverWatermarkNotificationIfAllowed {
+                await WatermarkOperationNotificationService.notifyBatchExtractFinished(succeeded: outputs.count, failed: 0)
+            }
+            return outputs
+        } catch {
+            NotificationCenter.default.post(name: AppConstants.Notifications.watermarkProgressOverlayDidEnd, object: nil)
+            let failed = max(0, images.count - outputs.count)
+            await deliverWatermarkNotificationIfAllowed {
+                await WatermarkOperationNotificationService.notifyBatchExtractFinished(succeeded: outputs.count, failed: failed)
+            }
+            throw error
+        }
+    }
+
+    /// Sequentially extract watermark from multiple images (best effort).
+    /// - Returns: `[String?]` aligned with input order; failures produce `nil` but do not stop the batch.
+    func extractWatermarkBestEffort(from images: [UIImage]) async -> [String?] {
+        guard !images.isEmpty else { return [] }
+
+        batchUserNotificationDepth += 1
+        defer { batchUserNotificationDepth -= 1 }
+
+        NotificationCenter.default.post(name: AppConstants.Notifications.watermarkProgressOverlayDidStart, object: nil)
+        NotificationCenter.default.post(
+            name: AppConstants.Notifications.watermarkBatchProgress,
+            object: nil,
+            userInfo: ["payload": BatchProgressPayload(completed: 0, total: images.count, current: 0)]
+        )
+
+        var outputs: [String?] = Array(repeating: nil, count: images.count)
+
+        for (idx, img) in images.enumerated() {
+            NotificationCenter.default.post(
+                name: AppConstants.Notifications.watermarkBatchProgress,
+                object: nil,
+                userInfo: ["payload": BatchProgressPayload(completed: idx, total: images.count, current: idx)]
+            )
+            do {
+                let extracted = try await extractWatermark(from: img, shouldHideProgressbar: false)
+                outputs[idx] = extracted
+            } catch {
+                outputs[idx] = nil
+            }
+            _ = await awaitPerFileProgressDrain(current: idx)
+            NotificationCenter.default.post(
+                name: AppConstants.Notifications.watermarkBatchProgress,
+                object: nil,
+                userInfo: ["payload": BatchProgressPayload(completed: idx + 1, total: images.count, current: idx + 1)]
+            )
+        }
+
+        NotificationCenter.default.post(name: AppConstants.Notifications.watermarkProgressOverlayDidEnd, object: nil)
+        let succeeded = outputs.compactMap { $0 }.count
+        let failed = outputs.count - succeeded
+        await deliverWatermarkNotificationIfAllowed {
+            await WatermarkOperationNotificationService.notifyBatchExtractFinished(succeeded: succeeded, failed: failed)
+        }
+        return outputs
+    }
+
+    private func persistEmbedHistoryIfNeeded(
+        succeeded: Bool,
+        text: String,
+        inputImage: UIImage,
+        outputImage: UIImage?,
+        error: Error?,
+        startedAt: CFAbsoluteTime
+    ) async {
+        guard await userAllowsEmbedHistoryRecords() else { return }
+        guard let ctx = historyModelContext else { return }
+        let durationMs = (CFAbsoluteTimeGetCurrent() - startedAt) * 1000
+        let thumbnailSource = succeeded ? (outputImage ?? inputImage) : inputImage
+        let record = HistoryRecordService.makeEmbedRecord(
+            succeeded: succeeded,
+            payloadText: text,
+            sourceImageForThumbnail: thumbnailSource,
+            error: error,
+            durationMs: durationMs
+        )
+        await MainActor.run {
+            HistoryRecordService.insertAndSave(record, context: ctx)
+        }
+    }
+
+    private func persistExtractHistoryIfNeeded(
+        succeeded: Bool,
+        image: UIImage,
+        extractedText: String?,
+        error: Error?,
+        startedAt: CFAbsoluteTime
+    ) async {
+        guard let ctx = historyModelContext else { return }
+        let durationMs = (CFAbsoluteTimeGetCurrent() - startedAt) * 1000
+        let record = HistoryRecordService.makeExtractRecord(
+            succeeded: succeeded,
+            extractedText: extractedText,
+            sourceImage: image,
+            error: error,
+            durationMs: durationMs,
+            syncMatchCount: nil
+        )
+        await MainActor.run {
+            HistoryRecordService.insertAndSave(record, context: ctx)
+        }
     }
     
     func debugTestDataLayer() {

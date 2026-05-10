@@ -47,7 +47,7 @@ enum DataProcessingTests {
 
         // 3) Round-trip (UTF-8 multibyte). Keep <= 16 bytes.
         // "水印" is 2 chars, 6 bytes in UTF-8.
-        let msgUtf8 = "水印OK"
+        let msgUtf8 = "Successful"
         let encUtf8 = encodeFEC(text: msgUtf8)
         let decUtf8 = decodeFEC(bits: encUtf8)
         let roundTripUtf8Passed = (decUtf8 == msgUtf8)
@@ -122,19 +122,17 @@ enum DataProcessingTests {
             && r.build2DTileDimsPassed
             && r.build2DTilePaddingPassed
 
-        print(
-            "[DataProcessingTests] pass=\(passed) " +
-                "overLimit=\(r.encodeRejectsOverLimitPassed) " +
-                "rtAscii=\(r.roundTripAsciiPassed) " +
-                "rtUtf8=\(r.roundTripUtf8Passed) " +
-                "1bit=\(r.singleBitCorrectionPassed) " +
-                "2bitDetect=\(r.doubleBitDetectionPassed) " +
-                "sync32=\(r.syncMarkerShapePassed) " +
-                "tileDims=\(r.build2DTileDimsPassed) " +
-                "tilePad=\(r.build2DTilePaddingPassed) " +
-                "encBits=\(r.encodedBitCount) " +
-                "tile=\(r.tileSide)x\(r.tileSide)"
-        )
+        let status = passed ? "PASS" : "FAIL"
+        print("[DataProcessingTests] \(status) Data / FEC / Tile")
+        print("  - overLimit (17B rejected): \(r.encodeRejectsOverLimitPassed ? "PASS" : "FAIL")")
+        print("  - roundTrip ASCII:          \(r.roundTripAsciiPassed ? "PASS" : "FAIL")")
+        print("  - roundTrip UTF-8:          \(r.roundTripUtf8Passed ? "PASS" : "FAIL")")
+        print("  - FEC single-bit correct:   \(r.singleBitCorrectionPassed ? "PASS" : "FAIL")")
+        print("  - FEC double-bit detect:    \(r.doubleBitDetectionPassed ? "PASS" : "FAIL")")
+        print("  - sync marker shape (32b):  \(r.syncMarkerShapePassed ? "PASS" : "FAIL")")
+        print("  - build2DTile dims square:  \(r.build2DTileDimsPassed ? "PASS" : "FAIL")")
+        print("  - build2DTile padding:      \(r.build2DTilePaddingPassed ? "PASS" : "FAIL")")
+        print("  - metrics: encBits=\(r.encodedBitCount) tile=\(r.tileSide)x\(r.tileSide) tileBits=\(r.tileBitCount)")
         #endif
     }
 }
