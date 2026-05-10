@@ -2,6 +2,11 @@
 //  UserSettingsStore.swift
 //  PhantomStamp
 //
+//  Preference surface for SwiftUI. `@Observable` does not compose with a second
+//  `@propertyWrapper` on the same declaration, so each `AppUserDefault` lives in
+//  `@ObservationIgnored` storage and the public `Bool` is a computed property that
+//  forwards Observation `access` / `withMutation` for `$settings.toggle` bindings.
+//
 
 import Foundation
 import Observation
@@ -9,40 +14,68 @@ import Observation
 @MainActor
 @Observable
 final class UserSettingsStore {
-    private let defaults: UserDefaults
+
+    @ObservationIgnored
+    private var _autoLogWatermarkEmbedToHistory: AppUserDefault<Bool>
+
+    @ObservationIgnored
+    private var _compactHistoryList: AppUserDefault<Bool>
+
+    @ObservationIgnored
+    private var _watermarkOperationNotificationsEnabled: AppUserDefault<Bool>
 
     var autoLogWatermarkEmbedToHistory: Bool {
-        didSet { defaults.set(autoLogWatermarkEmbedToHistory, forKey: AppConstants.UserDefaultsKey.autoLogWatermarkEmbed) }
+        get {
+            access(keyPath: \.autoLogWatermarkEmbedToHistory)
+            return _autoLogWatermarkEmbedToHistory.wrappedValue
+        }
+        set {
+            withMutation(keyPath: \.autoLogWatermarkEmbedToHistory) {
+                _autoLogWatermarkEmbedToHistory.wrappedValue = newValue
+            }
+        }
     }
 
     var compactHistoryList: Bool {
-        didSet { defaults.set(compactHistoryList, forKey: AppConstants.UserDefaultsKey.compactHistoryList) }
+        get {
+            access(keyPath: \.compactHistoryList)
+            return _compactHistoryList.wrappedValue
+        }
+        set {
+            withMutation(keyPath: \.compactHistoryList) {
+                _compactHistoryList.wrappedValue = newValue
+            }
+        }
     }
 
-    /// When false, `WatermarkService` does not schedule local notifications after embed/extract.
     var watermarkOperationNotificationsEnabled: Bool {
-        didSet { defaults.set(watermarkOperationNotificationsEnabled, forKey: AppConstants.UserDefaultsKey.watermarkOperationNotifications) }
+        get {
+            access(keyPath: \.watermarkOperationNotificationsEnabled)
+            return _watermarkOperationNotificationsEnabled.wrappedValue
+        }
+        set {
+            withMutation(keyPath: \.watermarkOperationNotificationsEnabled) {
+                _watermarkOperationNotificationsEnabled.wrappedValue = newValue
+            }
+        }
     }
 
     init(defaults: UserDefaults = .standard) {
-        self.defaults = defaults
-        if let v = defaults.object(forKey: AppConstants.UserDefaultsKey.autoLogWatermarkEmbed) as? Bool {
-            self.autoLogWatermarkEmbedToHistory = v
-        } else if let legacy = defaults.object(forKey: "phantomstamp.settings.autoLogWatermark") as? Bool {
-            self.autoLogWatermarkEmbedToHistory = legacy
-            defaults.set(legacy, forKey: AppConstants.UserDefaultsKey.autoLogWatermarkEmbed)
-        } else {
-            self.autoLogWatermarkEmbedToHistory = AppConstants.SettingsDefault.autoLogWatermarkEmbed
-        }
-        if let v = defaults.object(forKey: AppConstants.UserDefaultsKey.compactHistoryList) as? Bool {
-            self.compactHistoryList = v
-        } else {
-            self.compactHistoryList = AppConstants.SettingsDefault.compactHistoryList
-        }
-        if let v = defaults.object(forKey: AppConstants.UserDefaultsKey.watermarkOperationNotifications) as? Bool {
-            self.watermarkOperationNotificationsEnabled = v
-        } else {
-            self.watermarkOperationNotificationsEnabled = AppConstants.SettingsDefault.watermarkOperationNotifications
-        }
+        _autoLogWatermarkEmbedToHistory = AppUserDefault(
+            key: AppConstants.UserDefaultsKey.autoLogWatermarkEmbed,
+            legacyKey: AppConstants.UserDefaultsKey.legacyAutoLogWatermarkEmbed,
+            defaultValue: AppConstants.SettingsDefault.autoLogWatermarkEmbed,
+            defaults: defaults
+        )
+        _compactHistoryList = AppUserDefault(
+            key: AppConstants.UserDefaultsKey.compactHistoryList,
+            defaultValue: AppConstants.SettingsDefault.compactHistoryList,
+            defaults: defaults
+        )
+        _watermarkOperationNotificationsEnabled = AppUserDefault(
+            key: AppConstants.UserDefaultsKey.watermarkOperationNotifications,
+            defaultValue: AppConstants.SettingsDefault.watermarkOperationNotifications,
+            defaults: defaults
+        )
     }
 }

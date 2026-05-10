@@ -31,7 +31,6 @@ struct PhantomStampApp: App {
 
     init() {
         #if DEBUG
-//        print(AppConstants.Debug.launchLogPrefix + AppVersion.marketing)
 //        ImagePipelineTests.runAllBundledAndPrint()
 //        MatrixOperationsTests.runAllAndPrint()
         #endif

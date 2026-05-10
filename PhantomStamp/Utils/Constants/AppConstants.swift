@@ -16,43 +16,6 @@ enum AppConstants {
         static let historyListLimit = 1_000
     }
 
-    // MARK: - UserDefaults
-
-    enum UserDefaultsKey {
-        /// Only control whether watermark embedding is recorded in SwiftData (`WatermarkHistoryRecord` embed rows).
-        static let autoLogWatermarkEmbed = "phantomstamp.settings.autoLogWatermarkEmbed"
-        static let compactHistoryList = "phantomstamp.settings.compactHistoryList"
-        /// User toggle for local notifications after embed/extract complete (`WatermarkOperationNotificationService`).
-        static let watermarkOperationNotifications = "phantomstamp.settings.watermarkOperationNotifications"
-    }
-
-    enum SettingsDefault {
-        static let autoLogWatermarkEmbed = true
-        static let compactHistoryList = false
-        static let watermarkOperationNotifications = true
-    }
-
-    // MARK: - History record kind (SwiftData `HistoryEntry.kind`)
-
-    enum HistoryRecordKind {
-        static let watermarkEmbedded = "watermark.embedded"
-    }
-
-    // MARK: - Watermark (Mock / Real delay and placeholder)
-
-    enum Watermark {
-        static let mockEmbedDelayNanoseconds: UInt64 = 2_000_000_000
-        static let mockExtractDelayNanoseconds: UInt64 = 1_000_000_000
-        /// Strip height (pixels); the image height must be a multiple of this value and aligned with 8 for the algorithm to work.
-        static let stripHeightPixels = 80
-        /// Smooth block variance threshold, below which embedding is skipped for stealth (privacy).
-        static let smoothBlockVarianceThreshold: Float = 10.5
-        /// Minimum side length (points), below which `WatermarkService` throws `imageTooSmall` (matches algorithm pseudocode).
-        static let minimumImageSidePoints: CGFloat = 128
-        static let mockExtractResultText = "Test_Copyright_2026"
-        static let embedSampleText = "MyText"
-        static let sampleSystemSymbolName = "photo.fill"
-    }
 
     // MARK: - Info.plist
 
@@ -64,28 +27,10 @@ enum AppConstants {
         static let marketingUnknown = "0"
     }
 
-    // MARK: - Debug / Error
-
-    enum Debug {
-        static let launchLogPrefix = "[PhantomStamp] launch, marketing version = "
-    }
-
     enum ErrorMessage {
         static let modelContainerPrefix = "Could not create ModelContainer: "
     }
 
-    // MARK: - Layout
-
-    enum Layout {
-        static let watermarkSectionSpacing: CGFloat = 20
-        static let watermarkPreviewMaxHeight: CGFloat = 280
-        static let watermarkPreviewCornerRadius: CGFloat = 20
-        static let watermarkCardPadding: CGFloat = 14
-        static let watermarkActionsCardCornerRadius: CGFloat = 16
-        static let historyRowInnerSpacing: CGFloat = 4
-        static let historyRowPaddingCompact: CGFloat = 2
-        static let historyRowPaddingRegular: CGFloat = 6
-    }
 
     // MARK: - SF Symbols
 
