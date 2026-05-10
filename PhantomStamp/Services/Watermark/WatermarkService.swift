@@ -266,7 +266,7 @@ class WatermarkService: WatermarkServiceProtocol {
             NotificationCenter.default.post(name: AppConstants.Notifications.watermarkProgressOverlayDidStart, object: nil)
         }
         // ensure the ViewModel has enough time to process the AsyncSequence notifications, and let SwiftUI completely render the progress bar on the screen.
-        try? await Task.sleep(nanoseconds: 150_000_000)
+        try? await Task.sleep(nanoseconds: 300_000_000)
 
         let throttler = ProgressThrottler()
         
