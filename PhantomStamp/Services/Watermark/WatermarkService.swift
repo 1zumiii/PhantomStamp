@@ -275,34 +275,38 @@ class WatermarkService: WatermarkServiceProtocol {
         let historyStarted = CFAbsoluteTimeGetCurrent()
 
         do {
-            reportProgress(step: .preparation, percentage: 0)
+            reportProgress(step: .extractPreparation, percentage: 0)
             // Same issue as embedding: the first heavy step is YCbCr conversion. If we only report 0 and then
-            // jump straight to ~18%, single-file runs look like the bar starts "in the middle".
-            reportProgress(step: .preparation, percentage: 0.06)
+            // jump straight to later ticks, single-file runs look like the bar starts "in the middle".
+            reportProgress(step: .extractPreparation, percentage: 0.06)
 
         // 1. image preprocessing
         guard let ycbcrImage = convertToYCbCr(image: image) else {
             throw WatermarkError.processingError
         }
         let yChannel = ycbcrImage.Y
-            reportProgress(step: .colorConversion, percentage: 0.12)
+            reportProgress(step: .extractConvertToYCbCr, percentage: 0.12)
         
         // 2. physical and logical alignment (to handle translation and cropping attacks)
         // execute 64 grid offset scans, and use sliding window to find the sync header
-        guard let gridOffset = findGridOffsetAndSyncMarker(in: yChannel) else {
+        guard let gridOffset = findGridOffsetAndSyncMarker(in: yChannel, onOffsetProgress: { t in
+            // Map alignment scan into [0.12, 0.55].
+            let pct = 0.12 + (0.55 - 0.12) * min(max(t, 0), 1)
+            reportProgress(step: .extractOffsetScan, percentage: pct)
+        }) else {
             throw WatermarkError.extractFailed
         }
-            reportProgress(step: .processingStrips, percentage: 0.55)
+            reportProgress(step: .extractOffsetScan, percentage: 0.55)
         
         // 3. data extraction
         // based on the exact grid base point found, extract the bit stream in all 8x8 blocks of the entire image
         let rawExtractedBits = extractBitsWithOffset(yChannel, offset: gridOffset)
-            reportProgress(step: .processingStrips, percentage: 0.72)
+            reportProgress(step: .extractBitGrid, percentage: 0.72)
         
         // 4. data recovery and decoding
         // merge redundant data through majority voting (Majority Voting)
         let votedBits = applyMajorityVoting(to: rawExtractedBits)
-            reportProgress(step: .reassembling, percentage: 0.85)
+            reportProgress(step: .extractMajorityVoting, percentage: 0.85)
 
         #if DEBUG
         let rows = rawExtractedBits.count
@@ -340,12 +344,13 @@ class WatermarkService: WatermarkServiceProtocol {
             return codewordBits
         }
 
+        reportProgress(step: .extractDecodeFEC, percentage: 0.90)
         for lenGuess in 1...16 {
             let eccCount = eccBitCount(messageLengthBytes: lenGuess)
             guard payloadBits.count >= eccCount else { continue }
             let eccBits = Array(payloadBits.prefix(eccCount))
             if let correctedText = decodeFEC(bits: eccBits) {
-                reportProgress(step: .reassembling, percentage: 1.0)
+                reportProgress(step: .extractDecodeFEC, percentage: 1.0)
                 if shouldHideProgressbar {
                     NotificationCenter.default.post(name: AppConstants.Notifications.watermarkProgressOverlayDidEnd, object: nil)
                 }
@@ -374,6 +379,8 @@ class WatermarkService: WatermarkServiceProtocol {
             if shouldHideProgressbar {
                 NotificationCenter.default.post(name: AppConstants.Notifications.watermarkProgressOverlayDidEnd, object: nil)
             }
+            // Ensure the bar completes before ending for UX.
+            reportProgress(step: .extractDecodeFEC, percentage: 1.0)
             await persistExtractHistoryIfNeeded(
                 succeeded: false,
                 image: image,

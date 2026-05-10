@@ -40,6 +40,14 @@ extension AppConstants {
 
         case reassembling = "Reassembling luminance"
         case rgbRebuild = "Rebuilding final image"
+
+        // Extraction pipeline (bit recovery + decode).
+        case extractPreparation = "Preparing extraction"
+        case extractConvertToYCbCr = "convertToYCbCr"
+        case extractOffsetScan = "findGridOffsetAndSyncMarker"
+        case extractBitGrid = "extractBitsWithOffset"
+        case extractMajorityVoting = "applyMajorityVoting"
+        case extractDecodeFEC = "decodeFEC"
     }
 }
 

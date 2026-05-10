@@ -85,17 +85,20 @@ final class WatermarkExtractViewModel {
         if indexImagePairs.count == 1 {
             let index = indexImagePairs[0].index
             let image = indexImagePairs[0].image
+            let t0 = CFAbsoluteTimeGetCurrent()
             do {
                 let extractedText = try await watermarkService.extractWatermark(from: image)
                 records[index].status = .extracted
                 records[index].message = extractedText
                 records[index].confidence = nil
                 records[index].failureReason = nil
+                records[index].durationMs = (CFAbsoluteTimeGetCurrent() - t0) * 1000
             } catch {
                 records[index].status = .failed
                 records[index].message = nil
                 records[index].confidence = nil
                 records[index].failureReason = error.localizedDescription
+                records[index].durationMs = (CFAbsoluteTimeGetCurrent() - t0) * 1000
             }
             return
         }
@@ -110,11 +113,13 @@ final class WatermarkExtractViewModel {
                 records[recordIndex].message = extractedText
                 records[recordIndex].confidence = nil
                 records[recordIndex].failureReason = nil
+                records[recordIndex].durationMs = nil
             } else {
                 records[recordIndex].status = .failed
                 records[recordIndex].message = nil
                 records[recordIndex].confidence = nil
                 records[recordIndex].failureReason = "Failed to extract watermark from this image."
+                records[recordIndex].durationMs = nil
             }
         }
     }
