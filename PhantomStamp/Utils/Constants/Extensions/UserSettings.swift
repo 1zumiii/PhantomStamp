@@ -7,7 +7,7 @@
 
 import Foundation
 
-extension AppConstants{
+extension AppConstants {
     // MARK: - UserDefaults
 
     enum UserDefaultsKey {
@@ -18,11 +18,24 @@ extension AppConstants{
         static let compactHistoryList = "phantomstamp.settings.compactHistoryList"
         /// User toggle for local notifications after embed/extract complete (`WatermarkOperationNotificationService`).
         static let watermarkOperationNotifications = "phantomstamp.settings.watermarkOperationNotifications"
+
+        // Watermark Defaults — added for SettingsView
+        static let defaultWatermarkText = "phantomstamp.settings.defaultWatermarkText"
+        static let embeddingStrength    = "phantomstamp.settings.embeddingStrength"
+        static let exportQualityIndex   = "phantomstamp.settings.exportQualityIndex"
+        /// Save to Photos toggle (always-on until properly wired to export pipeline).
+        static let saveToPhotos         = "phantomstamp.settings.saveToPhotos"
     }
 
     enum SettingsDefault {
         static let autoLogWatermarkEmbed = true
-        static let compactHistoryList = false
+        static let compactHistoryList    = false
         static let watermarkOperationNotifications = true
+
+        // Watermark Defaults — added for SettingsView
+        static let defaultWatermarkText: String = ""
+        static let embeddingStrength: Double     = 50
+        static let exportQualityIndex: Int       = 1   // 0 = Low, 1 = Medium, 2 = High
+        static let saveToPhotos: Bool            = true
     }
 }

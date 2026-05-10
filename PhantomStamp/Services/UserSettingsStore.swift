@@ -15,6 +15,8 @@ import Observation
 @Observable
 final class UserSettingsStore {
 
+    // MARK: - Existing properties (unchanged)
+
     @ObservationIgnored
     private var _autoLogWatermarkEmbedToHistory: AppUserDefault<Bool>
 
@@ -60,7 +62,72 @@ final class UserSettingsStore {
         }
     }
 
+    // MARK: - Watermark Defaults (new — added for SettingsView)
+
+    @ObservationIgnored
+    private var _defaultWatermarkText: AppUserDefault<String>
+
+    @ObservationIgnored
+    private var _embeddingStrength: AppUserDefault<Double>
+
+    @ObservationIgnored
+    private var _exportQualityIndex: AppUserDefault<Int>
+
+    @ObservationIgnored
+    private var _saveToPhotos: AppUserDefault<Bool>
+
+    var defaultWatermarkText: String {
+        get {
+            access(keyPath: \.defaultWatermarkText)
+            return _defaultWatermarkText.wrappedValue
+        }
+        set {
+            withMutation(keyPath: \.defaultWatermarkText) {
+                _defaultWatermarkText.wrappedValue = newValue
+            }
+        }
+    }
+
+    var embeddingStrength: Double {
+        get {
+            access(keyPath: \.embeddingStrength)
+            return _embeddingStrength.wrappedValue
+        }
+        set {
+            withMutation(keyPath: \.embeddingStrength) {
+                _embeddingStrength.wrappedValue = newValue
+            }
+        }
+    }
+
+    var exportQualityIndex: Int {
+        get {
+            access(keyPath: \.exportQualityIndex)
+            return _exportQualityIndex.wrappedValue
+        }
+        set {
+            withMutation(keyPath: \.exportQualityIndex) {
+                _exportQualityIndex.wrappedValue = newValue
+            }
+        }
+    }
+
+    var saveToPhotos: Bool {
+        get {
+            access(keyPath: \.saveToPhotos)
+            return _saveToPhotos.wrappedValue
+        }
+        set {
+            withMutation(keyPath: \.saveToPhotos) {
+                _saveToPhotos.wrappedValue = newValue
+            }
+        }
+    }
+
+    // MARK: - Init
+
     init(defaults: UserDefaults = .standard) {
+        // Existing
         _autoLogWatermarkEmbedToHistory = AppUserDefault(
             key: AppConstants.UserDefaultsKey.autoLogWatermarkEmbed,
             legacyKey: AppConstants.UserDefaultsKey.legacyAutoLogWatermarkEmbed,
@@ -75,6 +142,27 @@ final class UserSettingsStore {
         _watermarkOperationNotificationsEnabled = AppUserDefault(
             key: AppConstants.UserDefaultsKey.watermarkOperationNotifications,
             defaultValue: AppConstants.SettingsDefault.watermarkOperationNotifications,
+            defaults: defaults
+        )
+        // New
+        _defaultWatermarkText = AppUserDefault(
+            key: AppConstants.UserDefaultsKey.defaultWatermarkText,
+            defaultValue: AppConstants.SettingsDefault.defaultWatermarkText,
+            defaults: defaults
+        )
+        _embeddingStrength = AppUserDefault(
+            key: AppConstants.UserDefaultsKey.embeddingStrength,
+            defaultValue: AppConstants.SettingsDefault.embeddingStrength,
+            defaults: defaults
+        )
+        _exportQualityIndex = AppUserDefault(
+            key: AppConstants.UserDefaultsKey.exportQualityIndex,
+            defaultValue: AppConstants.SettingsDefault.exportQualityIndex,
+            defaults: defaults
+        )
+        _saveToPhotos = AppUserDefault(
+            key: AppConstants.UserDefaultsKey.saveToPhotos,
+            defaultValue: AppConstants.SettingsDefault.saveToPhotos,
             defaults: defaults
         )
     }
