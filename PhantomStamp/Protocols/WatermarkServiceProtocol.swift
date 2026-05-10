@@ -16,6 +16,12 @@ protocol WatermarkServiceProtocol {
 
     /// Extract watermark text from a bitmap.
     func extractWatermark(from image: UIImage) async throws -> String
+
+    /// Extract sequentially from multiple images (posts batch progress notifications). Stops on first thrown error.
+    func extractWatermark(from images: [UIImage]) async throws -> [String]
+
+    /// Extract from multiple images without failing the whole batch; `nil` marks per-image failure.
+    func extractWatermarkBestEffort(from images: [UIImage]) async -> [String?]
 }
 
 enum WatermarkError: Error {

@@ -69,6 +69,7 @@ enum WatermarkOperationNotificationService {
     }
 
     static func notifySingleExtractFinished(success: Bool, extractedText: String?, error: Error?) async {
+        try? await Task.sleep(nanoseconds: 8_000_000_000)
         if success, let text = extractedText {
             let body = AppConstants.Copy.WatermarkPush.extractSingleSuccessBodyPrefix + trimBody(text)
             await scheduleImmediate(

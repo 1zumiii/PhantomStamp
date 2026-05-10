@@ -219,15 +219,21 @@ private final class ProgressCollector {
             if e.percentage + 1e-9 < prev { return false }
             prev = e.percentage
         }
-        // Should include all steps at least once.
+        // Should include key steps at least once (either embed or extract pipeline).
         let steps = Set(stepOrder())
-        let required: Set<String> = [
+        let embedRequired: Set<String> = [
             AppConstants.WatermarkStep.preparation.rawValue,
             AppConstants.WatermarkStep.colorConversion.rawValue,
             AppConstants.WatermarkStep.processingStrips.rawValue,
             AppConstants.WatermarkStep.reassembling.rawValue,
         ]
-        return required.isSubset(of: steps)
+        let extractRequired: Set<String> = [
+            AppConstants.WatermarkStep.extractPreparation.rawValue,
+            AppConstants.WatermarkStep.extractConvertToYCbCr.rawValue,
+            AppConstants.WatermarkStep.extractOffsetScan.rawValue,
+            AppConstants.WatermarkStep.extractDecodeFEC.rawValue,
+        ]
+        return embedRequired.isSubset(of: steps) || extractRequired.isSubset(of: steps)
     }
 }
 

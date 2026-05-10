@@ -35,33 +35,10 @@ enum AppConstants {
     // MARK: - SF Symbols
 
     enum Symbol {
-        static let tabWatermark = "wand.and.stars"
-        static let tabHistory   = "clock.arrow.circlepath"
-        static let tabSettings  = "gearshape.fill"
-
-        // Settings page icons
-        static let settingsGeneral           = "gearshape"
-        static let settingsHistory           = "clock.arrow.circlepath"
-        static let settingsNotifications     = "bell.badge"
-        static let settingsSaveToPhotos      = "square.and.arrow.down.on.square"
-        static let settingsWatermarkDefaults = "rectangle.badge.checkmark"
-        static let settingsAbout             = "info.circle"
-        static let settingsTesting           = "checklist"
-    }
-
-    // MARK: - Layout
-
-    enum Layout {
-        static let cardCornerRadius: CGFloat  = 18
-        static let horizontalPadding: CGFloat = 20
-    }
-
-    // MARK: - App Version
-
-    static var appVersionString: String {
-        let v = Bundle.main.object(forInfoDictionaryKey: InfoPlistKey.marketingVersion) as? String
-            ?? VersionFallback.marketingUnknown
-        return "v\(v)"
+        static let tabEmbed = "wand.and.stars"
+        static let tabExtract = "waveform.path.ecg"
+        static let tabHistory = "clock.arrow.circlepath"
+        static let tabSettings = "gearshape.fill"
     }
 
     // MARK: - Text (UI)

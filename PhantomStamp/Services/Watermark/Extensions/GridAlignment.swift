@@ -14,7 +14,8 @@ import Foundation
 extension WatermarkService {
     /// Find the physical 8×8 grid offset by scanning 64 pixel offsets and locating the sync marker
     /// via a sliding window over the extracted bit grid.
-    func findGridOffsetAndSyncMarker(in matrix: Matrix) -> CGPoint? {
+    /// - Parameter onOffsetProgress: Called occasionally during the 64-offset scan; value is 0...1.
+    func findGridOffsetAndSyncMarker(in matrix: Matrix, onOffsetProgress: ((Double) -> Void)? = nil) -> CGPoint? {
         let syncMarker = getSyncMarkerBits()
         let tolerance = 4
 
@@ -37,6 +38,13 @@ extension WatermarkService {
 
         for offsetY in 0..<Matrix8x8.side {
             for offsetX in 0..<Matrix8x8.side {
+                if let onOffsetProgress {
+                    let idx = offsetY * Matrix8x8.side + offsetX
+                    // Throttle: 64 offsets are enough; ~16 ticks feels smooth without flooding UI.
+                    if idx % 4 == 0 || idx == 63 {
+                        onOffsetProgress(Double(idx) / 63.0)
+                    }
+                }
                 let maxRows = min(searchBlockLimit, (matrix.height - offsetY) / Matrix8x8.side)
                 let maxCols = min(searchBlockLimit, (matrix.width - offsetX) / Matrix8x8.side)
                 if maxRows < 4 || maxCols < 8 { continue }
