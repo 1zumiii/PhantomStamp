@@ -9,6 +9,8 @@ import CoreGraphics
 import Foundation
 
 enum AppConstants {
+    
+    static let appVersionString = "v0.3.5"
 
     // MARK: - SwiftData
 
@@ -39,7 +41,18 @@ enum AppConstants {
         static let tabExtract = "waveform.path.ecg"
         static let tabHistory = "clock.arrow.circlepath"
         static let tabSettings = "gearshape.fill"
+        
+        // Settings page icons
+        static let settingsGeneral           = "gearshape"
+        static let settingsHistory           = "clock.arrow.circlepath"
+        static let settingsNotifications     = "bell.badge"
+        static let settingsSaveToPhotos      = "square.and.arrow.down.on.square"
+        static let settingsWatermarkDefaults = "rectangle.badge.checkmark"
+        static let settingsAbout             = "info.circle"
+        static let settingsTesting           = "checklist"
     }
+    
+    
 
     // MARK: - Text (UI)
 
