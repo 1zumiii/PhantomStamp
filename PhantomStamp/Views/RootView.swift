@@ -29,7 +29,7 @@ struct RootView: View {
         systemImage: "waveform.path.ecg"
       ) {
         NavigationStack {
-          WatermarkExtractView()
+          WatermarkExtractView(watermarkService: watermarkService)
         }
       },
       BottomNavItem(

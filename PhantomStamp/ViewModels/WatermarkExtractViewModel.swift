@@ -17,6 +17,10 @@ enum ExtractionDetectionMode: String, CaseIterable, Identifiable {
 @MainActor
 @Observable
 final class WatermarkExtractViewModel {
+    private let watermarkService: any WatermarkServiceProtocol
+    init(watermarkService: any WatermarkServiceProtocol) {
+        self.watermarkService = watermarkService
+    }
     var detectionMode: ExtractionDetectionMode = .fast
     var selectedImage: UIImage?
     var selectedImageName: String = "Selected image"
@@ -48,7 +52,7 @@ final class WatermarkExtractViewModel {
         records.insert(pendingRecord, at: 0)
     }
 
-    func runDemoExtraction() async {
+    func extractWatermarks() async {
         guard !isExtracting else { return }
 
         let pendingIndexes = records.indices.filter {
@@ -60,19 +64,27 @@ final class WatermarkExtractViewModel {
         isExtracting = true
         errorMessage = nil
 
-        try? await Task.sleep(nanoseconds: 700_000_000)
-
         for index in pendingIndexes {
-            if detectionMode == .fast {
-                records[index].status = .extracted
-                records[index].message = "Hello PhantomStamp"
-                records[index].confidence = 0.92
-                records[index].failureReason = nil
-            } else {
+            guard let image = records[index].image else {
                 records[index].status = .failed
                 records[index].message = nil
                 records[index].confidence = nil
-                records[index].failureReason = "No reliable watermark signal was found."
+                records[index].failureReason = "No image data is available for extraction."
+                continue
+            }
+
+            do {
+                let extractedText = try await watermarkService.extractWatermark(from: image)
+
+                records[index].status = .extracted
+                records[index].message = extractedText
+                records[index].confidence = nil
+                records[index].failureReason = nil
+            } catch {
+                records[index].status = .failed
+                records[index].message = nil
+                records[index].confidence = nil
+                records[index].failureReason = error.localizedDescription
             }
         }
 

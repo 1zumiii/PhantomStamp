@@ -8,8 +8,12 @@ import PhotosUI
 import UIKit
 
 struct WatermarkExtractView: View {
-    @State private var vm = WatermarkExtractViewModel()
+    @State private var vm: WatermarkExtractViewModel
     @State private var photoPickerItems: [PhotosPickerItem] = []
+
+    init(watermarkService: any WatermarkServiceProtocol) {
+        _vm = State(initialValue: WatermarkExtractViewModel(watermarkService: watermarkService))
+    }
 
     var body: some View {
         ScrollView {
@@ -129,29 +133,6 @@ struct WatermarkExtractView: View {
         }
     }
 
-    private var extractButton: some View {
-        Button {
-            Task {
-                await vm.runDemoExtraction()
-            }
-        } label: {
-            HStack {
-                Image(systemName: vm.isExtracting ? "hourglass" : "sparkles")
-                Text(vm.isExtracting ? "Extracting..." : "Extract Watermark")
-            }
-            .font(.subheadline.weight(.semibold))
-            .foregroundStyle(.white)
-            .frame(maxWidth: .infinity)
-            .padding(.vertical, 14)
-            .background {
-                RoundedRectangle(cornerRadius: 14, style: .continuous)
-                    .fill(Color.accentColor)
-            }
-        }
-        .buttonStyle(.plain)
-        .disabled(vm.isExtracting)
-    }
-
     private var recordsList: some View {
         VStack(alignment: .leading, spacing: 12) {
             Text("Extraction Records")
@@ -218,10 +199,34 @@ struct WatermarkExtractView: View {
                 .fill(Color(uiColor: .secondarySystemGroupedBackground))
         }
     }
+    
+    private var extractButton: some View {
+        Button {
+            Task {
+                await vm.extractWatermarks()
+            }
+        } label: {
+            HStack {
+                Image(systemName: vm.isExtracting ? "hourglass" : "sparkles")
+                Text(vm.isExtracting ? "Extracting..." : "Extract Watermark")
+            }
+            .font(.subheadline.weight(.semibold))
+            .foregroundStyle(.white)
+            .frame(maxWidth: .infinity)
+            .padding(.vertical, 14)
+            .background {
+                RoundedRectangle(cornerRadius: 14, style: .continuous)
+                    .fill(Color.accentColor)
+            }
+        }
+        .buttonStyle(.plain)
+        .disabled(!vm.canExtract)
+        .opacity(vm.canExtract ? 1 : 0.45)
+    }
 }
 
 #Preview {
     NavigationStack {
-        WatermarkExtractView()
+        WatermarkExtractView(watermarkService: WatermarkService())
     }
 }
