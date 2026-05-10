@@ -38,20 +38,6 @@ struct WatermarkInsertView: View {
             }
             .scrollIndicators(.hidden)
             .background(Color(uiColor: .systemGroupedBackground))
-            .navigationTitle("Insert Watermark")
-            .navigationBarTitleDisplayMode(.large)
-            .toolbar {
-                ToolbarItem(placement: .topBarTrailing) {
-                    Button {
-                        vm.resetDraft()
-                        photoPickerItems = []
-                    } label: {
-                        Label("Reset", systemImage: "arrow.counterclockwise")
-                    }
-                    .disabled(vm.isEmbedding)
-                    .accessibilityLabel("Reset draft")
-                }
-            }
 
             floatingActions
                 .padding(.horizontal, 18)

@@ -35,7 +35,8 @@ enum AppConstants {
     // MARK: - SF Symbols
 
     enum Symbol {
-        static let tabWatermark = "wand.and.stars"
+        static let tabEmbed = "wand.and.stars"
+        static let tabExtract = "waveform.path.ecg"
         static let tabHistory = "clock.arrow.circlepath"
         static let tabSettings = "gearshape.fill"
     }
