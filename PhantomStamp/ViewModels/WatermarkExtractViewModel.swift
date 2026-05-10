@@ -74,7 +74,11 @@ final class WatermarkExtractViewModel {
             }
 
             do {
-                let extractedText = try await watermarkService.extractWatermark(from: image)
+                let service = watermarkService
+
+                let extractedText = try await Task.detached(priority: .userInitiated) {
+                    try await service.extractWatermark(from: image)
+                }.value
 
                 records[index].status = .extracted
                 records[index].message = extractedText
@@ -85,8 +89,7 @@ final class WatermarkExtractViewModel {
                 records[index].message = nil
                 records[index].confidence = nil
                 records[index].failureReason = error.localizedDescription
-            }
-        }
+            }        }
 
         isExtracting = false
     }
