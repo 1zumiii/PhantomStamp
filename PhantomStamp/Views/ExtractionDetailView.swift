@@ -71,7 +71,7 @@ struct ExtractionDetailView: View {
         let isFailed = record.status == .failed
         
         let fgColor: Color = isSuccess ? .green : (isFailed ? .red : .orange)
-        let bgColor: Color = isSuccess ? .green.opacity(0.24) : (isFailed ? .red.opacity(0.24) : .orange.opacity(0.24))
+        let bgColor: Color = .black.opacity(0.24)
         let iconName = isSuccess ? "checkmark.circle.fill" : (isFailed ? "xmark.octagon.fill" : "clock.fill")
         let text = isSuccess ? "Success" : (isFailed ? "Failed" : "Pending")
         

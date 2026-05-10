@@ -276,106 +276,105 @@ class WatermarkService: WatermarkServiceProtocol {
 
         do {
             reportProgress(step: .extractPreparation, percentage: 0)
-            // Same issue as embedding: the first heavy step is YCbCr conversion. If we only report 0 and then
-            // jump straight to later ticks, single-file runs look like the bar starts "in the middle".
             reportProgress(step: .extractPreparation, percentage: 0.06)
 
-        // 1. image preprocessing
-        guard let ycbcrImage = convertToYCbCr(image: image) else {
-            throw WatermarkError.processingError
-        }
-        let yChannel = ycbcrImage.Y
-            reportProgress(step: .extractConvertToYCbCr, percentage: 0.12)
-        
-        // 2. physical and logical alignment (to handle translation and cropping attacks)
-        // execute 64 grid offset scans, and use sliding window to find the sync header
-        guard let gridOffset = findGridOffsetAndSyncMarker(in: yChannel, onOffsetProgress: { t in
-            // Map alignment scan into [0.12, 0.55].
-            let pct = 0.12 + (0.55 - 0.12) * min(max(t, 0), 1)
-            reportProgress(step: .extractOffsetScan, percentage: pct)
-        }) else {
-            throw WatermarkError.extractFailed
-        }
-            reportProgress(step: .extractOffsetScan, percentage: 0.55)
-        
-        // 3. data extraction
-        // based on the exact grid base point found, extract the bit stream in all 8x8 blocks of the entire image
-        let rawExtractedBits = extractBitsWithOffset(yChannel, offset: gridOffset)
-            reportProgress(step: .extractBitGrid, percentage: 0.72)
-        
-        // 4. data recovery and decoding
-        // merge redundant data through majority voting (Majority Voting)
-        let votedBits = applyMajorityVoting(to: rawExtractedBits)
-            reportProgress(step: .extractMajorityVoting, percentage: 0.85)
+            // important fix: use Task.detached to force the heavy matrix computation to run in the background concurrency pool,彻底解放主线程
+            let payloadBits = try await Task.detached(priority: .userInitiated) { [weak self] in
+                guard let self = self else { throw WatermarkError.processingError }
 
-        #if DEBUG
-        let rows = rawExtractedBits.count
-        let cols = rawExtractedBits.first?.count ?? 0
-        print("[WatermarkService] DEBUG extract: gridOffset=(\(Int(gridOffset.x)),\(Int(gridOffset.y))) rawBits=\(rows)x\(cols) votedBits=\(votedBits.count)")
-        #endif
-        
-        // remove the sync header, and send the pure data to the FEC decoder for error correction
-        let syncCount = getSyncMarkerBits().count
-        let payloadBits = votedBits.count >= syncCount ? Array(votedBits.dropFirst(syncCount)) : []
-
-        #if DEBUG
-        if !payloadBits.isEmpty {
-            func bitsToByteLocal(_ bits: [Int]) -> Int {
-                var v = 0
-                for b in bits.prefix(8) { v = (v << 1) | (b & 1) }
-                return v
-            }
-            let lenByte = payloadBits.count >= 8 ? bitsToByteLocal(Array(payloadBits.prefix(8))) : -1
-            let payloadPreview = payloadBits.prefix(24).map(String.init).joined()
-            print("[WatermarkService] DEBUG extract: syncCount=\(syncCount) payloadBits=\(payloadBits.count) lenByte(raw)=\(lenByte) payloadPreview=\(payloadPreview)")
-        } else {
-            print("[WatermarkService] DEBUG extract: payloadBits empty (votedBits too short)")
-        }
-        #endif
-        // Decode FEC with length-guessed truncation.
-        // Reason:
-        // `payloadBits` comes from a `w*w` macro-tile, which can contain padding zeros beyond the real eccBits.
-        // Feeding those extra bits into Hamming84 decode can introduce additional erroneous codewords and
-        // cause decodeFEC to fail.
-        func eccBitCount(messageLengthBytes: Int) -> Int {
-            let rawBits = 8 + messageLengthBytes * 8
-            let paddedRaw = ((rawBits + 3) / 4) * 4
-            let codewordBits = (paddedRaw / 4) * 8
-            return codewordBits
-        }
-
-        reportProgress(step: .extractDecodeFEC, percentage: 0.90)
-        for lenGuess in 1...16 {
-            let eccCount = eccBitCount(messageLengthBytes: lenGuess)
-            guard payloadBits.count >= eccCount else { continue }
-            let eccBits = Array(payloadBits.prefix(eccCount))
-            if let correctedText = decodeFEC(bits: eccBits) {
-                reportProgress(step: .extractDecodeFEC, percentage: 1.0)
-                if shouldHideProgressbar {
-                    NotificationCenter.default.post(name: AppConstants.Notifications.watermarkProgressOverlayDidEnd, object: nil)
+                // 1. image preprocessing
+                guard let ycbcrImage = await self.convertToYCbCr(image: image) else {
+                    throw WatermarkError.processingError
                 }
-                await persistExtractHistoryIfNeeded(
-                    succeeded: true,
-                    image: image,
-                    extractedText: correctedText,
-                    error: nil,
-                    startedAt: historyStarted
-                )
-                if !shouldSuppressSingleOperationNotification {
-                    await deliverWatermarkNotificationIfAllowed {
-                        await WatermarkOperationNotificationService.notifySingleExtractFinished(
-                            success: true,
-                            extractedText: correctedText,
-                            error: nil
-                        )
+                let yChannel = ycbcrImage.Y
+                await reportProgress(step: .extractConvertToYCbCr, percentage: 0.12)
+                
+                // 2. physical and logical alignment
+                guard let gridOffset = await self.findGridOffsetAndSyncMarker(in: yChannel, onOffsetProgress: { t in
+                    // Map alignment scan into [0.12, 0.55].
+                    let pct = 0.12 + (0.55 - 0.12) * min(max(t, 0), 1)
+                    reportProgress(step: .extractOffsetScan, percentage: pct)
+                }) else {
+                    throw WatermarkError.extractFailed
+                }
+                await reportProgress(step: .extractOffsetScan, percentage: 0.55)
+                
+                // 3. data extraction
+                let rawExtractedBits = await self.extractBitsWithOffset(yChannel, offset: gridOffset)
+                await reportProgress(step: .extractBitGrid, percentage: 0.72)
+                
+                // 4. data recovery and decoding
+                let votedBits = await self.applyMajorityVoting(to: rawExtractedBits)
+                await reportProgress(step: .extractMajorityVoting, percentage: 0.85)
+                
+                #if DEBUG
+                let rows = rawExtractedBits.count
+                let cols = rawExtractedBits.first?.count ?? 0
+                print("[WatermarkService] DEBUG extract: gridOffset=(\(Int(gridOffset.x)),\(Int(gridOffset.y))) rawBits=\(rows)x\(cols) votedBits=\(votedBits.count)")
+                #endif
+                
+                // remove the sync header
+                let syncCount = await getSyncMarkerBits().count
+                return votedBits.count >= syncCount ? Array(votedBits.dropFirst(syncCount)) : []
+            }.value // wait for the background computation result
+
+
+            #if DEBUG
+            if !payloadBits.isEmpty {
+                func bitsToByteLocal(_ bits: [Int]) -> Int {
+                    var v = 0
+                    for b in bits.prefix(8) { v = (v << 1) | (b & 1) }
+                    return v
+                }
+                let lenByte = payloadBits.count >= 8 ? bitsToByteLocal(Array(payloadBits.prefix(8))) : -1
+                let payloadPreview = payloadBits.prefix(24).map(String.init).joined()
+                print("[WatermarkService] DEBUG extract: syncCount=\(getSyncMarkerBits().count) payloadBits=\(payloadBits.count) lenByte(raw)=\(lenByte) payloadPreview=\(payloadPreview)")
+            } else {
+                print("[WatermarkService] DEBUG extract: payloadBits empty (votedBits too short)")
+            }
+            #endif
+
+            func eccBitCount(messageLengthBytes: Int) -> Int {
+                let rawBits = 8 + messageLengthBytes * 8
+                let paddedRaw = ((rawBits + 3) / 4) * 4
+                let codewordBits = (paddedRaw / 4) * 8
+                return codewordBits
+            }
+
+            reportProgress(step: .extractDecodeFEC, percentage: 0.90)
+            
+            for lenGuess in 1...16 {
+                let eccCount = eccBitCount(messageLengthBytes: lenGuess)
+                guard payloadBits.count >= eccCount else { continue }
+                let eccBits = Array(payloadBits.prefix(eccCount))
+                if let correctedText = decodeFEC(bits: eccBits) {
+                    reportProgress(step: .extractDecodeFEC, percentage: 1.0)
+                    if shouldHideProgressbar {
+                        NotificationCenter.default.post(name: AppConstants.Notifications.watermarkProgressOverlayDidEnd, object: nil)
                     }
+                    await persistExtractHistoryIfNeeded(
+                        succeeded: true,
+                        image: image,
+                        extractedText: correctedText,
+                        error: nil,
+                        startedAt: historyStarted
+                    )
+                    if !shouldSuppressSingleOperationNotification {
+                        await deliverWatermarkNotificationIfAllowed {
+                            await WatermarkOperationNotificationService.notifySingleExtractFinished(
+                                success: true,
+                                extractedText: correctedText,
+                                error: nil
+                            )
+                        }
+                    }
+                    return correctedText
                 }
-                return correctedText
             }
-        }
 
-        throw WatermarkError.extractFailed
+            throw WatermarkError.extractFailed
         } catch {
+            // catch 逻辑保持你原样不变
             if shouldHideProgressbar {
                 NotificationCenter.default.post(name: AppConstants.Notifications.watermarkProgressOverlayDidEnd, object: nil)
             }

@@ -43,11 +43,11 @@ extension AppConstants {
 
         // Extraction pipeline (bit recovery + decode).
         case extractPreparation = "Preparing extraction"
-        case extractConvertToYCbCr = "convertToYCbCr"
-        case extractOffsetScan = "findGridOffsetAndSyncMarker"
-        case extractBitGrid = "extractBitsWithOffset"
-        case extractMajorityVoting = "applyMajorityVoting"
-        case extractDecodeFEC = "decodeFEC"
+        case extractConvertToYCbCr = "Convert To YCbCr"
+        case extractOffsetScan = "Perform offset scan"
+        case extractBitGrid = "Extract Bits"
+        case extractMajorityVoting = "Apply Majority Voting"
+        case extractDecodeFEC = "Decode FEC"
     }
 }
 
