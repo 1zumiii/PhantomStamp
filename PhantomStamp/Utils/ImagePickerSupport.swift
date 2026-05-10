@@ -10,6 +10,7 @@ import Photos
 import PhotosUI
 import SwiftUI
 import UIKit
+import ImageIO
 
 enum ImagePickerSupport {
     /// PHPicker / PhotosPicker filter: photos only (no videos).
@@ -43,14 +44,37 @@ enum ImagePickerSupport {
 
             guard let image = UIImage(data: data) else { continue }
 
+            let pixelWidth = Int(image.size.width * image.scale)
+            let pixelHeight = Int(image.size.height * image.scale)
+            
             var name = fromFileName.flatMap { sanitizedFileName($0) }
             if name == nil {
                 name = await photoLibraryFileName(for: item)
             }
-            result.append(SelectedPhotoItem(image: image, suggestedName: name))
+
+            result.append(
+                SelectedPhotoItem(
+                    image: image,
+                    width: pixelWidth,
+                    height: pixelHeight,
+                    suggestedName: name
+                )
+            )
         }
 
         return result
+    }
+    
+
+    private static func imageSize(from data: Data) -> CGSize? {
+        guard let src = CGImageSourceCreateWithData(data as CFData, nil),
+              let props = CGImageSourceCopyPropertiesAtIndex(src, 0, nil) as? [CFString: Any],
+              let w = props[kCGImagePropertyPixelWidth] as? CGFloat,
+              let h = props[kCGImagePropertyPixelHeight] as? CGFloat
+        else {
+            return nil
+        }
+        return CGSize(width: w, height: h)
     }
 
     /// Strip junk paths; keep a non-empty basename.
@@ -86,9 +110,6 @@ private struct PickedImagePayload: Transferable {
     let suggestedFileName: String?
 
     static var transferRepresentation: some TransferRepresentation {
-        DataRepresentation(importedContentType: .image) { data in
-            PickedImagePayload(data: data, suggestedFileName: nil)
-        }
         FileRepresentation(importedContentType: .image, shouldAttemptToOpenInPlace: false) { received in
             let data = try Data(contentsOf: received.file)
             let base = received.file.lastPathComponent
@@ -97,6 +118,10 @@ private struct PickedImagePayload: Transferable {
                 data: data,
                 suggestedFileName: name.isEmpty ? nil : name
             )
+        }
+        
+        DataRepresentation(importedContentType: .image) { data in
+            PickedImagePayload(data: data, suggestedFileName: nil)
         }
     }
 }

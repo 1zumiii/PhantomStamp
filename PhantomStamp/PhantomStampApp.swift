@@ -7,14 +7,18 @@
 
 import SwiftData
 import SwiftUI
+import UIKit
 
 @main
 struct PhantomStampApp: App {
-   private let watermarkService: any WatermarkServiceProtocol = WatermarkService()
+    @UIApplicationDelegateAdaptor(AppNotificationDelegate.self) private var appNotificationDelegate
+
+    private let watermarkService: any WatermarkServiceProtocol = WatermarkService()
 
     var sharedModelContainer: ModelContainer = {
         let schema = Schema([
             HistoryEntry.self,
+            WatermarkHistoryRecord.self,
         ])
         let modelConfiguration = ModelConfiguration(schema: schema, isStoredInMemoryOnly: false)
 

@@ -97,7 +97,7 @@ enum AppConstants {
     enum Copy {
 
         enum Tab {
-            static let watermark = "Watermark"
+            static let watermark = "Embed"
             static let history = "History"
             static let settings = "Settings"
         }
@@ -120,10 +120,27 @@ enum AppConstants {
             static let captionHistoryHintWhenLogging = "Only when watermark embedding is successful will it be recorded in history (can be disabled in Settings)."
             static let captionHistoryHintWhenNotLogging = "Disabled: watermark embedding is not recorded when successful."
         }
+
+        /// Copy for `UNUserNotificationCenter` alerts after watermark work completes.
+        enum WatermarkPush {
+            static let embedSingleSuccessTitle = "Watermark embedded"
+            static let embedSingleSuccessBody = "Your image was watermarked successfully."
+            static let embedSingleFailureTitle = "Watermark embed failed"
+            static let extractSingleSuccessTitle = "Watermark extracted"
+            static let extractSingleSuccessBodyPrefix = "Payload: "
+            static let extractSingleFailureTitle = "Watermark extract failed"
+            static let batchEmbedDoneTitle = "Batch embed finished"
+            static let batchEmbedDoneBodyFormat = "Succeeded: %d, failed: %d."
+            static let batchExtractDoneTitle = "Batch extract finished"
+            static let batchExtractDoneBodyFormat = "Succeeded: %d, failed: %d."
+            static let genericErrorBody = "Something went wrong."
+        }
+
         // AppConstants.Copy.History.navigationTitle
         enum History {
             static let navigationTitle = "History"
             static let clearButton = "Clear"
+            static let printWatermarkRecordsButton = "Print saved watermark records"
             static let emptyTitle = "No History"
             static let emptyDescription = "When watermark embedding is successful on the watermark page, and \"Auto Log Watermark Embed\" is enabled in the settings, it will appear here."
             static let logWatermarkEmbeddedFormat = "Watermark Embedding Completed (Text: %@)"

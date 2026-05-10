@@ -57,7 +57,12 @@ final class WatermarkInsertViewModel {
         let adjusted: [SelectedPhotoItem] = items.enumerated().map { offset, item in
             guard item.displayName == SelectedPhotoItem.missingFileNamePlaceholder else { return item }
             let n = start + offset + 1
-            return SelectedPhotoItem(id: item.id, image: item.image, suggestedName: "Image \(n)")
+            return SelectedPhotoItem(
+                id: item.id,
+                image: item.image,
+                width: item.width,
+                height: item.height,
+                suggestedName: "Image \(n)")
         }
         selectedPhotoItems.append(contentsOf: adjusted)
     }
