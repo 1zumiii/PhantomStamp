@@ -25,6 +25,15 @@ struct RootView: View {
         }
       },
       BottomNavItem(
+        id: AnyHashable("extract"),
+        title: "Extract",
+        systemImage: "waveform.path.ecg"
+      ) {
+        NavigationStack {
+          WatermarkExtractView(watermarkService: watermarkService)
+        }
+      },
+      BottomNavItem(
         id: AnyHashable("history"),
         title: AppConstants.Copy.Tab.history,
         systemImage: AppConstants.Symbol.tabHistory
