@@ -10,11 +10,13 @@ import SwiftUI
 
 struct WatermarkInsertView: View {
     let watermarkService: any WatermarkServiceProtocol
-    var settingsStore: UserSettingsStore
+    @Bindable var settingsStore: UserSettingsStore
 
     @State private var vm: WatermarkInsertViewModel
     @State private var photoPickerItems: [PhotosPickerItem] = []
     @State private var showOverflowSheet = false
+    @FocusState private var isPayloadFocused: Bool
+    @State private var lastAppliedDefaultPayload: String?
 
     private let thumbnailStripMaxVisible = 6
 
@@ -45,6 +47,20 @@ struct WatermarkInsertView: View {
         }
         .sheet(isPresented: $showOverflowSheet) {
             UploadedImagesOverflowSheet(items: vm.selectedPhotoItems, onRemove: { vm.removePhoto(id: $0) })
+        }
+        .onAppear {
+            // Sync initial payload from Settings (persisted) into the input box.
+            // Only seed when the draft is empty so we never overwrite user edits.
+            applyDefaultPayloadIfAppropriate()
+        }
+        .onChange(of: settingsStore.defaultWatermarkText) { _, _ in
+            // "active notification": when the default watermark text in the settings changes,
+            // if the insert page is not currently editing the payload, and the user has not manually overwritten the payload, update the input field automatically.
+            applyDefaultPayloadIfAppropriate()
+        }
+        .onChange(of: isPayloadFocused) { _, focused in
+            // try to update the default payload when the payload field loses focus (more user-friendly, avoid overwriting during editing).
+            if !focused { applyDefaultPayloadIfAppropriate() }
         }
         .onChange(of: vm.selectedPhotoItems.count) { _, count in
             if count == 0 { showOverflowSheet = false }
@@ -84,6 +100,34 @@ struct WatermarkInsertView: View {
                 }
             }
         )
+    }
+
+    private func applyDefaultPayloadIfAppropriate() {
+        // Never override while the user is actively editing.
+        guard !isPayloadFocused else { return }
+
+        let current = vm.watermarkPayload
+        let trimmedCurrent = current.trimmingCharacters(in: .whitespacesAndNewlines)
+
+        let defaultText = settingsStore.defaultWatermarkText
+        let trimmedDefault = defaultText.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !trimmedDefault.isEmpty else { return }
+
+        // Only apply when:
+        // - input is empty, OR
+        // - input equals the last default we applied (meaning user hasn't customized after that)
+        let shouldApply: Bool
+        if trimmedCurrent.isEmpty {
+            shouldApply = true
+        } else if let last = lastAppliedDefaultPayload, current == last {
+            shouldApply = true
+        } else {
+            shouldApply = false
+        }
+        guard shouldApply else { return }
+
+        vm.watermarkPayload = defaultText
+        lastAppliedDefaultPayload = defaultText
     }
 
     private var header: some View {
@@ -335,6 +379,7 @@ struct WatermarkInsertView: View {
                         axis: .vertical
                     )
                     .lineLimit(1...3)
+                    .focused($isPayloadFocused)
                     .textInputAutocapitalization(.sentences)
                     .autocorrectionDisabled(false)
                     .textFieldStyle(.plain)

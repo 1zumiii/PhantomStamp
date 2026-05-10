@@ -288,6 +288,7 @@ struct RobustnessTestingView: View {
 
     @MainActor
     private func saveToSystemPhotoAlbumIfPossible(_ image: UIImage) async {
+        guard settingsStore.saveToPhotos else { return }
         do {
             try await PhotoLibraryExporter.saveToPhotoLibrary(image)
         } catch {

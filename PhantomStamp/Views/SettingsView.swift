@@ -39,6 +39,7 @@ struct SettingsView: View {
                 .listRowInsets(EdgeInsets(top: 0, leading: 0, bottom: 4, trailing: 0))
         }
         .listSectionSpacing(0)
+        .padding(.horizontal, 5)
     }
 
     // MARK: - General
@@ -96,19 +97,45 @@ struct SettingsView: View {
     }
 
     private var watermarkTextFieldRow: some View {
-        VStack(alignment: .leading, spacing: 6) {
-            Text(AppConstants.Copy.Settings.labelDefaultWatermarkText)
-                .font(.subheadline.weight(.medium))
-            // Bound to settingsStore — persisted via AppUserDefault<String>
+        let count = settingsStore.defaultWatermarkText.count
+        let isInRange = count == 0 || (count >= WatermarkInsertViewModel.payloadMinLength && count <= WatermarkInsertViewModel.payloadMaxLength)
+
+        return VStack(alignment: .leading, spacing: 6) {
+            HStack(alignment: .firstTextBaseline) {
+                Text(AppConstants.Copy.Settings.labelDefaultWatermarkText)
+                    .font(.subheadline.weight(.medium))
+                Spacer()
+                Text("\(count)/\(WatermarkInsertViewModel.payloadMaxLength)")
+                    .font(.caption.monospacedDigit().weight(.medium))
+                    .foregroundStyle(isInRange ? Color.secondary : Color.red)
+            }
+
             TextField(
                 AppConstants.Copy.Settings.placeholderWatermarkText,
-                text: $settingsStore.defaultWatermarkText
+                text: defaultWatermarkTextBinding
             )
             .font(.subheadline)
             .autocorrectionDisabled()
             .textInputAutocapitalization(.never)
+
+            Text("8–16 characters. Leave empty to disable the default.")
+                .font(.caption)
+                .foregroundStyle(isInRange ? Color.secondary : Color.red)
         }
         .padding(.vertical, 4)
+    }
+
+    private var defaultWatermarkTextBinding: Binding<String> {
+        Binding(
+            get: { settingsStore.defaultWatermarkText },
+            set: { newValue in
+                if newValue.count > WatermarkInsertViewModel.payloadMaxLength {
+                    settingsStore.defaultWatermarkText = String(newValue.prefix(WatermarkInsertViewModel.payloadMaxLength))
+                } else {
+                    settingsStore.defaultWatermarkText = newValue
+                }
+            }
+        )
     }
 
     private var embeddingStrengthRow: some View {
