@@ -27,31 +27,36 @@ struct ExtractionDetailView: View {
     }
 
     private var heroCard: some View {
-        ZStack(alignment: .topTrailing) {
-            RoundedRectangle(cornerRadius: 22, style: .continuous)
-                .fill(Color(red: 0.88, green: 0.85, blue: 0.82))
+        GeometryReader { geo in
+            let width = max(1, geo.size.width)
+            let height = heroHeight(forWidth: width)
 
-            if let image = record.image {
-                Image(uiImage: image)
-                    .resizable()
-                    .scaledToFill()
-                    .frame(maxWidth: .infinity)
-                    .frame(height: 260)
-                    .clipped()
-                    .clipShape(RoundedRectangle(cornerRadius: 22, style: .continuous))
-            } else {
-                VStack(spacing: 10) {
-                    Image(systemName: "photo")
-                        .font(.system(size: 42, weight: .semibold))
-                        .foregroundStyle(.black.opacity(0.2))
+            ZStack(alignment: .topTrailing) {
+                RoundedRectangle(cornerRadius: 22, style: .continuous)
+                    .fill(Color(red: 0.88, green: 0.85, blue: 0.82))
+
+                if let image = record.image {
+                    Image(uiImage: image)
+                        .resizable()
+                        .scaledToFill()
+                        .frame(width: width, height: height)
+                        .clipped()
+                        .clipShape(RoundedRectangle(cornerRadius: 22, style: .continuous))
+                } else {
+                    VStack(spacing: 10) {
+                        Image(systemName: "photo")
+                            .font(.system(size: 42, weight: .semibold))
+                            .foregroundStyle(.black.opacity(0.2))
+                    }
+                    .frame(width: width, height: height)
                 }
-                .frame(maxWidth: .infinity)
-                .frame(height: 260)
-            }
 
-            statusPill
-                .padding(12)
+                statusPill
+                    .padding(12)
+            }
+            .frame(width: width, height: height)
         }
+        .frame(height: heroHeight(forWidth: UIScreen.main.bounds.width - 40))
         .overlay(alignment: .bottomLeading) {
             Text(record.imageName)
                 .font(.subheadline.weight(.semibold))
@@ -64,6 +69,15 @@ struct ExtractionDetailView: View {
                 }
                 .padding(12)
         }
+    }
+
+    private func heroHeight(forWidth width: CGFloat) -> CGFloat {
+        guard let image = record.image else { return 260 }
+        let iw = max(1, image.size.width * image.scale)
+        let ih = max(1, image.size.height * image.scale)
+        let ratio = ih / iw
+        // Keep hero from stretching on very tall images.
+        return min(max(width * ratio, 220), 340)
     }
 
     private var statusPill: some View {
