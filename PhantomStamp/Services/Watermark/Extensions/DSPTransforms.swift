@@ -1,21 +1,20 @@
 //
-//  MatrixOperations.swift
+//  DSPTransforms.swift
 //  PhantomStamp
 //
-//  Created by Orion on 5/5/2026.
+//  DSP primitives: variance + 8×8 DCT/IDCT (Accelerate/vDSP).
 //
 
-import Foundation
-import UIKit
 import Accelerate
-extension WatermarkService{
+import Foundation
+
+extension WatermarkService {
     /// Computes the population variance of an 8×8 spatial block (Float samples).
     ///
     /// - Note: This uses population variance (divide by N=64), which is what we typically want
     ///   for block activity/energy heuristics in DSP pipelines.
     func calculateVariance(_ block: Matrix8x8) -> Float {
         // Population variance: Var(X) = E[X^2] - (E[X])^2
-        // Using vDSP primitives avoids scalar loops and vectorizes well.
         var mean: Float = 0
         var meanSquare: Float = 0
         let length = vDSP_Length(Matrix8x8.elementCount)
@@ -27,30 +26,37 @@ extension WatermarkService{
         }
 
         let variance = meanSquare - (mean * mean)
-        // Protect against tiny negative values from floating-point cancellation.
-        return max(0, variance)
+        return max(0, variance) // protect against tiny negative values
     }
 
     /// Performs an 8×8 2D DCT-II using Accelerate/vDSP.
     ///
-    /// `vDSP.DCT` (1D) has length constraints and commonly refuses `count == 8`.
-    /// To keep using Accelerate while supporting **exact 8×8 blocks**, we compute:
+    /// - Important:
+    ///   `vDSP.DCT` is a 1D helper and is awkward for an exact **8-point** 2D pipeline in practice.
+    ///   To keep the transform deterministic and easy to validate, we build an explicit orthonormal
+    ///   DCT-II basis matrix `C` and compute:
     ///
-    /// \(F = C \cdot X \cdot C^T\)
+    ///   \[
+    ///     F = C \cdot X \cdot C^T
+    ///   \]
     ///
-    /// where `C` is the orthonormal 8×8 DCT-II basis matrix, and multiplications are
-    /// performed by `vDSP_mmul` (vectorized / Accelerate-optimized).
+    ///   All multiplications are done via `vDSP_mmul` (vectorized / Accelerate-optimized).
     func performDCT(_ block: Matrix8x8) -> Matrix8x8 {
         var buf = block.values
         DCT8x8vDSP.apply2DDCTInPlace(&buf)
         return Matrix8x8(values: buf)
     }
 
-    /// Performs an 8×8 2D IDCT (inverse of ``performDCT(_:)``) using Accelerate/vDSP.
+    /// Performs an 8×8 2D IDCT using Accelerate/vDSP.
+    ///
+    /// Since `C` is orthonormal, the inverse is:
+    ///
+    /// \[
+    ///   X = C^T \cdot F \cdot C
+    /// \]
     func performIDCT(_ freqBlock: Matrix8x8) -> Matrix8x8 {
         var buf = freqBlock.values
         DCT8x8vDSP.apply2DIDCTInPlace(&buf)
-
         return Matrix8x8(values: buf)
     }
 }
@@ -62,13 +68,14 @@ private enum DCT8x8vDSP {
     private static let lengthN = vDSP_Length(n)
 
     /// Orthonormal 8×8 DCT-II basis matrix in row-major order.
-    /// C[u,x] = alpha(u) * cos((2x+1)uπ / (2N)), with alpha(0)=sqrt(1/N), alpha(u>0)=sqrt(2/N)
+    ///
+    /// `C[u, x] = α(u) * cos(((2x+1)uπ) / (2N))` where:
+    /// - `α(0) = sqrt(1/N)`
+    /// - `α(u>0) = sqrt(2/N)`
     static let basisC: [Float] = {
         let nf = Float(n)
         let pi = Float.pi
-        func alpha(_ u: Int) -> Float {
-            u == 0 ? sqrt(1.0 / nf) : sqrt(2.0 / nf)
-        }
+        func alpha(_ u: Int) -> Float { u == 0 ? sqrt(1.0 / nf) : sqrt(2.0 / nf) }
         var c = [Float](repeating: 0, count: n * n)
         for u in 0..<n {
             for x in 0..<n {
@@ -92,7 +99,10 @@ private enum DCT8x8vDSP {
     static func apply2DDCTInPlace(_ matrix: inout [Float]) {
         precondition(matrix.count == Matrix8x8.elementCount)
         // F = C * X * C^T
-        // Use stack-backed temporary storage to avoid per-block heap allocations.
+        //
+        // Implementation detail:
+        // We use `withUnsafeTemporaryAllocation` for the 64-float temporaries so each 8×8 transform
+        // doesn't allocate on the heap (important when processing many blocks/strips).
         withUnsafeTemporaryAllocation(of: Float.self, capacity: Matrix8x8.elementCount) { tempBuf in
             withUnsafeTemporaryAllocation(of: Float.self, capacity: Matrix8x8.elementCount) { outBuf in
                 let tempPtr = tempBuf.baseAddress!
@@ -119,7 +129,7 @@ private enum DCT8x8vDSP {
                 }
 
                 matrix.withUnsafeMutableBufferPointer { dst in
-                    dst.baseAddress!.assign(from: outPtr, count: Matrix8x8.elementCount)
+                    dst.baseAddress!.update(from: outPtr, count: Matrix8x8.elementCount)
                 }
             }
         }
@@ -128,7 +138,6 @@ private enum DCT8x8vDSP {
     static func apply2DIDCTInPlace(_ matrix: inout [Float]) {
         precondition(matrix.count == Matrix8x8.elementCount)
         // X = C^T * F * C   (since C is orthonormal)
-        // Use stack-backed temporary storage to avoid per-block heap allocations.
         withUnsafeTemporaryAllocation(of: Float.self, capacity: Matrix8x8.elementCount) { tempBuf in
             withUnsafeTemporaryAllocation(of: Float.self, capacity: Matrix8x8.elementCount) { outBuf in
                 let tempPtr = tempBuf.baseAddress!
@@ -155,9 +164,10 @@ private enum DCT8x8vDSP {
                 }
 
                 matrix.withUnsafeMutableBufferPointer { dst in
-                    dst.baseAddress!.assign(from: outPtr, count: Matrix8x8.elementCount)
+                    dst.baseAddress!.update(from: outPtr, count: Matrix8x8.elementCount)
                 }
             }
         }
     }
 }
+

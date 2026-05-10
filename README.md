@@ -15,33 +15,36 @@ During digital content distribution, creators face several core pain points:
 
 ## 3. Technical Principles
 
-PhantomStamp's core competency lies in how its underlying algorithm processes image signals:
+PhantomStamp's core competency lies in how its underlying algorithm processes image signals and guarantees data integrity:
 
 ### 3.1 Discrete Cosine Transform (DCT)
 
 The app leverages Apple's official **Accelerate (vDSP)** framework to transform the image from the spatial domain (pixel matrix) to the frequency domain. In the frequency domain, the image is decomposed into different frequency components.
 
-### 3.2 Mid-Frequency Embedding Strategy
+### 3.2 Adaptive Visual Masking (Mid-Frequency Embedding)
 
-Based on the characteristics of the Human Visual System (HVS), the algorithm embeds the watermark bitstream into the **mid-frequency coefficients**:
+Based on the characteristics of the Human Visual System (HVS), the algorithm embeds the watermark into the **mid-frequency coefficients** (e.g., utilizing symmetry points).
+Crucially, it employs an **Adaptive Quantization Step**. The algorithm calculates the mean absolute AC (alternating-current) coefficient magnitude of each 8×8 block to assess texture complexity dynamically. Smooth areas receive a lighter embedding to preserve pristine visual quality. Highly textured areas receive a stronger embedding to maximize robustness against compression.
 
-- **Avoiding Low Frequencies:** Ensures no visible alterations or artifacts are introduced to the overall tone and lighting of the image.
-- **Avoiding High Frequencies:** Ensures the watermark data survives high-frequency filtering operations like JPEG compression, guaranteeing robustness.
+### 3.3 Data Link Layer Security (FEC & Interleaving)
 
-### 3.3 Blind Extraction Technology
+To combat localized burst errors caused by image damage or heavy compression artifacts, the copyright payload is rigorously protected before embedding:
+- **Extended Hamming(8,4) Code:** Provides SECDED (Single Error Correction, Double Error Detection) capabilities.
+- **Bit-level Block Interleaving:** Scatters adjacent bits of the codeword across different spatial areas, ensuring that localized pixel damage won't wipe out an entire Hamming codeword.
 
-The extraction algorithm does not require the original image. By analyzing the magnitude relationships between specific frequency coefficients within 8 \times 8 pixel blocks, the app can reversely recover the hidden binary sequence from a seemingly untouched image.
+### 3.4 Blind Extraction & Global Majority Voting
 
-### 3.4 Sync Markers & Redundancy
-
-- **Sync Markers:** Specific bit sequences are embedded within the data stream to help the extraction algorithm realign the grid origin if the image suffers from translation attacks (e.g., cropping).
-- **2D Tiling:** The watermark payload is redundantly tiled across the entire image. Even if the image is heavily cropped, the complete copyright information can still be extracted from the remaining valid fragments.
+The extraction algorithm operates entirely blindly (requires no original image):
+- **64-Offset Sliding Window Scan:** Re-aligns the grid origin perfectly even if the image suffers from severe translation or cropping attacks.
+- **Global Majority Voting:** The 2D watermark tile is redundantly paved across the entire image. The algorithm aggregates surviving data from all valid fragments (including edge-cropped macroblocks) to recover the most likely true payload. Based on compression quality sweeps in `WatermarkCompressionAttackTests`, this approach survives JPEG compression at quality levels as low as ~51%.
 
 ## 4. Technical Highlights
 
-- **High-Performance Concurrency:** Utilizes Swift Concurrency (`async/await`) and `TaskGroup` to slice and process large images concurrently. This maximizes multi-core CPU performance and guarantees a responsive UI without blocking the main thread.
-- **Low Overhead Optimization:** Calls the SIMD instruction sets of the Accelerate framework for matrix operations, significantly reducing computational overhead on mobile devices.
-- **Loosely Coupled Architecture:** Adopts the MVVM design pattern to completely decouple complex mathematical transformation logic from the View layer, ensuring code extensibility, testability, and isolated collaboration via GitHub.
+- **High-Performance Concurrency & OOM Prevention:** Utilizes Swift Concurrency (`async/await`) and `TaskGroup` to slice and process large images (e.g., 4K resolutions) concurrently. Dedicated `autoreleasepool` scopes within strip processing enforce strict memory recycling, preventing Out-Of-Memory (OOM) silent crashes during heavy matrix operations.
+- **SIMD & Low Overhead Optimization:** Calls the SIMD instruction sets of the Accelerate framework for matrix operations, significantly reducing computational overhead and battery consumption on mobile devices.
+- **Event-Driven MVVM & State Machine:** Completely decouples complex mathematical transformations from the View layer. The UI is driven by a robust enumeration-based state machine and `CheckedContinuation`, achieving a true zero-polling event-driven pump that consumes negligible CPU overhead when idle.
+- **Adaptive Backpressure via Min-Heap:** Developed a highly resilient SwiftUI progress overlay to handle the massive influx of out-of-order progress events from the concurrent backend. It utilizes a custom **Min-Heap priority queue** to reduce sorting overhead from `O(n log n)` to amortized `O(log n)`. Combined with dynamic pacing, it automatically fast-forwards animations under heavy event backlogs, ensuring smooth 60fps rendering without freezing the main thread.
+- **Strict Producer-Consumer Synchronization:** Implemented a robust "Drain ACK" handshake mechanism between the headless data-processing layer and the UI layer. This guarantees perfect synchronization during multi-file batch processing, forcing the backend to suspend its workload until the UI explicitly signals that progress animations have completed, entirely eliminating race conditions, UI lag, and event loss.
 
 ## 5. Tech Stack
 

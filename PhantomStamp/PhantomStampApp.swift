@@ -7,16 +7,18 @@
 
 import SwiftData
 import SwiftUI
+import UIKit
 
 @main
 struct PhantomStampApp: App {
-    // 依赖注入，开发UI的时候用 PreviewWatermarkService()，正式发布用WatermarkService()
-    private let watermarkService: any WatermarkServiceProtocol = PreviewWatermarkService()
-//    private let watermarkService: any WatermarkServiceProtocol = WatermarkService()
+    @UIApplicationDelegateAdaptor(AppNotificationDelegate.self) private var appNotificationDelegate
+
+    private let watermarkService: any WatermarkServiceProtocol = WatermarkService()
 
     var sharedModelContainer: ModelContainer = {
         let schema = Schema([
             HistoryEntry.self,
+            WatermarkHistoryRecord.self,
         ])
         let modelConfiguration = ModelConfiguration(schema: schema, isStoredInMemoryOnly: false)
 
@@ -29,7 +31,6 @@ struct PhantomStampApp: App {
 
     init() {
         #if DEBUG
-//        print(AppConstants.Debug.launchLogPrefix + AppVersion.marketing)
 //        ImagePipelineTests.runAllBundledAndPrint()
 //        MatrixOperationsTests.runAllAndPrint()
         #endif
@@ -38,6 +39,9 @@ struct PhantomStampApp: App {
     var body: some Scene {
         WindowGroup {
             RootView(watermarkService: watermarkService)
+                .task {
+                    await PhotoLibraryExporter.preflightAddOnlyAuthorizationIfNeeded()
+                }
         }
         .modelContainer(sharedModelContainer)
     }

@@ -1,56 +1,87 @@
 //
-//  FullScreenDemoProgressOverlay.swift
+//  FullScreenProgressOverlay.swift
 //  PhantomStamp
 //
-//  Full-screen demo overlay driven by notifications.
 //
 
 import SwiftUI
 
-/// Full-screen progress overlay for UI demos (e.g. `WatermarkInsertDemoView`).
+// MARK: - Watermark progress overlay (real embed/extract)
+
+/// Full-screen progress overlay for real watermark operations.
 ///
 /// Control via notifications:
-/// - Show: `AppConstants.Notifications.demoProgressOverlayDidStart`
-/// - Update: `AppConstants.Notifications.demoProgressDidUpdate` with `userInfo["payload"] as DemoProgressPayload`
-/// - Hide: `AppConstants.Notifications.demoProgressOverlayDidEnd`
-struct FullScreenDemoProgressOverlay: View {
-    @State private var isVisible = false
-    @State private var title: String = "Processing"
-    @State private var detail: String = "Please wait…"
-    @State private var progress: Double = 0
+/// - Show: `AppConstants.Notifications.watermarkProgressOverlayDidStart`
+/// - Update: `AppConstants.Notifications.watermarkProgress` with `userInfo["payload"] as ProgressPayload`
+/// - Hide: `AppConstants.Notifications.watermarkProgressOverlayDidEnd`
+struct FullScreenWatermarkProgressOverlay: View {
+    @State private var vm = FullScreenWatermarkProgressOverlayViewModel()
+
+    // Liveness signals
+    @State private var dotsPhase: Int = 0
+    @State private var dotsTask: Task<Void, Never>?
+    @State private var shimmerPhase: CGFloat = -1
+    @State private var isShimmerRunning: Bool = false
 
     var body: some View {
         ZStack {
-            if isVisible {
+            if vm.isVisible {
                 Rectangle()
                     .fill(.ultraThinMaterial)
                     .ignoresSafeArea()
 
                 VStack(spacing: 14) {
                     HStack(spacing: 12) {
-                        Image(systemName: "sparkles")
+                        Image(systemName: "wand.and.stars")
                             .font(.title2)
                             .foregroundStyle(Color.accentColor)
+                            .symbolEffect(.pulse, options: .repeating)
 
                         VStack(alignment: .leading, spacing: 2) {
-                            Text(title)
+                            Text(vm.title)
                                 .font(.headline.weight(.semibold))
-                            Text(detail)
+                            Text(detailWithDots)
                                 .font(.caption)
                                 .foregroundStyle(.secondary)
                                 .lineLimit(2)
                         }
 
                         Spacer()
+
+                        if vm.batchTotal > 1 {
+                            batchBadge
+                                .transition(.opacity.combined(with: .scale(scale: 0.98)))
+                        }
                     }
 
-                    ProgressView(value: progress, total: 1.0)
+                    ProgressView(value: vm.progress, total: 1.0)
                         .tint(.accentColor)
+                        .overlay {
+                            GeometryReader { geo in
+                                let w = geo.size.width
+                                Rectangle()
+                                    .fill(
+                                        LinearGradient(
+                                            colors: [.clear, Color.white.opacity(0.18), .clear],
+                                            startPoint: .top,
+                                            endPoint: .bottom
+                                        )
+                                    )
+                                    .frame(width: max(24, w * 0.18))
+                                    .offset(x: shimmerPhase * w)
+                                    .blendMode(.plusLighter)
+                                    .allowsHitTesting(false)
+                            }
+                            .mask(ProgressView(value: vm.progress, total: 1.0).tint(.white))
+                        }
 
                     HStack {
-                        Text("\(Int(progress * 100))%")
+                        Text("\(Int(vm.progressTextValue * 100))%")
                             .font(.caption.monospacedDigit().weight(.semibold))
                             .foregroundStyle(.secondary)
+                        ProgressView()
+                            .controlSize(.mini)
+                            .tint(.secondary)
                         Spacer()
                         Text("Keep the app open.")
                             .font(.caption)
@@ -72,31 +103,98 @@ struct FullScreenDemoProgressOverlay: View {
                 .transition(.opacity.combined(with: .scale(scale: 0.98)))
             }
         }
-        .animation(.easeOut(duration: 0.18), value: isVisible)
-        .onReceive(NotificationCenter.default.publisher(for: AppConstants.Notifications.demoProgressOverlayDidStart)) { _ in
-            title = "Processing"
-            detail = "Please wait…"
-            progress = 0
-            isVisible = true
-        }
-        .onReceive(NotificationCenter.default.publisher(for: AppConstants.Notifications.demoProgressOverlayDidEnd)) { _ in
-            isVisible = false
-        }
-        .onReceive(NotificationCenter.default.publisher(for: AppConstants.Notifications.demoProgressDidUpdate)) { notification in
-            guard isVisible,
-                  let payload = notification.userInfo?["payload"] as? DemoProgressPayload else { return }
-            title = payload.title
-            detail = payload.detail
-            progress = min(max(payload.percentage, 0), 1)
+        .animation(.easeOut(duration: 0.18), value: vm.isVisible)
+        .onDisappear {
+            // Ensure background tasks stop if the view is removed.
+            vm.cancel()
+            dotsTask?.cancel()
+            dotsTask = nil
+            isShimmerRunning = false
         }
         .accessibilityElement(children: .contain)
+        .task {
+            vm.bindNotificationsIfNeeded()
+
+            // Start liveness animations once.
+            if dotsTask == nil {
+                dotsTask = Task { @MainActor in
+                    dotsPhase = 0
+                    while !Task.isCancelled {
+                        if vm.isVisible {
+                            try? await Task.sleep(nanoseconds: 250_000_000)
+                            dotsPhase = (dotsPhase + 1) % 4
+                        } else {
+                            if dotsPhase != 0 { dotsPhase = 0 }
+                            try? await Task.sleep(nanoseconds: 200_000_000)
+                        }
+                    }
+                }
+            }
+        }
+        .onChange(of: vm.isVisible) { _, newValue in
+            if newValue {
+                guard !isShimmerRunning else { return }
+                isShimmerRunning = true
+
+                // Reset shimmer position without animation; then start a single repeating animation.
+                var t = Transaction()
+                t.animation = nil
+                withTransaction(t) {
+                    shimmerPhase = -1
+                }
+                withAnimation(.linear(duration: 1.25).repeatForever(autoreverses: false)) {
+                    shimmerPhase = 1.0
+                }
+            } else {
+                isShimmerRunning = false
+                var t = Transaction()
+                t.animation = nil
+                withTransaction(t) {
+                    shimmerPhase = -1
+                }
+            }
+        }
+    }
+
+    private var detailWithDots: String {
+        let dots = String(repeating: "·", count: dotsPhase)
+        let base = vm.detail
+        return dots.isEmpty ? base : "\(base) \(dots)"
+    }
+
+    private var batchBadge: some View {
+        let total = max(vm.batchTotal, 1)
+        let completedClamped = min(max(vm.batchCompleted, 0), total)
+        let p = Double(completedClamped) / Double(total)
+
+        return ZStack {
+            Circle()
+                .stroke(Color.primary.opacity(0.10), lineWidth: 3)
+            Circle()
+                .trim(from: 0, to: p)
+                .stroke(
+                    LinearGradient(
+                        colors: [Color.accentColor.opacity(0.55), Color.accentColor],
+                        startPoint: .topLeading,
+                        endPoint: .bottomTrailing
+                    ),
+                    style: StrokeStyle(lineWidth: 3, lineCap: .round)
+                )
+                .rotationEffect(.degrees(-90))
+
+            Text("\(completedClamped)/\(total)")
+                .font(.caption2.monospacedDigit().weight(.semibold))
+                .foregroundStyle(.secondary)
+        }
+        .frame(width: 28, height: 28)
+        .accessibilityLabel("File \(completedClamped) / \(total)")
     }
 }
 
 #Preview {
     ZStack {
         Color(uiColor: .systemGroupedBackground).ignoresSafeArea()
-        FullScreenDemoProgressOverlay()
+        FullScreenWatermarkProgressOverlay()
     }
 }
 

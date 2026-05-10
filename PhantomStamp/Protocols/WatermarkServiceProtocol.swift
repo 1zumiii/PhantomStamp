@@ -2,17 +2,26 @@
 //  WatermarkServiceProtocol.swift
 //  PhantomStamp
 //
-//  UI 与算法共同遵守的契约：`async throws` 便于处理耗时与失败场景。
+//  The contract that both the UI and algorithm must follow: `async throws` is convenient for handling time-consuming and failure scenarios.
 //
 import Foundation
 import UIKit
 
 protocol WatermarkServiceProtocol {
-    /// 将文本水印嵌入位图；耗时操作须在后台友好实现（必要时内部切换线程）。
+    /// Embed text watermark into a bitmap; time-consuming operations must be implemented in a background-friendly manner (internal thread switching when necessary).
     func embedWatermark(into image: UIImage, text: String) async throws -> UIImage
 
-    /// 从位图中提取水印文本。
+    /// Embed sequentially into multiple images (posts batch progress notifications).
+    func embedWatermark(into images: [UIImage], text: String) async throws -> [UIImage]
+
+    /// Extract watermark text from a bitmap.
     func extractWatermark(from image: UIImage) async throws -> String
+
+    /// Extract sequentially from multiple images (posts batch progress notifications). Stops on first thrown error.
+    func extractWatermark(from images: [UIImage]) async throws -> [String]
+
+    /// Extract from multiple images without failing the whole batch; `nil` marks per-image failure.
+    func extractWatermarkBestEffort(from images: [UIImage]) async -> [String?]
 }
 
 enum WatermarkError: Error {
@@ -25,11 +34,11 @@ extension WatermarkError: LocalizedError {
     var errorDescription: String? {
         switch self {
         case .imageTooSmall:
-            return "图片尺寸过小，无法满足水印处理的最小要求。"
+            return "Image size is too small, cannot meet the minimum requirements for watermark processing."
         case .extractFailed:
-            return "未能从当前图片中提取水印（算法未完成或图片不含有效水印）。"
+            return "Failed to extract watermark from the current image (algorithm not completed or image does not contain valid watermark)."
         case .processingError:
-            return "水印处理过程中发生错误。"
+            return "Error occurred during watermark processing."
         }
     }
 }
