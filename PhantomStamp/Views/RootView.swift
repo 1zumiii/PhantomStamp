@@ -9,6 +9,7 @@ import SwiftUI
 struct RootView: View {
   let watermarkService: any WatermarkServiceProtocol
 
+  @Environment(\.modelContext) private var modelContext
   @State private var settingsStore = UserSettingsStore()
   @State private var tab: AnyHashable = AnyHashable("watermark")
 
@@ -57,11 +58,16 @@ struct RootView: View {
       FullScreenWatermarkProgressOverlay()
         .zIndex(1000)
     }
+    .onAppear {
+      guard let svc = watermarkService as? WatermarkService else { return }
+      svc.historyModelContext = modelContext
+      svc.settingsStore = settingsStore
+    }
   }
 }
 
 #Preview {
-  let schema = Schema([HistoryEntry.self])
+  let schema = Schema([HistoryEntry.self, WatermarkHistoryRecord.self])
   let config = ModelConfiguration(schema: schema, isStoredInMemoryOnly: true)
   let container = try! ModelContainer(for: schema, configurations: [config])
   return RootView(watermarkService: WatermarkService())
