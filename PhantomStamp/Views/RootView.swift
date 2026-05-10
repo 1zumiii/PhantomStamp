@@ -18,10 +18,19 @@ struct RootView: View {
       BottomNavItem(
         id: AnyHashable("watermark"),
         title: AppConstants.Copy.Tab.watermark,
-        systemImage: AppConstants.Symbol.tabWatermark
+        systemImage: AppConstants.Symbol.tabEmbed
       ) {
         NavigationStack {
           WatermarkInsertView(watermarkService: watermarkService, settingsStore: settingsStore)
+        }
+      },
+      BottomNavItem(
+        id: AnyHashable("extract"),
+        title: "Extract",
+        systemImage: AppConstants.Symbol.tabExtract
+      ) {
+        NavigationStack {
+          WatermarkExtractView(watermarkService: watermarkService)
         }
       },
       BottomNavItem(
