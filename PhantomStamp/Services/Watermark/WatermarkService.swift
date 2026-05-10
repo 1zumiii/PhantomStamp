@@ -587,6 +587,7 @@ class WatermarkService: WatermarkServiceProtocol {
         error: Error?,
         startedAt: CFAbsoluteTime
     ) async {
+        guard await userAllowsEmbedHistoryRecords() else { return }
         guard let ctx = historyModelContext else { return }
         let durationMs = (CFAbsoluteTimeGetCurrent() - startedAt) * 1000
         let record = HistoryRecordService.makeExtractRecord(

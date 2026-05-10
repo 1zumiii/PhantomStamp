@@ -105,8 +105,16 @@ final class WatermarkInsertViewModel {
                 outputs = try await watermarkService.embedWatermark(into: images, text: text)
             }
 
-            for image in outputs {
-                try await PhotoLibraryExporter.saveToPhotoLibrary(image)
+            let shouldSaveToPhotos: Bool = {
+                // Settings are owned by the runtime `WatermarkService` instance and injected from `RootView.onAppear`.
+                // When running in previews/tests with a different service, default to saving.
+                guard let svc = watermarkService as? WatermarkService else { return true }
+                return svc.settingsStore?.saveToPhotos ?? true
+            }()
+            if shouldSaveToPhotos {
+                for image in outputs {
+                    try await PhotoLibraryExporter.saveToPhotoLibrary(image)
+                }
             }
 
             showSuccessOverlay = true

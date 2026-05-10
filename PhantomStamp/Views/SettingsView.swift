@@ -39,6 +39,7 @@ struct SettingsView: View {
                 .listRowInsets(EdgeInsets(top: 0, leading: 0, bottom: 4, trailing: 0))
         }
         .listSectionSpacing(0)
+        .padding(.horizontal, 5)
     }
 
     // MARK: - General
