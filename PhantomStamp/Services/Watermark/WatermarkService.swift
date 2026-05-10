@@ -86,10 +86,14 @@ class WatermarkService: WatermarkServiceProtocol {
         if shouldHideProgressbar {
             NotificationCenter.default.post(name: AppConstants.Notifications.watermarkProgressOverlayDidStart, object: nil)
         }
-
-        // Internal helper method to report progress
+        
+        let throttler = ProgressThrottler()
+        
         func reportProgress(step: AppConstants.WatermarkStep, percentage: Double) {
             let clamped = min(max(percentage, 0), 1)
+            
+            guard throttler.shouldReport(clamped) else { return }
+            
             let payload = ProgressPayload(step: step, percentage: clamped)
             NotificationCenter.default.post(
                 name: AppConstants.Notifications.watermarkProgress,
@@ -261,9 +265,16 @@ class WatermarkService: WatermarkServiceProtocol {
         if shouldHideProgressbar {
             NotificationCenter.default.post(name: AppConstants.Notifications.watermarkProgressOverlayDidStart, object: nil)
         }
+        // ensure the ViewModel has enough time to process the AsyncSequence notifications, and let SwiftUI completely render the progress bar on the screen.
+        try? await Task.sleep(nanoseconds: 150_000_000)
 
+        let throttler = ProgressThrottler()
+        
         func reportProgress(step: AppConstants.WatermarkStep, percentage: Double) {
             let clamped = min(max(percentage, 0), 1)
+            
+            guard throttler.shouldReport(clamped) else { return }
+            
             let payload = ProgressPayload(step: step, percentage: clamped)
             NotificationCenter.default.post(
                 name: AppConstants.Notifications.watermarkProgress,
@@ -271,6 +282,7 @@ class WatermarkService: WatermarkServiceProtocol {
                 userInfo: ["payload": payload]
             )
         }
+                
 
         let historyStarted = CFAbsoluteTimeGetCurrent()
 
@@ -278,7 +290,7 @@ class WatermarkService: WatermarkServiceProtocol {
             reportProgress(step: .extractPreparation, percentage: 0)
             reportProgress(step: .extractPreparation, percentage: 0.06)
 
-            // important fix: use Task.detached to force the heavy matrix computation to run in the background concurrency pool,彻底解放主线程
+            // important fix: use Task.detached to force the heavy matrix computation to run in the background concurrency pool
             let payloadBits = try await Task.detached(priority: .userInitiated) { [weak self] in
                 guard let self = self else { throw WatermarkError.processingError }
 
@@ -374,7 +386,6 @@ class WatermarkService: WatermarkServiceProtocol {
 
             throw WatermarkError.extractFailed
         } catch {
-            // catch 逻辑保持你原样不变
             if shouldHideProgressbar {
                 NotificationCenter.default.post(name: AppConstants.Notifications.watermarkProgressOverlayDidEnd, object: nil)
             }
@@ -588,6 +599,29 @@ class WatermarkService: WatermarkServiceProtocol {
         )
         await MainActor.run {
             HistoryRecordService.insertAndSave(record, context: ctx)
+        }
+    }
+    
+    // MARK: - Progress Throttler
+    final class ProgressThrottler: @unchecked Sendable {
+        private var lastTime: CFAbsoluteTime = 0
+        private var lastPct: Double = -1
+        private let lock = NSLock()
+        
+        func shouldReport(_ pct: Double) -> Bool {
+        
+            if pct <= 0.0 || pct >= 1.0 { return true }
+            
+            lock.lock()
+            defer { lock.unlock() }
+            
+            let now = CFAbsoluteTimeGetCurrent()
+            if now - lastTime > 0.05 || (pct - lastPct) >= 0.01 {
+                lastTime = now
+                lastPct = pct
+                return true
+            }
+            return false
         }
     }
     

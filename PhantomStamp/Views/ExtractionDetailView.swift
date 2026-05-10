@@ -169,7 +169,6 @@ struct ExtractionDetailView: View {
                 metricCard(title: "Processing", value: durationText, systemImage: "clock")
                 metricCard(title: "Format", value: formatText, systemImage: "doc")
             }
-            // 替换为一个更符合原型图的尺寸调整图标
             metricCard(title: "Image size", value: sizeText, systemImage: "arrow.up.left.and.arrow.down.right")
         }
     }
@@ -195,7 +194,6 @@ struct ExtractionDetailView: View {
         }
     }
 
-    // 重构的 metricCard 布局：图标和标题一行，数值在第二行
     private func metricCard(title: String, value: String, systemImage: String) -> some View {
         VStack(alignment: .leading, spacing: 8) {
             HStack(spacing: 6) {
