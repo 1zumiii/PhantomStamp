@@ -46,7 +46,6 @@ enum DataProcessingTests {
         let roundTripAsciiPassed = (decAscii == msgAscii)
 
         // 3) Round-trip (UTF-8 multibyte). Keep <= 16 bytes.
-        // "水印" is 2 chars, 6 bytes in UTF-8.
         let msgUtf8 = "Successful"
         let encUtf8 = encodeFEC(text: msgUtf8)
         let decUtf8 = decodeFEC(bits: encUtf8)
