@@ -59,7 +59,9 @@ struct RootView: View {
         .zIndex(1000)
     }
     .onAppear {
-      (watermarkService as? WatermarkService)?.historyModelContext = modelContext
+      guard let svc = watermarkService as? WatermarkService else { return }
+      svc.historyModelContext = modelContext
+      svc.settingsStore = settingsStore
     }
   }
 }

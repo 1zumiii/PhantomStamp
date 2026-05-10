@@ -19,14 +19,17 @@ enum AppConstants {
     // MARK: - UserDefaults
 
     enum UserDefaultsKey {
-        /// Only control whether watermark embedding is recorded in history (extraction is not recorded).
+        /// Only control whether watermark embedding is recorded in SwiftData (`WatermarkHistoryRecord` embed rows).
         static let autoLogWatermarkEmbed = "phantomstamp.settings.autoLogWatermarkEmbed"
         static let compactHistoryList = "phantomstamp.settings.compactHistoryList"
+        /// User toggle for local notifications after embed/extract complete (`WatermarkOperationNotificationService`).
+        static let watermarkOperationNotifications = "phantomstamp.settings.watermarkOperationNotifications"
     }
 
     enum SettingsDefault {
         static let autoLogWatermarkEmbed = true
         static let compactHistoryList = false
+        static let watermarkOperationNotifications = true
     }
 
     // MARK: - History record kind (SwiftData `HistoryEntry.kind`)
@@ -150,8 +153,11 @@ enum AppConstants {
             static let navigationTitle = "Settings"
             static let sectionHistory = "History"
             static let sectionAppearance = "Layout"
+            static let sectionNotifications = "Notifications"
             static let toggleAutoLogWatermarkEmbed = "Auto Log Watermark Embed"
-            static let footnoteAutoLogWatermarkEmbed = "Enable only when watermark embedding is successful in the watermark page; watermark extraction will not be recorded."
+            static let footnoteAutoLogWatermarkEmbed = "When off, successful watermark embedding is not saved to SwiftData history. Stored in UserDefaults."
+            static let toggleWatermarkOperationNotifications = "Watermark Finish Alerts"
+            static let footnoteWatermarkOperationNotifications = "Local notifications when embedding or extraction completes (single image: per result; batch: one summary). Stored in UserDefaults."
             static let toggleCompactHistory = "Compact History List"
             static let footnoteCompactHistory = "Persisted using UserDefaults, retained after app restart."
         }

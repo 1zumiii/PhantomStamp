@@ -11,13 +11,17 @@ import Observation
 final class UserSettingsStore {
     private let defaults: UserDefaults
 
-    /// 仅当「嵌入水印」成功时是否写入 `HistoryEntry`（提取不记录）。
     var autoLogWatermarkEmbedToHistory: Bool {
         didSet { defaults.set(autoLogWatermarkEmbedToHistory, forKey: AppConstants.UserDefaultsKey.autoLogWatermarkEmbed) }
     }
 
     var compactHistoryList: Bool {
         didSet { defaults.set(compactHistoryList, forKey: AppConstants.UserDefaultsKey.compactHistoryList) }
+    }
+
+    /// When false, `WatermarkService` does not schedule local notifications after embed/extract.
+    var watermarkOperationNotificationsEnabled: Bool {
+        didSet { defaults.set(watermarkOperationNotificationsEnabled, forKey: AppConstants.UserDefaultsKey.watermarkOperationNotifications) }
     }
 
     init(defaults: UserDefaults = .standard) {
@@ -34,6 +38,11 @@ final class UserSettingsStore {
             self.compactHistoryList = v
         } else {
             self.compactHistoryList = AppConstants.SettingsDefault.compactHistoryList
+        }
+        if let v = defaults.object(forKey: AppConstants.UserDefaultsKey.watermarkOperationNotifications) as? Bool {
+            self.watermarkOperationNotificationsEnabled = v
+        } else {
+            self.watermarkOperationNotificationsEnabled = AppConstants.SettingsDefault.watermarkOperationNotifications
         }
     }
 }

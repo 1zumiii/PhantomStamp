@@ -11,11 +11,32 @@ class WatermarkService: WatermarkServiceProtocol {
     /// When set from the UI host (see `RootView.onAppear`), completed embed/extract attempts append a `WatermarkHistoryRecord`.
     var historyModelContext: ModelContext?
 
+    /// When set from `RootView`, embed/extract honors notification + embed-history toggles in `UserSettingsStore`.
+    weak var settingsStore: UserSettingsStore?
+
     /// When > 0, single-file embed/extract APIs suppress per-image local notifications; batch APIs send one summary at the end.
     private var batchUserNotificationDepth = 0
 
     private var shouldSuppressSingleOperationNotification: Bool {
         batchUserNotificationDepth > 0
+    }
+
+    private func userAllowsWatermarkNotifications() async -> Bool {
+        await MainActor.run {
+            settingsStore?.watermarkOperationNotificationsEnabled ?? AppConstants.SettingsDefault.watermarkOperationNotifications
+        }
+    }
+
+    private func userAllowsEmbedHistoryRecords() async -> Bool {
+        await MainActor.run {
+            settingsStore?.autoLogWatermarkEmbedToHistory ?? AppConstants.SettingsDefault.autoLogWatermarkEmbed
+        }
+    }
+
+    /// Delivers `UserNotifications` only when the user enabled alerts in Settings (system authorization is still required inside the notification service).
+    private func deliverWatermarkNotificationIfAllowed(_ work: () async -> Void) async {
+        guard await userAllowsWatermarkNotifications() else { return }
+        await work()
     }
     private func awaitPerFileProgressDrain(current: Int, timeoutSeconds: Double = 60.0) async -> Bool {
         // If the overlay isn't listening (e.g. tests or headless runs), don't block forever.
@@ -201,7 +222,9 @@ class WatermarkService: WatermarkServiceProtocol {
                 startedAt: historyStarted
             )
             if !shouldSuppressSingleOperationNotification {
-                await WatermarkOperationNotificationService.notifySingleEmbedFinished(success: true, error: nil)
+                await deliverWatermarkNotificationIfAllowed {
+                    await WatermarkOperationNotificationService.notifySingleEmbedFinished(success: true, error: nil)
+                }
             }
             return finalImage
         } catch {
@@ -217,7 +240,9 @@ class WatermarkService: WatermarkServiceProtocol {
                 startedAt: historyStarted
             )
             if !shouldSuppressSingleOperationNotification {
-                await WatermarkOperationNotificationService.notifySingleEmbedFinished(success: false, error: error)
+                await deliverWatermarkNotificationIfAllowed {
+                    await WatermarkOperationNotificationService.notifySingleEmbedFinished(success: false, error: error)
+                }
             }
             throw error
         }
@@ -332,11 +357,13 @@ class WatermarkService: WatermarkServiceProtocol {
                     startedAt: historyStarted
                 )
                 if !shouldSuppressSingleOperationNotification {
-                    await WatermarkOperationNotificationService.notifySingleExtractFinished(
-                        success: true,
-                        extractedText: correctedText,
-                        error: nil
-                    )
+                    await deliverWatermarkNotificationIfAllowed {
+                        await WatermarkOperationNotificationService.notifySingleExtractFinished(
+                            success: true,
+                            extractedText: correctedText,
+                            error: nil
+                        )
+                    }
                 }
                 return correctedText
             }
@@ -355,7 +382,9 @@ class WatermarkService: WatermarkServiceProtocol {
                 startedAt: historyStarted
             )
             if !shouldSuppressSingleOperationNotification {
-                await WatermarkOperationNotificationService.notifySingleExtractFinished(success: false, extractedText: nil, error: error)
+                await deliverWatermarkNotificationIfAllowed {
+                    await WatermarkOperationNotificationService.notifySingleExtractFinished(success: false, extractedText: nil, error: error)
+                }
             }
             throw error
         }
@@ -401,12 +430,16 @@ class WatermarkService: WatermarkServiceProtocol {
             }
 
             NotificationCenter.default.post(name: AppConstants.Notifications.watermarkProgressOverlayDidEnd, object: nil)
-            await WatermarkOperationNotificationService.notifyBatchEmbedFinished(succeeded: outputs.count, failed: 0)
+            await deliverWatermarkNotificationIfAllowed {
+                await WatermarkOperationNotificationService.notifyBatchEmbedFinished(succeeded: outputs.count, failed: 0)
+            }
             return outputs
         } catch {
             NotificationCenter.default.post(name: AppConstants.Notifications.watermarkProgressOverlayDidEnd, object: nil)
             let failed = max(0, images.count - outputs.count)
-            await WatermarkOperationNotificationService.notifyBatchEmbedFinished(succeeded: outputs.count, failed: failed)
+            await deliverWatermarkNotificationIfAllowed {
+                await WatermarkOperationNotificationService.notifyBatchEmbedFinished(succeeded: outputs.count, failed: failed)
+            }
             throw error
         }
     }
@@ -446,12 +479,16 @@ class WatermarkService: WatermarkServiceProtocol {
             }
 
             NotificationCenter.default.post(name: AppConstants.Notifications.watermarkProgressOverlayDidEnd, object: nil)
-            await WatermarkOperationNotificationService.notifyBatchExtractFinished(succeeded: outputs.count, failed: 0)
+            await deliverWatermarkNotificationIfAllowed {
+                await WatermarkOperationNotificationService.notifyBatchExtractFinished(succeeded: outputs.count, failed: 0)
+            }
             return outputs
         } catch {
             NotificationCenter.default.post(name: AppConstants.Notifications.watermarkProgressOverlayDidEnd, object: nil)
             let failed = max(0, images.count - outputs.count)
-            await WatermarkOperationNotificationService.notifyBatchExtractFinished(succeeded: outputs.count, failed: failed)
+            await deliverWatermarkNotificationIfAllowed {
+                await WatermarkOperationNotificationService.notifyBatchExtractFinished(succeeded: outputs.count, failed: failed)
+            }
             throw error
         }
     }
@@ -496,7 +533,9 @@ class WatermarkService: WatermarkServiceProtocol {
         NotificationCenter.default.post(name: AppConstants.Notifications.watermarkProgressOverlayDidEnd, object: nil)
         let succeeded = outputs.compactMap { $0 }.count
         let failed = outputs.count - succeeded
-        await WatermarkOperationNotificationService.notifyBatchExtractFinished(succeeded: succeeded, failed: failed)
+        await deliverWatermarkNotificationIfAllowed {
+            await WatermarkOperationNotificationService.notifyBatchExtractFinished(succeeded: succeeded, failed: failed)
+        }
         return outputs
     }
 
@@ -508,6 +547,7 @@ class WatermarkService: WatermarkServiceProtocol {
         error: Error?,
         startedAt: CFAbsoluteTime
     ) async {
+        guard await userAllowsEmbedHistoryRecords() else { return }
         guard let ctx = historyModelContext else { return }
         let durationMs = (CFAbsoluteTimeGetCurrent() - startedAt) * 1000
         let thumbnailSource = succeeded ? (outputImage ?? inputImage) : inputImage

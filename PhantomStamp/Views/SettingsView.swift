@@ -31,6 +31,15 @@ struct SettingsView: View {
                     Text(AppConstants.Copy.Settings.sectionAppearance)
                 }
 
+                Section {
+                    Toggle(AppConstants.Copy.Settings.toggleWatermarkOperationNotifications, isOn: $settingsStore.watermarkOperationNotificationsEnabled)
+                    Text(AppConstants.Copy.Settings.footnoteWatermarkOperationNotifications)
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
+                } header: {
+                    Text(AppConstants.Copy.Settings.sectionNotifications)
+                }
+
                 // MARK: - Card-style rows (UI examples)
 
                 Section {
