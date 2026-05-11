@@ -133,6 +133,7 @@ enum HistoryRecordService {
         durationMs: Double,
         embedVisited8x8BlockCount: Int? = nil,
         embedSmoothSkipped8x8BlockCount: Int? = nil,
+        embedTextureVarianceThreshold: Double? = nil,
         thumbnailJPEGQuality: CGFloat = 0.5
     ) -> WatermarkHistoryRecord {
         let dims = pixelWidthHeight(of: sourceImageForThumbnail)
@@ -156,7 +157,8 @@ enum HistoryRecordService {
                 processingDurationMs: durationMs,
                 syncMatchCount: nil,
                 embedVisited8x8BlockCount: embedVisited8x8BlockCount,
-                embedSmoothSkipped8x8BlockCount: embedSmoothSkipped8x8BlockCount
+                embedSmoothSkipped8x8BlockCount: embedSmoothSkipped8x8BlockCount,
+                embedTextureVarianceThreshold: embedTextureVarianceThreshold
             )
         }
         return WatermarkHistoryRecord(
@@ -172,7 +174,8 @@ enum HistoryRecordService {
             processingDurationMs: durationMs,
             syncMatchCount: nil,
             embedVisited8x8BlockCount: embedVisited8x8BlockCount,
-            embedSmoothSkipped8x8BlockCount: embedSmoothSkipped8x8BlockCount
+            embedSmoothSkipped8x8BlockCount: embedSmoothSkipped8x8BlockCount,
+            embedTextureVarianceThreshold: embedTextureVarianceThreshold
         )
     }
 

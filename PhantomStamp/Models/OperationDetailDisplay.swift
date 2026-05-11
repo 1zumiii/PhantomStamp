@@ -51,6 +51,7 @@ struct OperationDetailDisplay {
     var syncMatchCount: Int?
     var embedVisited8x8BlockCount: Int?
     var embedSmoothSkipped8x8BlockCount: Int?
+    var embedTextureVarianceThreshold: Double?
     var extractGridOffsetXPx: Int?
     var extractGridOffsetYPx: Int?
     var extractMajoritySyncBits: Int?
@@ -74,6 +75,7 @@ struct OperationDetailDisplay {
         syncMatchCount: Int? = nil,
         embedVisited8x8BlockCount: Int? = nil,
         embedSmoothSkipped8x8BlockCount: Int? = nil,
+        embedTextureVarianceThreshold: Double? = nil,
         extractGridOffsetXPx: Int? = nil,
         extractGridOffsetYPx: Int? = nil,
         extractMajoritySyncBits: Int? = nil,
@@ -95,6 +97,7 @@ struct OperationDetailDisplay {
         self.syncMatchCount = syncMatchCount
         self.embedVisited8x8BlockCount = embedVisited8x8BlockCount
         self.embedSmoothSkipped8x8BlockCount = embedSmoothSkipped8x8BlockCount
+        self.embedTextureVarianceThreshold = embedTextureVarianceThreshold
         self.extractGridOffsetXPx = extractGridOffsetXPx
         self.extractGridOffsetYPx = extractGridOffsetYPx
         self.extractMajoritySyncBits = extractMajoritySyncBits
@@ -146,6 +149,7 @@ extension OperationDetailDisplay {
             syncMatchCount: nil,
             embedVisited8x8BlockCount: nil,
             embedSmoothSkipped8x8BlockCount: nil,
+            embedTextureVarianceThreshold: nil,
             extractGridOffsetXPx: nil,
             extractGridOffsetYPx: nil,
             extractMajoritySyncBits: nil,
@@ -176,6 +180,7 @@ extension OperationDetailDisplay {
             syncMatchCount: record.syncMatchCount,
             embedVisited8x8BlockCount: record.embedVisited8x8BlockCount,
             embedSmoothSkipped8x8BlockCount: record.embedSmoothSkipped8x8BlockCount,
+            embedTextureVarianceThreshold: record.embedTextureVarianceThreshold,
             extractGridOffsetXPx: record.extractGridOffsetXPx,
             extractGridOffsetYPx: record.extractGridOffsetYPx,
             extractMajoritySyncBits: record.extractMajoritySyncBits,

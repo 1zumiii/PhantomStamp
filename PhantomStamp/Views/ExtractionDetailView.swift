@@ -285,7 +285,8 @@ struct ExtractionDetailView: View {
     private var embedDiagnosticsContent: some View {
         let visited = display.embedVisited8x8BlockCount
         let skipped = display.embedSmoothSkipped8x8BlockCount
-        if visited == nil, skipped == nil {
+        let thr = display.embedTextureVarianceThreshold
+        if visited == nil, skipped == nil, thr == nil {
             EmptyView()
         } else {
             VStack(alignment: .leading, spacing: 12) {
@@ -293,6 +294,13 @@ struct ExtractionDetailView: View {
                     .font(.caption.weight(.semibold))
                     .foregroundStyle(.secondary)
 
+                if let t = thr {
+                    metricCard(
+                        title: "Texture variance threshold",
+                        value: String(format: "%.1f", t),
+                        systemImage: "dial.low"
+                    )
+                }
                 if let v = visited {
                     metricCard(title: "8×8 blocks scanned", value: "\(v)", systemImage: "square.grid.3x3")
                 }

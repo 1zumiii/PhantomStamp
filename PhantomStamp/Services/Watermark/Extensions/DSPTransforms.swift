@@ -13,7 +13,7 @@ extension WatermarkService {
     ///
     /// - Note: This uses population variance (divide by N=64), which is what we typically want
     ///   for block activity/energy heuristics in DSP pipelines.
-    func calculateVariance(_ block: Matrix8x8) -> Float {
+    nonisolated func calculateVariance(_ block: Matrix8x8) -> Float {
         // Population variance: Var(X) = E[X^2] - (E[X])^2
         var mean: Float = 0
         var meanSquare: Float = 0
@@ -41,7 +41,7 @@ extension WatermarkService {
     ///   \]
     ///
     ///   All multiplications are done via `vDSP_mmul` (vectorized / Accelerate-optimized).
-    func performDCT(_ block: Matrix8x8) -> Matrix8x8 {
+    nonisolated func performDCT(_ block: Matrix8x8) -> Matrix8x8 {
         var buf = block.values
         DCT8x8vDSP.apply2DDCTInPlace(&buf)
         return Matrix8x8(values: buf)
@@ -54,7 +54,7 @@ extension WatermarkService {
     /// \[
     ///   X = C^T \cdot F \cdot C
     /// \]
-    func performIDCT(_ freqBlock: Matrix8x8) -> Matrix8x8 {
+    nonisolated func performIDCT(_ freqBlock: Matrix8x8) -> Matrix8x8 {
         var buf = freqBlock.values
         DCT8x8vDSP.apply2DIDCTInPlace(&buf)
         return Matrix8x8(values: buf)

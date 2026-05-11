@@ -12,7 +12,7 @@ extension WatermarkService {
     // ==========================================
     // Strip embedding
     // ==========================================
-    func processSingleStripForEmbedding(strip: ImageStrip, macroblock: Macroblock2D) -> (strip: ImageStrip, visited8x8Blocks: Int, smoothSkipped8x8Blocks: Int) {
+    nonisolated func processSingleStripForEmbedding(strip: ImageStrip, macroblock: Macroblock2D, thresholdSmooth: Float) -> (strip: ImageStrip, visited8x8Blocks: Int, smoothSkipped8x8Blocks: Int) {
         var resultStrip = strip
         var visited8x8Blocks = 0
         var smoothSkipped8x8Blocks = 0
@@ -35,14 +35,6 @@ extension WatermarkService {
                 // Previously we skipped low-variance blocks which can leave some macro-cells
                 // under-embedded, making extraction bits too noisy.
                 // let thresholdSmooth: Float = 20.0
-                let thresholdSmooth: Float = -1.0
-                if variance < thresholdSmooth {
-                    smoothSkipped8x8Blocks += 1
-                    continue
-                }
-
-                var freqBlock = performDCT(pixelBlock)
-
                 let imageX = blockX + strip.globalXOffset
                 let imageY = blockY + strip.globalYOffset
                 let mx = imageX / Matrix8x8.side
@@ -51,6 +43,19 @@ extension WatermarkService {
                 let iy = (macroblock.bitsHigh > 0) ? (my % macroblock.bitsHigh) : 0
                 let tileIndex = iy * max(1, macroblock.bitsWide) + ix
                 let targetBit = macroblock.getBitAt(imageX: imageX, imageY: imageY)
+
+                if variance < thresholdSmooth {
+                    // Zero-energy embed on smooth blocks:
+                    // - logically occupies the macro-cell (bit index is still determined by position),
+                    // - physically keeps this 8×8 tile unchanged so we don't inject visible artifacts.
+                    // The extractor will still read a noisy bit here; majority voting + FEC are expected
+                    // to recover the canonical macro-tile thanks to full-image repetition.
+                    smoothSkipped8x8Blocks += 1
+                    resultStrip.write8x8Block(pixelBlock, x: blockX, y: blockY)
+                    continue
+                }
+
+                var freqBlock = performDCT(pixelBlock)
 
                 // JPEG compression tends to destroy small mid-frequency differences first.
                 // Make the sync + length header cells significantly stronger than the rest.
@@ -73,7 +78,7 @@ extension WatermarkService {
     }
 
     /// Embeds one payload bit into the mid-frequency band of an 8×8 DCT block.
-    func embedBitIntoFrequencies(_ freqBlock: inout Matrix8x8, bit: Int, strength: Float = 1.45) {
+    nonisolated func embedBitIntoFrequencies(_ freqBlock: inout Matrix8x8, bit: Int, strength: Float = 1.45) {
         let p1 = (u: 3, v: 4)
         let p2 = (u: 4, v: 3)
 
@@ -111,7 +116,7 @@ extension WatermarkService {
     }
 
     /// Extracts one payload bit from the mid-frequency band of an 8×8 DCT block.
-    func extractBitFromFrequencies(_ freqBlock: Matrix8x8) -> Int {
+    nonisolated func extractBitFromFrequencies(_ freqBlock: Matrix8x8) -> Int {
         let p1 = (u: 3, v: 4)
         let p2 = (u: 4, v: 3)
         let absA = abs(freqBlock[p1.u, p1.v])
@@ -119,7 +124,7 @@ extension WatermarkService {
         return absA >= absB ? 1 : 0
     }
 
-    private func adaptiveQuantizationStep(for freqBlock: Matrix8x8) -> Float {
+    nonisolated private func adaptiveQuantizationStep(for freqBlock: Matrix8x8) -> Float {
         var sumAbs: Float = 0
         for u in 0..<Matrix8x8.side {
             for v in 0..<Matrix8x8.side {
@@ -133,7 +138,7 @@ extension WatermarkService {
         return max(9.0, min(18.0, q))
     }
 
-    private func applyMagnitude(_ magnitude: Float, keepingSignOf value: Float) -> Float {
+    nonisolated private func applyMagnitude(_ magnitude: Float, keepingSignOf value: Float) -> Float {
         let m = max(0, magnitude)
         return value < 0 ? -m : m
     }

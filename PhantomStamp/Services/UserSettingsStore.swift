@@ -76,6 +76,9 @@ final class UserSettingsStore {
     @ObservationIgnored
     private var _saveToPhotos: AppUserDefault<Bool>
 
+    @ObservationIgnored
+    private var _textureVarianceThreshold: AppUserDefault<Double>
+
     var defaultWatermarkText: String {
         get {
             access(keyPath: \.defaultWatermarkText)
@@ -124,6 +127,20 @@ final class UserSettingsStore {
         }
     }
 
+    /// Controls how aggressively the embedder avoids modifying smooth (low-variance) 8×8 blocks.
+    /// Higher values keep flat areas pristine but reduce redundancy (may hurt extraction on very smooth images).
+    var textureVarianceThreshold: Double {
+        get {
+            access(keyPath: \.textureVarianceThreshold)
+            return _textureVarianceThreshold.wrappedValue
+        }
+        set {
+            withMutation(keyPath: \.textureVarianceThreshold) {
+                _textureVarianceThreshold.wrappedValue = newValue
+            }
+        }
+    }
+
     // MARK: - Init
 
     init(defaults: UserDefaults = .standard) {
@@ -163,6 +180,12 @@ final class UserSettingsStore {
         _saveToPhotos = AppUserDefault(
             key: AppConstants.UserDefaultsKey.saveToPhotos,
             defaultValue: AppConstants.SettingsDefault.saveToPhotos,
+            defaults: defaults
+        )
+
+        _textureVarianceThreshold = AppUserDefault(
+            key: AppConstants.UserDefaultsKey.textureVarianceThreshold,
+            defaultValue: AppConstants.SettingsDefault.textureVarianceThreshold,
             defaults: defaults
         )
     }

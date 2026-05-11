@@ -17,6 +17,8 @@ struct WatermarkInsertView: View {
     @State private var showOverflowSheet = false
     @FocusState private var isPayloadFocused: Bool
     @State private var lastAppliedDefaultPayload: String?
+    @State private var isAdvancedOptionsExpanded: Bool = false
+    @State private var showAdvancedOptionsInfo: Bool = false
 
     private let thumbnailStripMaxVisible = 6
 
@@ -33,6 +35,7 @@ struct WatermarkInsertView: View {
                     header
                     uploadCard
                     inputCard
+                    advancedOptionsCard
                     Spacer(minLength: 12)
                 }
                 .padding(.horizontal, 20)
@@ -424,6 +427,122 @@ struct WatermarkInsertView: View {
             ToolbarItemGroup(placement: .keyboard) {
                 Spacer()
                 Button("Done") { isPayloadFocused = false }
+            }
+        }
+    }
+
+    private var advancedOptionsCard: some View {
+        let shape = RoundedRectangle(cornerRadius: 18, style: .continuous)
+        let thresholdBinding = Binding(
+            get: { settingsStore.textureVarianceThreshold },
+            set: { settingsStore.textureVarianceThreshold = min(max($0, 0.0), 100.0) }
+        )
+
+        return VStack(alignment: .leading, spacing: 12) {
+            DisclosureGroup(isExpanded: $isAdvancedOptionsExpanded) {
+                VStack(alignment: .leading, spacing: 12) {
+                    HStack(alignment: .firstTextBaseline) {
+                        Text("Texture Variance Threshold")
+                            .font(.subheadline.weight(.semibold))
+                            .foregroundStyle(.primary)
+                        Spacer()
+                        Text("\(Int(settingsStore.textureVarianceThreshold.rounded()))")
+                            .font(.caption.monospacedDigit().weight(.semibold))
+                            .foregroundStyle(.secondary)
+                    }
+
+                    Slider(value: thresholdBinding, in: 0...100, step: 1)
+                        .tint(Color.orange)
+
+                    Text("Controls how aggressively the algorithm avoids embedding data in smooth areas. Higher values prioritize pristine visual quality in flat areas (like skies), while lower values maximize watermark redundancy and survival rate.")
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
+                        .fixedSize(horizontal: false, vertical: true)
+
+                    Button {
+                        showAdvancedOptionsInfo = true
+                    } label: {
+                        HStack(spacing: 8) {
+                            Image(systemName: "info.circle")
+                                .font(.subheadline.weight(.semibold))
+                            Text("Texture reference guide")
+                                .font(.subheadline.weight(.semibold))
+                        }
+                        .foregroundStyle(Color.accentColor)
+                    }
+                    .buttonStyle(.plain)
+                }
+                .padding(.top, 6)
+            } label: {
+                HStack(spacing: 10) {
+                    Label("Advanced options", systemImage: "slider.horizontal.3")
+                        .font(.subheadline.weight(.semibold))
+                        .foregroundStyle(.secondary)
+                    Spacer()
+                }
+            }
+        }
+        .padding(18)
+        .background { shape.fill(Color(uiColor: .secondarySystemGroupedBackground)) }
+        .overlay { shape.strokeBorder(Color.primary.opacity(0.05), lineWidth: 1) }
+        .sheet(isPresented: $showAdvancedOptionsInfo) {
+            TextureReferenceGuideSheet()
+                .presentationDetents([.medium, .large])
+                .presentationDragIndicator(.visible)
+        }
+    }
+
+    private struct TextureReferenceGuideSheet: View {
+        @Environment(\.dismiss) private var dismiss
+
+        var body: some View {
+            NavigationStack {
+                ScrollView {
+                    VStack(alignment: .leading, spacing: 14) {
+                        Text("Texture reference guide")
+                            .font(.title3.weight(.semibold))
+                            .padding(.top, 4)
+
+                        guideBlock(
+                            title: "0–10 (Aggressive / Maximum Robustness)",
+                            body: "Think of: clear blue skies, flat painted walls, or pure white paper. Embeds almost everywhere for maximum survival, but faint noise (banding) might be visible in completely smooth areas."
+                        )
+                        guideBlock(
+                            title: "15–30 (Balanced / Recommended)",
+                            body: "Think of: human skin, soft clouds, or gentle shadows. Skips only perfectly flat regions while keeping strong redundancy."
+                        )
+                        guideBlock(
+                            title: "50–100 (Conservative / Maximum Invisibility)",
+                            body: "Think of: dense foliage, tree bark, brick walls, or pet fur. Extremely subtle, but may fail on mostly smooth photos due to too few embeddable blocks."
+                        )
+                    }
+                    .padding(.horizontal, 20)
+                    .padding(.bottom, 18)
+                }
+                .background(Color(uiColor: .systemGroupedBackground))
+                .toolbar {
+                    ToolbarItem(placement: .topBarTrailing) {
+                        Button("Done") { dismiss() }
+                            .font(.subheadline.weight(.semibold))
+                    }
+                }
+            }
+        }
+
+        private func guideBlock(title: String, body: String) -> some View {
+            VStack(alignment: .leading, spacing: 8) {
+                Text(title)
+                    .font(.subheadline.weight(.semibold))
+                Text(body)
+                    .font(.subheadline)
+                    .foregroundStyle(.secondary)
+                    .fixedSize(horizontal: false, vertical: true)
+            }
+            .frame(maxWidth: .infinity, alignment: .leading)
+            .padding(14)
+            .background {
+                RoundedRectangle(cornerRadius: 12, style: .continuous)
+                    .fill(Color(uiColor: .secondarySystemGroupedBackground))
             }
         }
     }

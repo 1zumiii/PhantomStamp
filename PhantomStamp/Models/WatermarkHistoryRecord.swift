@@ -61,6 +61,8 @@ final class WatermarkHistoryRecord {
     var embedVisited8x8BlockCount: Int?
     /// Blocks skipped as “too smooth” (variance below threshold) and not modified.
     var embedSmoothSkipped8x8BlockCount: Int?
+    /// The texture-variance threshold used for this embed run.
+    var embedTextureVarianceThreshold: Double?
 
     // MARK: Extract diagnostics (optional)
 
@@ -91,6 +93,7 @@ final class WatermarkHistoryRecord {
         syncMatchCount: Int? = nil,
         embedVisited8x8BlockCount: Int? = nil,
         embedSmoothSkipped8x8BlockCount: Int? = nil,
+        embedTextureVarianceThreshold: Double? = nil,
         extractGridOffsetXPx: Int? = nil,
         extractGridOffsetYPx: Int? = nil,
         extractMajoritySyncBits: Int? = nil,
@@ -113,6 +116,7 @@ final class WatermarkHistoryRecord {
         self.syncMatchCount = syncMatchCount
         self.embedVisited8x8BlockCount = embedVisited8x8BlockCount
         self.embedSmoothSkipped8x8BlockCount = embedSmoothSkipped8x8BlockCount
+        self.embedTextureVarianceThreshold = embedTextureVarianceThreshold
         self.extractGridOffsetXPx = extractGridOffsetXPx
         self.extractGridOffsetYPx = extractGridOffsetYPx
         self.extractMajoritySyncBits = extractMajoritySyncBits

@@ -25,6 +25,9 @@ extension AppConstants {
         static let exportQualityIndex   = "phantomstamp.settings.exportQualityIndex"
         /// Save to Photos toggle (always-on until properly wired to export pipeline).
         static let saveToPhotos         = "phantomstamp.settings.saveToPhotos"
+
+        /// Adaptive texture protection: skip modifying low-variance 8×8 blocks (zero-energy embed).
+        static let textureVarianceThreshold = "phantomstamp.settings.textureVarianceThreshold"
     }
 
     enum SettingsDefault {
@@ -37,5 +40,8 @@ extension AppConstants {
         static let embeddingStrength: Double     = 50
         static let exportQualityIndex: Int       = 1   // 0 = Low, 1 = Medium, 2 = High
         static let saveToPhotos: Bool            = true
+
+        /// Recommended default: subtle protection without killing redundancy.
+        static let textureVarianceThreshold: Double = 2.0
     }
 }

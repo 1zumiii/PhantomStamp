@@ -134,6 +134,9 @@ class WatermarkService: WatermarkServiceProtocol {
         // remaining 30% — reassemble Y + RGB rebuild
 
         let historyStarted = CFAbsoluteTimeGetCurrent()
+        let thresholdSnapshot: Double = await MainActor.run {
+            settingsStore?.textureVarianceThreshold ?? AppConstants.SettingsDefault.textureVarianceThreshold
+        }
 
         do {
             // ==========================================
@@ -189,6 +192,8 @@ class WatermarkService: WatermarkServiceProtocol {
             let stripSpan = stripsEnd - colorEnd
             reportProgress(step: .processingStrips, percentage: colorEnd)
 
+            let thresholdSmooth: Float = Float(thresholdSnapshot)
+
             let stripCount = imageStrips.count
             var embedVisited8x8Blocks = 0
             var embedSmoothSkipped8x8Blocks = 0
@@ -197,7 +202,7 @@ class WatermarkService: WatermarkServiceProtocol {
                     group.addTask {
                         // force memory recycling to prevent OOM silent crash caused by large image slicing computation
                         autoreleasepool {
-                            let out = self.processSingleStripForEmbedding(strip: strip, macroblock: macroblock)
+                            let out = self.processSingleStripForEmbedding(strip: strip, macroblock: macroblock, thresholdSmooth: thresholdSmooth)
                             return (out.strip, out.visited8x8Blocks, out.smoothSkipped8x8Blocks)
                         }
                     }
@@ -252,6 +257,7 @@ class WatermarkService: WatermarkServiceProtocol {
                 error: nil,
                 startedAt: historyStarted,
                 sourceImageName: sourceImageName,
+                embedTextureVarianceThreshold: thresholdSnapshot,
                 embedVisited8x8BlockCount: embedVisited8x8Blocks,
                 embedSmoothSkipped8x8BlockCount: embedSmoothSkipped8x8Blocks
             )
@@ -273,6 +279,7 @@ class WatermarkService: WatermarkServiceProtocol {
                 error: error,
                 startedAt: historyStarted,
                 sourceImageName: sourceImageName,
+                embedTextureVarianceThreshold: thresholdSnapshot,
                 embedVisited8x8BlockCount: nil,
                 embedSmoothSkipped8x8BlockCount: nil
             )
@@ -654,6 +661,7 @@ class WatermarkService: WatermarkServiceProtocol {
         error: Error?,
         startedAt: CFAbsoluteTime,
         sourceImageName: String? = nil,
+        embedTextureVarianceThreshold: Double? = nil,
         embedVisited8x8BlockCount: Int? = nil,
         embedSmoothSkipped8x8BlockCount: Int? = nil
     ) async {
@@ -669,7 +677,8 @@ class WatermarkService: WatermarkServiceProtocol {
             error: error,
             durationMs: durationMs,
             embedVisited8x8BlockCount: embedVisited8x8BlockCount,
-            embedSmoothSkipped8x8BlockCount: embedSmoothSkipped8x8BlockCount
+            embedSmoothSkipped8x8BlockCount: embedSmoothSkipped8x8BlockCount,
+            embedTextureVarianceThreshold: embedTextureVarianceThreshold
         )
         await MainActor.run {
             HistoryRecordService.insertAndSave(record, context: ctx)
