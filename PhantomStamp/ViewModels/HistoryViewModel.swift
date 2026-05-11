@@ -6,9 +6,11 @@
 // holds no persistent state of its own.
 // Marked @MainActor so all @Published updates are delivered on the main thread.
 
+import Combine
 import Foundation
 import SwiftData
-import Combine
+import SwiftUI
+import UIKit
 
 // MARK: - Filter
 
@@ -21,6 +23,13 @@ enum HistoryFilter: String, CaseIterable, Identifiable {
     case failed    = "Failed"
 
     var id: String { rawValue }
+}
+
+/// One dated section in the history list (stable `id` for SwiftUI even if the calendar heading repeats across years).
+struct HistoryRecordSection: Identifiable {
+    let id: String
+    let sectionTitle: String
+    let records: [WatermarkHistoryRecord]
 }
 
 // MARK: - ViewModel
@@ -43,6 +52,18 @@ final class HistoryViewModel: ObservableObject {
     /// Set to a record to trigger a share sheet in the parent view.
     @Published var shareItem: WatermarkHistoryRecord? = nil
 
+    /// When set, the list presents a delete-confirmation alert for that record id.
+    @Published var pendingDeleteRecordId: UUID?
+
+    /// Shown by the save-to-Photos failure alert.
+    @Published var saveErrorMessage: String?
+
+    /// Brief “Saved to Photos” toast after a successful library export.
+    @Published var showSaveSuccessToast: Bool = false
+
+    /// Drives `.sensoryFeedback(.success, trigger:)` from the view on successful save.
+    @Published private(set) var saveSuccessFeedbackTrigger: Int = 0
+
     // MARK: Derived — filtered
 
     /// Records after applying the selected filter.
@@ -63,23 +84,98 @@ final class HistoryViewModel: ObservableObject {
     // MARK: Derived — grouped
 
     /// Filtered records grouped into dated sections, sorted newest-first.
-    /// Returns an ordered array of (sectionTitle, records) pairs so the
-    /// view can render section headers without any formatting logic of its own.
     var groupedRecords: [(key: String, value: [WatermarkHistoryRecord])] {
+        groupedRecordSections.map { (key: $0.sectionTitle, value: $0.records) }
+    }
+
+    /// Same grouping as `groupedRecords` with a stable per-section identifier for `ForEach`.
+    var groupedRecordSections: [HistoryRecordSection] {
         let grouped = Dictionary(grouping: filteredRecords) { record in
             HistoryFormatters.sectionHeader(for: record.timestamp)
         }
 
         return grouped
-            .map { (
-                key: $0.key,
-                value: $0.value.sorted { $0.timestamp > $1.timestamp }
-            )}
+            .map { title, records in
+                let sorted = records.sorted { $0.timestamp > $1.timestamp }
+                let idSeed = sorted.map(\.id.uuidString).sorted().joined(separator: ",")
+                return HistoryRecordSection(
+                    id: "\(title)|\(idSeed)",
+                    sectionTitle: title,
+                    records: sorted
+                )
+            }
             .sorted { lhs, rhs in
-                let lDate = lhs.value.first?.timestamp ?? .distantPast
-                let rDate = rhs.value.first?.timestamp ?? .distantPast
+                let lDate = lhs.records.first?.timestamp ?? .distantPast
+                let rDate = rhs.records.first?.timestamp ?? .distantPast
                 return lDate > rDate
             }
+    }
+
+    // MARK: - Single-entry delete confirmation
+
+    var deleteEntryConfirmationMessage: String {
+        guard let id = pendingDeleteRecordId,
+              let record = records.first(where: { $0.id == id }) else {
+            return "This cannot be undone."
+        }
+        let name = OperationDetailDisplay.historyListFileName(for: record)
+        return "“\(name)” will be removed from history on this device. This cannot be undone."
+    }
+
+    func requestDeleteConfirmation(for record: WatermarkHistoryRecord) {
+        pendingDeleteRecordId = record.id
+    }
+
+    func cancelPendingDelete() {
+        pendingDeleteRecordId = nil
+    }
+
+    /// Performs delete after user confirms in the alert; clears pending state.
+    func confirmPendingDelete(context: ModelContext) {
+        guard let id = pendingDeleteRecordId,
+              let record = records.first(where: { $0.id == id }) else {
+            pendingDeleteRecordId = nil
+            return
+        }
+        delete(record: record, context: context)
+        pendingDeleteRecordId = nil
+    }
+
+    func dismissSaveError() {
+        saveErrorMessage = nil
+    }
+
+    // MARK: - Save to Photos
+
+    func saveRecordToPhotoLibrary(_ record: WatermarkHistoryRecord) {
+        Task { @MainActor in
+            await PhotoLibraryExporter.preflightAddOnlyAuthorizationIfNeeded()
+            let data = record.detailPreviewData ?? record.thumbnailData
+            guard let data, let image = UIImage(data: data) else {
+                saveErrorMessage = "There is no preview image to save."
+                return
+            }
+            do {
+                try await PhotoLibraryExporter.saveToPhotoLibrary(image)
+                UINotificationFeedbackGenerator().notificationOccurred(.success)
+                saveSuccessFeedbackTrigger += 1
+                withAnimation { showSaveSuccessToast = true }
+                Task { @MainActor in
+                    try? await Task.sleep(for: .seconds(2.2))
+                    withAnimation { showSaveSuccessToast = false }
+                }
+            } catch {
+                saveErrorMessage = error.localizedDescription
+            }
+        }
+    }
+
+    /// Label for the list card confidence hint (sync match bands).
+    static func confidenceLabel(for record: WatermarkHistoryRecord) -> String {
+        guard let sync = record.syncMatchCount else { return "High" }
+        if sync > 28 { return "High" }
+        if sync > 16 { return "Medium" }
+        return "Low"
     }
 
     // MARK: Intents

@@ -16,8 +16,8 @@
 //  4. Load rows for a list: `try HistoryRecordService.fetchRecords(context: modelContext, limit: 100)`.
 //  5. Delete one row: `try HistoryRecordService.deleteRecord(id: recordId, context: modelContext)`.
 //
-//  Thumbnails must stay small: use `makeThumbnailData(from:)` so list queries stay fast; the model stores
-//  JPEG bytes with `@Attribute(.externalStorage)` for large blobs.
+//  List thumbnails stay small (`thumbnailData`); detail hero uses optional `detailPreviewData` (larger downscale at save time).
+//  JPEG bytes use `@Attribute(.externalStorage)` for large blobs.
 //
 
 import Foundation
@@ -26,6 +26,9 @@ import UIKit
 
 @MainActor
 enum HistoryRecordService {
+
+    private static let detailPreviewMaxPixelEdge: CGFloat = 2048
+    private static let detailPreviewJPEGQuality: CGFloat = 0.82
 
     // MARK: - Thumbnail
 
@@ -67,6 +70,10 @@ enum HistoryRecordService {
     static func insertAndSave(_ record: WatermarkHistoryRecord, context: ModelContext) {
         context.insert(record)
         PersistenceService.save(context)
+        NotificationCenter.default.post(
+            name: AppConstants.Notifications.watermarkHistoryRecordsDidChange,
+            object: nil
+        )
     }
 
     // MARK: - Read
@@ -127,6 +134,11 @@ enum HistoryRecordService {
     ) -> WatermarkHistoryRecord {
         let dims = pixelWidthHeight(of: sourceImageForThumbnail)
         let thumb = makeThumbnailData(from: sourceImageForThumbnail, jpegQuality: thumbnailJPEGQuality)
+        let detail = makeThumbnailData(
+            from: sourceImageForThumbnail,
+            maxPixelEdge: detailPreviewMaxPixelEdge,
+            jpegQuality: detailPreviewJPEGQuality
+        )
         if succeeded {
             return WatermarkHistoryRecord(
                 operationType: .embed,
@@ -134,6 +146,7 @@ enum HistoryRecordService {
                 payload: payloadText,
                 errorMessage: nil,
                 thumbnailData: thumb,
+                detailPreviewData: detail,
                 imageWidth: dims.width,
                 imageHeight: dims.height,
                 processingDurationMs: durationMs,
@@ -146,6 +159,7 @@ enum HistoryRecordService {
             payload: payloadText,
             errorMessage: error?.localizedDescription,
             thumbnailData: thumb,
+            detailPreviewData: detail,
             imageWidth: dims.width,
             imageHeight: dims.height,
             processingDurationMs: durationMs,
@@ -165,6 +179,11 @@ enum HistoryRecordService {
     ) -> WatermarkHistoryRecord {
         let dims = pixelWidthHeight(of: sourceImage)
         let thumb = makeThumbnailData(from: sourceImage, jpegQuality: thumbnailJPEGQuality)
+        let detail = makeThumbnailData(
+            from: sourceImage,
+            maxPixelEdge: detailPreviewMaxPixelEdge,
+            jpegQuality: detailPreviewJPEGQuality
+        )
         if succeeded {
             return WatermarkHistoryRecord(
                 operationType: .extract,
@@ -172,6 +191,7 @@ enum HistoryRecordService {
                 payload: extractedText,
                 errorMessage: nil,
                 thumbnailData: thumb,
+                detailPreviewData: detail,
                 imageWidth: dims.width,
                 imageHeight: dims.height,
                 processingDurationMs: durationMs,
@@ -184,6 +204,7 @@ enum HistoryRecordService {
             payload: nil,
             errorMessage: error?.localizedDescription,
             thumbnailData: thumb,
+            detailPreviewData: detail,
             imageWidth: dims.width,
             imageHeight: dims.height,
             processingDurationMs: durationMs,

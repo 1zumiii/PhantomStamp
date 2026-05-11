@@ -12,6 +12,7 @@ struct RootView: View {
   @Environment(\.modelContext) private var modelContext
   @State private var settingsStore = UserSettingsStore()
   @State private var tab: AnyHashable = AnyHashable("watermark")
+  @State private var historyListRefreshToken = 0
 
   var body: some View {
     let items: [BottomNavItem<AnyHashable>] = [
@@ -38,7 +39,7 @@ struct RootView: View {
         title: AppConstants.Copy.Tab.history,
         systemImage: AppConstants.Symbol.tabHistory
       ) {
-        HistoryView(settingsStore: settingsStore)
+        HistoryView(settingsStore: settingsStore, listRefreshToken: historyListRefreshToken)
       },
       BottomNavItem(
         id: AnyHashable("settings"),
@@ -71,6 +72,11 @@ struct RootView: View {
       guard let svc = watermarkService as? WatermarkService else { return }
       svc.historyModelContext = modelContext
       svc.settingsStore = settingsStore
+    }
+    .onChange(of: tab) { _, newValue in
+      if newValue == AnyHashable("history") {
+        historyListRefreshToken += 1
+      }
     }
   }
 }

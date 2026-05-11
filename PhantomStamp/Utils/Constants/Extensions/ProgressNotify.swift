@@ -24,6 +24,8 @@ extension AppConstants {
         static let demoProgressOverlayDidStart = Notification.Name("DemoProgressOverlayDidStart")
         static let demoProgressOverlayDidEnd = Notification.Name("DemoProgressOverlayDidEnd")
         static let demoProgressDidUpdate = Notification.Name("DemoProgressDidUpdate")
+        /// Posted after a `WatermarkHistoryRecord` is inserted or removed so the History tab can reload.
+        static let watermarkHistoryRecordsDidChange = Notification.Name("WatermarkHistoryRecordsDidChange")
     }
     
     // Fixed all possible operation stages
