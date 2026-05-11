@@ -34,6 +34,7 @@ extension WatermarkService {
                 // Embed as many blocks as possible to maximize redundancy for majority voting.
                 // Previously we skipped low-variance blocks which can leave some macro-cells
                 // under-embedded, making extraction bits too noisy.
+                // let thresholdSmooth: Float = 20.0
                 let thresholdSmooth: Float = -1.0
                 if variance < thresholdSmooth {
                     smoothSkipped8x8Blocks += 1

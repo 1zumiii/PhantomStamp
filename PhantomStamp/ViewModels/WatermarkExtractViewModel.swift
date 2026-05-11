@@ -87,7 +87,12 @@ final class WatermarkExtractViewModel {
             let image = indexImagePairs[0].image
             let t0 = CFAbsoluteTimeGetCurrent()
             do {
-                let extractedText = try await watermarkService.extractWatermark(from: image)
+                let extractedText: String
+                if let svc = watermarkService as? WatermarkService {
+                    extractedText = try await svc.extractWatermark(from: image, sourceImageName: records[index].imageName)
+                } else {
+                    extractedText = try await watermarkService.extractWatermark(from: image)
+                }
                 records[index].status = .extracted
                 records[index].message = extractedText
                 records[index].confidence = nil
@@ -104,7 +109,13 @@ final class WatermarkExtractViewModel {
         }
 
         let images = indexImagePairs.map(\.image)
-        let results = await watermarkService.extractWatermarkBestEffort(from: images)
+        let names = indexImagePairs.map { records[$0.index].imageName }
+        let results: [String?]
+        if let svc = watermarkService as? WatermarkService {
+            results = await svc.extractWatermarkBestEffort(from: images, sourceImageNames: names)
+        } else {
+            results = await watermarkService.extractWatermarkBestEffort(from: images)
+        }
 
         for pairIndex in results.indices {
             let recordIndex = indexImagePairs[pairIndex].index

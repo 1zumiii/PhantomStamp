@@ -84,12 +84,21 @@ class WatermarkService: WatermarkServiceProtocol {
     // Embedding Watermark
     // ==========================================
     func embedWatermark(into image: UIImage, text: String) async throws -> UIImage {
-        try await embedWatermark(into: image, text: text, shouldHideProgressbar: true)
+        try await embedWatermark(into: image, text: text, sourceImageName: nil, shouldHideProgressbar: true)
+    }
+
+    func embedWatermark(into image: UIImage, text: String, sourceImageName: String?) async throws -> UIImage {
+        try await embedWatermark(into: image, text: text, sourceImageName: sourceImageName, shouldHideProgressbar: true)
     }
 
     /// Embed watermark into a single image.
     /// - Parameter shouldHideProgressbar: If false, the overlay will stay visible (useful for multi-file sequential processing).
     func embedWatermark(into image: UIImage, text: String, shouldHideProgressbar: Bool = true) async throws -> UIImage {
+        try await embedWatermark(into: image, text: text, sourceImageName: nil, shouldHideProgressbar: shouldHideProgressbar)
+    }
+
+    /// Embed watermark into a single image with source file name for history display.
+    func embedWatermark(into image: UIImage, text: String, sourceImageName: String?, shouldHideProgressbar: Bool = true) async throws -> UIImage {
         #if DEBUG
         // Debug-only: prints internal data-layer checks. Disable by default to avoid noisy logs in demos.
         // debugTestDataLayer()
@@ -242,6 +251,7 @@ class WatermarkService: WatermarkServiceProtocol {
                 outputImage: finalImage,
                 error: nil,
                 startedAt: historyStarted,
+                sourceImageName: sourceImageName,
                 embedVisited8x8BlockCount: embedVisited8x8Blocks,
                 embedSmoothSkipped8x8BlockCount: embedSmoothSkipped8x8Blocks
             )
@@ -262,6 +272,7 @@ class WatermarkService: WatermarkServiceProtocol {
                 outputImage: nil,
                 error: error,
                 startedAt: historyStarted,
+                sourceImageName: sourceImageName,
                 embedVisited8x8BlockCount: nil,
                 embedSmoothSkipped8x8BlockCount: nil
             )
@@ -278,12 +289,21 @@ class WatermarkService: WatermarkServiceProtocol {
     // Extract Watermark
     // ==========================================
     func extractWatermark(from image: UIImage) async throws -> String {
-        try await extractWatermark(from: image, shouldHideProgressbar: true)
+        try await extractWatermark(from: image, sourceImageName: nil, shouldHideProgressbar: true)
+    }
+
+    func extractWatermark(from image: UIImage, sourceImageName: String?) async throws -> String {
+        try await extractWatermark(from: image, sourceImageName: sourceImageName, shouldHideProgressbar: true)
     }
 
     /// Extract watermark from a single image.
     /// - Parameter shouldHideProgressbar: If false, the overlay will stay visible (useful for multi-file sequential processing).
     func extractWatermark(from image: UIImage, shouldHideProgressbar: Bool = true) async throws -> String {
+        try await extractWatermark(from: image, sourceImageName: nil, shouldHideProgressbar: shouldHideProgressbar)
+    }
+
+    /// Extract watermark from a single image with source file name for history display.
+    func extractWatermark(from image: UIImage, sourceImageName: String?, shouldHideProgressbar: Bool = true) async throws -> String {
         if shouldHideProgressbar {
             NotificationCenter.default.post(name: AppConstants.Notifications.watermarkProgressOverlayDidStart, object: nil)
         }
@@ -418,6 +438,7 @@ class WatermarkService: WatermarkServiceProtocol {
                     await persistExtractHistoryIfNeeded(
                         succeeded: true,
                         image: image,
+                        sourceImageName: sourceImageName,
                         extractedText: correctedText,
                         error: nil,
                         startedAt: historyStarted,
@@ -446,6 +467,7 @@ class WatermarkService: WatermarkServiceProtocol {
             await persistExtractHistoryIfNeeded(
                 succeeded: false,
                 image: image,
+                sourceImageName: sourceImageName,
                 extractedText: nil,
                 error: error,
                 startedAt: historyStarted,
@@ -466,6 +488,10 @@ class WatermarkService: WatermarkServiceProtocol {
 
     /// Sequentially embed watermark into multiple images (no outer concurrency).
     func embedWatermark(into images: [UIImage], text: String) async throws -> [UIImage] {
+        try await embedWatermark(into: images, text: text, sourceImageNames: nil)
+    }
+
+    func embedWatermark(into images: [UIImage], text: String, sourceImageNames: [String]?) async throws -> [UIImage] {
         guard !images.isEmpty else { return [] }
 
         batchUserNotificationDepth += 1
@@ -488,7 +514,8 @@ class WatermarkService: WatermarkServiceProtocol {
                     object: nil,
                     userInfo: ["payload": BatchProgressPayload(completed: idx, total: images.count, current: idx)]
                 )
-                let watermarked = try await embedWatermark(into: img, text: text, shouldHideProgressbar: false)
+                let name = sourceImageNames?.indices.contains(idx) == true ? sourceImageNames?[idx] : nil
+                let watermarked = try await embedWatermark(into: img, text: text, sourceImageName: name, shouldHideProgressbar: false)
                 outputs.append(watermarked)
                 // Pace batch: wait until the per-file progress bar is fully displayed.
                 _ = await awaitPerFileProgressDrain(current: idx)
@@ -516,6 +543,10 @@ class WatermarkService: WatermarkServiceProtocol {
 
     /// Sequentially extract watermark from multiple images (no outer concurrency).
     func extractWatermark(from images: [UIImage]) async throws -> [String] {
+        try await extractWatermark(from: images, sourceImageNames: nil)
+    }
+
+    func extractWatermark(from images: [UIImage], sourceImageNames: [String]?) async throws -> [String] {
         guard !images.isEmpty else { return [] }
 
         batchUserNotificationDepth += 1
@@ -538,7 +569,8 @@ class WatermarkService: WatermarkServiceProtocol {
                     object: nil,
                     userInfo: ["payload": BatchProgressPayload(completed: idx, total: images.count, current: idx)]
                 )
-                let extracted = try await extractWatermark(from: img, shouldHideProgressbar: false)
+                let name = sourceImageNames?.indices.contains(idx) == true ? sourceImageNames?[idx] : nil
+                let extracted = try await extractWatermark(from: img, sourceImageName: name, shouldHideProgressbar: false)
                 outputs.append(extracted)
                 _ = await awaitPerFileProgressDrain(current: idx)
                 NotificationCenter.default.post(
@@ -566,6 +598,10 @@ class WatermarkService: WatermarkServiceProtocol {
     /// Sequentially extract watermark from multiple images (best effort).
     /// - Returns: `[String?]` aligned with input order; failures produce `nil` but do not stop the batch.
     func extractWatermarkBestEffort(from images: [UIImage]) async -> [String?] {
+        await extractWatermarkBestEffort(from: images, sourceImageNames: nil)
+    }
+
+    func extractWatermarkBestEffort(from images: [UIImage], sourceImageNames: [String]?) async -> [String?] {
         guard !images.isEmpty else { return [] }
 
         batchUserNotificationDepth += 1
@@ -587,7 +623,8 @@ class WatermarkService: WatermarkServiceProtocol {
                 userInfo: ["payload": BatchProgressPayload(completed: idx, total: images.count, current: idx)]
             )
             do {
-                let extracted = try await extractWatermark(from: img, shouldHideProgressbar: false)
+                let name = sourceImageNames?.indices.contains(idx) == true ? sourceImageNames?[idx] : nil
+                let extracted = try await extractWatermark(from: img, sourceImageName: name, shouldHideProgressbar: false)
                 outputs[idx] = extracted
             } catch {
                 outputs[idx] = nil
@@ -616,6 +653,7 @@ class WatermarkService: WatermarkServiceProtocol {
         outputImage: UIImage?,
         error: Error?,
         startedAt: CFAbsoluteTime,
+        sourceImageName: String? = nil,
         embedVisited8x8BlockCount: Int? = nil,
         embedSmoothSkipped8x8BlockCount: Int? = nil
     ) async {
@@ -627,6 +665,7 @@ class WatermarkService: WatermarkServiceProtocol {
             succeeded: succeeded,
             payloadText: text,
             sourceImageForThumbnail: thumbnailSource,
+            sourceImageName: sourceImageName,
             error: error,
             durationMs: durationMs,
             embedVisited8x8BlockCount: embedVisited8x8BlockCount,
@@ -640,6 +679,7 @@ class WatermarkService: WatermarkServiceProtocol {
     private func persistExtractHistoryIfNeeded(
         succeeded: Bool,
         image: UIImage,
+        sourceImageName: String? = nil,
         extractedText: String?,
         error: Error?,
         startedAt: CFAbsoluteTime,
@@ -660,6 +700,7 @@ class WatermarkService: WatermarkServiceProtocol {
             succeeded: succeeded,
             extractedText: extractedText,
             sourceImage: image,
+            sourceImageName: sourceImageName,
             error: error,
             durationMs: durationMs,
             syncMatchCount: work?.offsetScanBestSyncBits,

@@ -92,16 +92,26 @@ final class WatermarkInsertViewModel {
         defer { isEmbedding = false }
 
         let images = selectedPhotoItems.map(\.image)
+        let names = selectedPhotoItems.map(\.displayName)
 
         do {
             let outputs: [UIImage]
             if images.count == 1 {
                 // Single-file API drives `watermarkProgress*` notifications only.
-                let one = try await watermarkService.embedWatermark(into: images[0], text: text)
-                outputs = [one]
+                if let svc = watermarkService as? WatermarkService {
+                    let one = try await svc.embedWatermark(into: images[0], text: text, sourceImageName: names.first)
+                    outputs = [one]
+                } else {
+                    let one = try await watermarkService.embedWatermark(into: images[0], text: text)
+                    outputs = [one]
+                }
             } else {
                 // Batch API posts `watermarkBatchProgress` + per-file drain semantics.
-                outputs = try await watermarkService.embedWatermark(into: images, text: text)
+                if let svc = watermarkService as? WatermarkService {
+                    outputs = try await svc.embedWatermark(into: images, text: text, sourceImageNames: names)
+                } else {
+                    outputs = try await watermarkService.embedWatermark(into: images, text: text)
+                }
             }
 
             let shouldSaveToPhotos: Bool = {

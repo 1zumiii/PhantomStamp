@@ -45,6 +45,8 @@ final class WatermarkHistoryRecord {
     /// Larger JPEG for the history detail hero (downscaled from the source at save time; not the raw camera file).
     /// Older rows may have `nil` here and fall back to `thumbnailData`.
     @Attribute(.externalStorage) var detailPreviewData: Data?
+    /// Original file name from picker (e.g. `IMG_0021.jpg`). Optional for older rows.
+    var sourceImageName: String?
     var imageWidth: Int
     var imageHeight: Int
     
@@ -82,6 +84,7 @@ final class WatermarkHistoryRecord {
         errorMessage: String? = nil,
         thumbnailData: Data? = nil,
         detailPreviewData: Data? = nil,
+        sourceImageName: String? = nil,
         imageWidth: Int = 0,
         imageHeight: Int = 0,
         processingDurationMs: Double = 0,
@@ -103,6 +106,7 @@ final class WatermarkHistoryRecord {
         self.errorMessage = errorMessage
         self.thumbnailData = thumbnailData
         self.detailPreviewData = detailPreviewData
+        self.sourceImageName = sourceImageName
         self.imageWidth = imageWidth
         self.imageHeight = imageHeight
         self.processingDurationMs = processingDurationMs

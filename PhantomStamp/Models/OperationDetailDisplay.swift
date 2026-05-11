@@ -188,7 +188,9 @@ extension OperationDetailDisplay {
 
     /// Full synthetic file name for history rows, alerts, and `imageName` (includes extension).
     static func historyListFileName(for record: WatermarkHistoryRecord) -> String {
-        "IMG_\(String(record.id.uuidString.prefix(4))).jpg"
+        let trimmed = record.sourceImageName?.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
+        if !trimmed.isEmpty { return trimmed }
+        return "IMG_\(String(record.id.uuidString.prefix(4))).jpg"
     }
 
     static func historyListTitleBase(for record: WatermarkHistoryRecord) -> String {

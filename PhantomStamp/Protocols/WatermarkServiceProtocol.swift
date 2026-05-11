@@ -24,6 +24,33 @@ protocol WatermarkServiceProtocol {
     func extractWatermarkBestEffort(from images: [UIImage]) async -> [String?]
 }
 
+extension WatermarkServiceProtocol {
+    /// Embed with an optional source file name so history can display the original file name.
+    func embedWatermark(into image: UIImage, text: String, sourceImageName: String?) async throws -> UIImage {
+        try await embedWatermark(into: image, text: text)
+    }
+
+    /// Embed sequentially with aligned optional source file names.
+    func embedWatermark(into images: [UIImage], text: String, sourceImageNames: [String]?) async throws -> [UIImage] {
+        try await embedWatermark(into: images, text: text)
+    }
+
+    /// Extract with an optional source file name so history can display the original file name.
+    func extractWatermark(from image: UIImage, sourceImageName: String?) async throws -> String {
+        try await extractWatermark(from: image)
+    }
+
+    /// Extract sequentially with aligned optional source file names.
+    func extractWatermark(from images: [UIImage], sourceImageNames: [String]?) async throws -> [String] {
+        try await extractWatermark(from: images)
+    }
+
+    /// Best-effort extract with aligned optional source file names.
+    func extractWatermarkBestEffort(from images: [UIImage], sourceImageNames: [String]?) async -> [String?] {
+        await extractWatermarkBestEffort(from: images)
+    }
+}
+
 enum WatermarkError: Error {
     case imageTooSmall
     case extractFailed
