@@ -3,210 +3,289 @@
 //  PhantomStamp
 //
 
+import Combine
 import SwiftData
 import SwiftUI
+import UIKit
 
 struct HistoryView: View {
     @Environment(\.modelContext) private var modelContext
     var settingsStore: UserSettingsStore
+    var listRefreshToken: Int = 0
 
-    @State private var viewModel: HistoryListViewModel?
+    @StateObject private var viewModel = HistoryViewModel()
 
     var body: some View {
         NavigationStack {
-            Group {
-                if let viewModel {
-                    historyList(viewModel: viewModel)
-                } else {
-                    ProgressView()
-                }
+            VStack(spacing: 0) {
+                filterBar
+                historyContent
             }
-            .navigationTitle(AppConstants.Copy.History.navigationTitle)
+            .navigationTitle("History")
             .toolbar {
                 ToolbarItem(placement: .topBarTrailing) {
-                    Button(AppConstants.Copy.History.clearButton) {
-                        viewModel?.clearAll()
+                    Button("Clear all") {
+                        viewModel.showClearConfirmation = true
                     }
-                    .disabled(viewModel == nil || (viewModel?.entries.isEmpty ?? true))
+                    .disabled(viewModel.records.isEmpty)
                 }
             }
-            .task {
-                if viewModel == nil {
-                    let vm = HistoryListViewModel(modelContext: modelContext)
-                    viewModel = vm
-                    try? vm.loadEntries()
+        
+            .alert("Clear all history?", isPresented: $viewModel.showClearConfirmation) {
+                Button("Cancel", role: .cancel) {
+                    viewModel.showClearConfirmation = false
                 }
+                Button("Clear All", role: .destructive) {
+                    viewModel.clearHistory(context: modelContext)
+                }
+            } message: {
+                Text("This removes every saved watermark operation from this device.")
             }
             .onAppear {
-                try? viewModel?.loadEntries()
+                viewModel.loadRecords(context: modelContext)
+            }
+            .onChange(of: listRefreshToken) { _, _ in
+                viewModel.loadRecords(context: modelContext)
+            }
+            .onReceive(NotificationCenter.default.publisher(for: AppConstants.Notifications.watermarkHistoryRecordsDidChange)) { _ in
+                viewModel.loadRecords(context: modelContext)
             }
         }
     }
 
-    @ViewBuilder
-    private func historyList(viewModel: HistoryListViewModel) -> some View {
-        VStack(spacing: 0) {
-            HStack {
-                Button {
-                    printSavedWatermarkRecordsToConsole()
-                } label: {
-                    Label(AppConstants.Copy.History.printWatermarkRecordsButton, systemImage: "doc.text.magnifyingglass")
-                }
-                .labelStyle(.titleAndIcon)
-                Spacer()
-            }
-            .padding(.horizontal, 16)
-            .padding(.vertical, 10)
-            .frame(maxWidth: .infinity)
-            .background(Color(uiColor: .secondarySystemGroupedBackground))
-
-            Group {
-                if viewModel.entries.isEmpty {
-                    ContentUnavailableView(
-                        AppConstants.Copy.History.emptyTitle,
-                        systemImage: AppConstants.Symbol.tabHistory,
-                        description: Text(AppConstants.Copy.History.emptyDescription)
-                    )
-                } else {
-                    List {
-                        ForEach(viewModel.entries) { entry in
-                            NavigationLink {
-                                HistoryEntryDetailView(entry: entry)
-                            } label: {
-                                HistoryEntryCardRow(entry: entry, compact: settingsStore.compactHistoryList)
-                            }
-                            .listRowInsets(EdgeInsets(top: 10, leading: 16, bottom: 10, trailing: 16))
-                            .listRowSeparator(.hidden)
-                            .listRowBackground(Color.clear)
+    private var filterBar: some View {
+        ScrollView(.horizontal, showsIndicators: false) {
+            HStack(spacing: 8) {
+                ForEach(HistoryFilter.allCases) { filter in
+                    let selected = viewModel.selectedFilter == filter
+                    Button {
+                        withAnimation(.snappy) {
+                            viewModel.selectedFilter = filter
                         }
+                    } label: {
+                        Text(filter.rawValue)
+                            .font(.subheadline.weight(.medium))
+                            .padding(.horizontal, 16)
+                            .padding(.vertical, 8)
+                            .background {
+                                Capsule(style: .continuous)
+                                    .fill(selected ? Color.accentColor : Color.clear)
+                            }
+                            .overlay {
+                                Capsule(style: .continuous)
+                                    .strokeBorder(selected ? Color.clear : Color.primary.opacity(0.15), lineWidth: 1)
+                            }
+                            .foregroundStyle(selected ? Color.white : Color.primary.opacity(0.6))
                     }
-                    .listStyle(.plain)
-                    .scrollContentBackground(.hidden)
-                    .background(Color(uiColor: .systemGroupedBackground))
-                }
-            }
-        }
-    }
-
-    /// Debug: prints every persisted `WatermarkHistoryRecord` (Xcode console).
-    private func printSavedWatermarkRecordsToConsole() {
-        do {
-            let records = try HistoryRecordService.fetchRecords(context: modelContext)
-            print("[WatermarkHistoryRecord] total=\(records.count)")
-            for r in records {
-                let thumb = r.thumbnailData?.count ?? 0
-                let sync = r.syncMatchCount.map { String($0) } ?? "nil"
-                print(
-                    """
-                    [WatermarkHistoryRecord] id=\(r.id) ts=\(r.timestamp) op=\(r.operationType.rawValue) status=\(r.status.rawValue) payload=\(r.payload ?? "nil") err=\(r.errorMessage ?? "nil") size=\(r.imageWidth)x\(r.imageHeight) ms=\(r.processingDurationMs) thumbBytes=\(thumb) sync=\(sync)
-                    """
-                )
-            }
-        } catch {
-            print("[WatermarkHistoryRecord] fetch failed: \(error)")
-        }
-    }
-}
-
-// MARK: - Detail
-
-private struct HistoryEntryDetailView: View {
-    let entry: HistoryEntry
-
-    var body: some View {
-        let meta = HistoryRowMeta(entry: entry)
-        ScrollView {
-            VStack(alignment: .leading, spacing: 16) {
-                HStack(spacing: 14) {
-                    HistoryPreviewTile(kind: entry.kind)
-
-                    VStack(alignment: .leading, spacing: 6) {
-                        Text(meta.fileName)
-                            .font(.title3.weight(.semibold))
-                        Text(entry.createdAt, format: .dateTime.year().month().day().hour().minute())
-                            .font(.caption)
-                            .foregroundStyle(.secondary)
-                        Text(entry.kind)
-                            .font(.caption.weight(.semibold))
-                            .foregroundStyle(.secondary)
-                    }
-
-                    Spacer()
-                }
-
-                if let watermarkName = meta.watermarkName {
-                    VStack(alignment: .leading, spacing: 6) {
-                        Text("Watermark")
-                            .font(.caption.weight(.semibold))
-                            .foregroundStyle(.secondary)
-                        Text(watermarkName)
-                            .font(.body.weight(.semibold))
-                    }
-                    .padding(14)
-                    .frame(maxWidth: .infinity, alignment: .leading)
-                    .background {
-                        RoundedRectangle(cornerRadius: 18, style: .continuous)
-                            .fill(Color(uiColor: .secondarySystemGroupedBackground))
-                    }
-                }
-
-                VStack(alignment: .leading, spacing: 6) {
-                    Text("Message")
-                        .font(.caption.weight(.semibold))
-                        .foregroundStyle(.secondary)
-                    Text(entry.message)
-                        .font(.body.monospaced())
-                        .textSelection(.enabled)
-                }
-                .padding(14)
-                .frame(maxWidth: .infinity, alignment: .leading)
-                .background {
-                    RoundedRectangle(cornerRadius: 18, style: .continuous)
-                        .fill(Color(uiColor: .secondarySystemGroupedBackground))
+                    .buttonStyle(.plain)
                 }
             }
             .padding(.horizontal, 20)
-            .padding(.vertical, 12)
         }
+        .frame(maxWidth: .infinity)
         .background(Color(uiColor: .systemGroupedBackground))
-        .navigationTitle("Details")
-        .navigationBarTitleDisplayMode(.inline)
+    }
+
+    @ViewBuilder
+    private var historyContent: some View {
+        Group {
+            if viewModel.filteredRecords.isEmpty {
+                ContentUnavailableView(
+                    AppConstants.Copy.History.emptyTitle,
+                    systemImage: AppConstants.Symbol.tabHistory,
+                    description: Text(AppConstants.Copy.History.emptyDescription)
+                )
+            } else {
+                List {
+                    ForEach(viewModel.groupedRecordSections) { section in
+                        Section {
+                            ForEach(section.records, id: \.id) { record in
+                            
+                                ZStack {
+                                    WatermarkHistoryCardRow(record: record)
+                                    
+                                    NavigationLink {
+                                        ExtractionDetailView(display: OperationDetailDisplay(history: record))
+                                    } label: {
+                                        EmptyView()
+                                    }
+                                    .opacity(0)
+                                }
+                                .listRowInsets(EdgeInsets(top: 8, leading: 20, bottom: 8, trailing: 20))
+                                .listRowSeparator(.hidden)
+                                .listRowBackground(Color.clear)
+                                .swipeActions(edge: .trailing, allowsFullSwipe: true) {
+                                    Button(role: .destructive) {
+                                        viewModel.delete(record: record, context: modelContext)
+                                    } label: {
+                                        Label("Delete", systemImage: "trash")
+                                    }
+                                }
+                            }
+                        } header: {
+                            Text(section.sectionTitle)
+                                .font(.caption.weight(.bold))
+                                .foregroundStyle(.secondary)
+                                .textCase(.uppercase)
+                                .padding(.horizontal, 4)
+                        }
+                    }
+                }
+                .listStyle(.plain)
+                .scrollContentBackground(.hidden)
+                .background(Color(uiColor: .systemGroupedBackground))
+            }
+        }
     }
 }
 
-// MARK: - Parsing helpers (detail-only)
+// MARK: - Row
 
-private struct HistoryRowMeta {
-    var fileName: String
-    var watermarkName: String?
+private struct WatermarkHistoryCardRow: View {
+    let record: WatermarkHistoryRecord
 
-    init(entry: HistoryEntry) {
-        // We don't persist an actual file name yet; keep a stable placeholder.
-        fileName = "Untitled image"
-        watermarkName = HistoryRowMeta.parseWatermarkName(from: entry.message)
+    var body: some View {
+        HStack(alignment: .top, spacing: 0) {
+            thumbnail
+
+            VStack(alignment: .leading, spacing: 6) {
+                HStack(alignment: .firstTextBaseline) {
+                    Text(displayFileName)
+                        .font(.headline.weight(.semibold))
+                        .foregroundStyle(.primary)
+                        .lineLimit(1)
+
+                    Spacer(minLength: 10)
+
+                    Text(HistoryFormatters.relativeTimeString(for: record.timestamp))
+                        .font(.caption)
+                        .foregroundStyle(.tertiary)
+                        .lineLimit(1)
+                }
+
+                HStack(spacing: 8) {
+                    statusTag
+                    
+                    if record.status == .success {
+                        Text("•")
+                            .foregroundStyle(.secondary)
+                            .font(.caption)
+                        Text(confidenceLevel)
+                            .font(.caption)
+                            .foregroundStyle(.secondary)
+                    }
+                }
+                .padding(.top, 2)
+                
+                Spacer(minLength: 0)
+                
+                HStack(spacing: 12) {
+                    Spacer()
+                    if record.status == .failed {
+                        actionButton(icon: "arrow.counterclockwise")
+                        actionButton(icon: "trash", isDestructive: true)
+                    } else {
+                        actionButton(icon: "square.and.arrow.up")
+                        actionButton(icon: "square.and.arrow.down")
+                    }
+                }
+            }
+            .padding(.vertical, 14)
+            .padding(.leading, 14)
+            .padding(.trailing, 14)
+        }
+        .frame(height: 110)
+        .background(Color(uiColor: .secondarySystemGroupedBackground))
+        .overlay(alignment: .trailing) {
+            Rectangle()
+                .fill(record.status == .success ? Color.green.opacity(0.6) : Color.orange)
+                .frame(width: 3)
+        }
+    
+        .clipShape(RoundedRectangle(cornerRadius: 14, style: .continuous))
+        .contentShape(Rectangle())
+    }
+    
+    private var displayFileName: String {
+        return "IMG_\(String(record.id.uuidString.prefix(4))).jpg"
+    }
+    
+    private var confidenceLevel: String {
+        guard let sync = record.syncMatchCount else { return "High" }
+        if sync > 28 { return "High" }
+        if sync > 16 { return "Medium" }
+        return "Low"
     }
 
-    private static func parseWatermarkName(from message: String) -> String? {
-        // Current app message formats:
-        // - "嵌入水印完成（文案：%@）"
-        // - Potential future English formats like "text: <...>"
-        if let v = extractBetween(message, start: "文案：", end: "）") { return v }
-        if let v = extractAfter(message, prefix: "text:") { return v.trimmingCharacters(in: .whitespacesAndNewlines) }
-        return nil
+    @ViewBuilder
+    private var thumbnail: some View {
+        let isFailed = record.status == .failed
+        
+        ZStack(alignment: .bottomLeading) {
+            if let data = record.thumbnailData, let ui = UIImage(data: data) {
+                Image(uiImage: ui)
+                    .resizable()
+                    .scaledToFill()
+                    
+                    .frame(width: 85, height: 96)
+                
+                    .clipShape(UnevenRoundedRectangle(topLeadingRadius: 14))
+            } else {
+                UnevenRoundedRectangle(topLeadingRadius: 18)
+                    .fill(Color.gray.opacity(0.1))
+                    .frame(width: 85, height: 96)
+                    .overlay {
+                        Image(systemName: "photo")
+                            .foregroundStyle(.secondary)
+                    }
+            }
+            
+            Text("PNG")
+                .font(.system(size: 10, weight: .bold))
+                .foregroundStyle(.white)
+                .padding(.horizontal, 6)
+                .padding(.vertical, 3)
+                .background {
+                    Capsule(style: .continuous)
+                        .fill(Color.black.opacity(0.6))
+                }
+                .padding(8)
+        }
+        .grayscale(isFailed ? 0.3 : 0)
     }
 
-    private static func extractBetween(_ s: String, start: String, end: String) -> String? {
-        guard let r1 = s.range(of: start) else { return nil }
-        let tail = s[r1.upperBound...]
-        guard let r2 = tail.range(of: end) else { return nil }
-        let v = String(tail[..<r2.lowerBound]).trimmingCharacters(in: .whitespacesAndNewlines)
-        return v.isEmpty ? nil : v
+    private var statusTag: some View {
+        let isSuccess = record.status == .success
+        let opType = record.operationType == .embed ? "Exported" : "Extracted"
+        let text = isSuccess ? opType : "Failed"
+        let fgColor: Color = isSuccess ? (record.operationType == .embed ? .green : .blue) : .red
+        let bgColor: Color = fgColor.opacity(0.12)
+        
+        return HStack(spacing: 4) {
+            Circle()
+                .fill(fgColor)
+                .frame(width: 4, height: 4)
+            Text(text)
+                .font(.caption2.weight(.bold))
+                .foregroundStyle(fgColor)
+        }
+        .padding(.horizontal, 8)
+        .padding(.vertical, 4)
+        .background {
+            Capsule(style: .continuous)
+                .fill(bgColor)
+        }
     }
-
-    private static func extractAfter(_ s: String, prefix: String) -> String? {
-        guard let r = s.range(of: prefix, options: [.caseInsensitive]) else { return nil }
-        let v = String(s[r.upperBound...])
-        return v.isEmpty ? nil : v
+    
+    private func actionButton(icon: String, isDestructive: Bool = false) -> some View {
+        Image(systemName: icon)
+            .font(.system(size: 14, weight: .semibold))
+            .foregroundStyle(isDestructive ? .red : .primary.opacity(0.8))
+            .frame(width: 40, height: 34)
+            .background {
+                RoundedRectangle(cornerRadius: 8, style: .continuous)
+                    .strokeBorder(isDestructive ? Color.red.opacity(0.3) : Color.primary.opacity(0.15), lineWidth: 1)
+            }
     }
 }
 
@@ -214,7 +293,6 @@ private struct HistoryRowMeta {
     HistoryViewPreviewHost()
 }
 
-/// SwiftData preview container must include every `@Model` type this screen touches.
 private struct HistoryViewPreviewHost: View {
     private static let previewContainer: ModelContainer = {
         let schema = Schema([HistoryEntry.self, WatermarkHistoryRecord.self])

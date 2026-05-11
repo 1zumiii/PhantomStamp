@@ -5,8 +5,9 @@
 
 import SwiftUI
 
+/// Unified detail screen for a single embed/extract operation (live session or history).
 struct ExtractionDetailView: View {
-    let record: ExtractionRecord
+    let display: OperationDetailDisplay
 
     var body: some View {
         ScrollView {
@@ -35,7 +36,7 @@ struct ExtractionDetailView: View {
                 RoundedRectangle(cornerRadius: 22, style: .continuous)
                     .fill(Color(red: 0.88, green: 0.85, blue: 0.82))
 
-                if let image = record.image {
+                if let image = display.previewImage {
                     Image(uiImage: image)
                         .resizable()
                         .scaledToFill()
@@ -58,7 +59,7 @@ struct ExtractionDetailView: View {
         }
         .frame(height: heroHeight(forWidth: UIScreen.main.bounds.width - 40))
         .overlay(alignment: .bottomLeading) {
-            Text(record.imageName)
+            Text(display.imageName)
                 .font(.subheadline.weight(.semibold))
                 .foregroundStyle(.white)
                 .padding(.horizontal, 14)
@@ -72,23 +73,28 @@ struct ExtractionDetailView: View {
     }
 
     private func heroHeight(forWidth width: CGFloat) -> CGFloat {
-        guard let image = record.image else { return 260 }
-        let iw = max(1, image.size.width * image.scale)
-        let ih = max(1, image.size.height * image.scale)
-        let ratio = ih / iw
-        // Keep hero from stretching on very tall images.
-        return min(max(width * ratio, 220), 340)
+        if let image = display.previewImage {
+            let iw = max(1, image.size.width * image.scale)
+            let ih = max(1, image.size.height * image.scale)
+            let ratio = ih / iw
+            return min(max(width * ratio, 220), 340)
+        }
+        if let w = display.imagePixelWidth, let h = display.imagePixelHeight, w > 0, h > 0 {
+            let ratio = CGFloat(h) / CGFloat(w)
+            return min(max(width * ratio, 220), 340)
+        }
+        return 260
     }
 
     private var statusPill: some View {
-        let isSuccess = record.status == .extracted
-        let isFailed = record.status == .failed
-        
+        let isSuccess = display.status == .success
+        let isFailed = display.status == .failed
+
         let fgColor: Color = isSuccess ? .green : (isFailed ? .red : .orange)
         let bgColor: Color = .black.opacity(0.24)
         let iconName = isSuccess ? "checkmark.circle.fill" : (isFailed ? "xmark.octagon.fill" : "clock.fill")
         let text = isSuccess ? "Success" : (isFailed ? "Failed" : "Pending")
-        
+
         return HStack(spacing: 6) {
             Image(systemName: iconName)
             Text(text)
@@ -103,9 +109,27 @@ struct ExtractionDetailView: View {
         }
     }
 
+    private var operationTitle: String {
+        switch display.operationKind {
+        case .extract:
+            return "Extract watermark"
+        case .embed:
+            return "Embed watermark"
+        }
+    }
+
+    private var operationIcon: String {
+        switch display.operationKind {
+        case .extract:
+            return "doc.text.magnifyingglass"
+        case .embed:
+            return "wand.and.stars"
+        }
+    }
+
     private var headerRow: some View {
         HStack(alignment: .center) {
-            Label("Extract watermark", systemImage: "doc.text.magnifyingglass")
+            Label(operationTitle, systemImage: operationIcon)
                 .font(.subheadline.weight(.semibold))
                 .foregroundStyle(Color.accentColor)
                 .padding(.horizontal, 14)
@@ -114,29 +138,38 @@ struct ExtractionDetailView: View {
                     Capsule(style: .continuous)
                         .fill(Color.accentColor.opacity(0.15))
                 }
-            
+
             Spacer(minLength: 12)
-            
-            Text(RelativeDateTimeFormat.humanReadable(record.createdAt))
+
+            Text(RelativeDateTimeFormat.humanReadable(display.occurredAt))
                 .font(.subheadline)
                 .foregroundStyle(.secondary)
         }
     }
 
+    private var payloadSectionTitle: String {
+        switch display.operationKind {
+        case .extract:
+            return "WATERMARK TEXT"
+        case .embed:
+            return "EMBEDDED TEXT"
+        }
+    }
+
     private var messageCard: some View {
         VStack(alignment: .leading, spacing: 8) {
-            Text("WATERMARK TEXT")
+            Text(payloadSectionTitle)
                 .font(.caption.weight(.semibold))
                 .foregroundStyle(.secondary)
 
             HStack(alignment: .firstTextBaseline, spacing: 10) {
-                Text(record.status == .extracted ? (record.message ?? "—") : "—")
+                Text(display.status == .success ? (display.primaryText ?? "—") : "—")
                     .font(.title3.weight(.medium))
                     .foregroundStyle(.primary)
                     .lineLimit(3)
                     .frame(maxWidth: .infinity, alignment: .leading)
 
-                if record.status == .extracted, let text = record.message, !text.isEmpty {
+                if display.status == .success, let text = display.primaryText, !text.isEmpty {
                     Button {
                         UIPasteboard.general.string = text
                     } label: {
@@ -150,7 +183,7 @@ struct ExtractionDetailView: View {
                             }
                     }
                     .buttonStyle(.plain)
-                    .accessibilityLabel("Copy extracted text")
+                    .accessibilityLabel("Copy watermark text")
                 }
             }
         }
@@ -164,17 +197,22 @@ struct ExtractionDetailView: View {
 
     private var metricsGrid: some View {
         let sizeText: String = {
-            guard let img = record.image else { return "—" }
-            let w = Int(img.size.width * img.scale)
-            let h = Int(img.size.height * img.scale)
-            return "\(w) × \(h)"
+            if let w = display.imagePixelWidth, let h = display.imagePixelHeight, w > 0, h > 0 {
+                return "\(w) × \(h)"
+            }
+            if let img = display.previewImage {
+                let w = Int(img.size.width * img.scale)
+                let h = Int(img.size.height * img.scale)
+                return "\(w) × \(h)"
+            }
+            return "—"
         }()
         let formatText: String = {
-            let ext = ((record.imageName as NSString).pathExtension).uppercased()
+            let ext = ((display.imageName as NSString).pathExtension).uppercased()
             return ext.isEmpty ? "—" : ext
         }()
         let durationText: String = {
-            guard let ms = record.durationMs else { return "—" }
+            guard let ms = display.durationMs else { return "—" }
             return String(format: "%.1fs", ms / 1000.0)
         }()
 
@@ -184,17 +222,20 @@ struct ExtractionDetailView: View {
                 metricCard(title: "Format", value: formatText, systemImage: "doc")
             }
             metricCard(title: "Image size", value: sizeText, systemImage: "arrow.up.left.and.arrow.down.right")
+            if display.operationKind == .extract, let sync = display.syncMatchCount {
+                metricCard(title: "Sync matches", value: "\(sync)", systemImage: "checklist")
+            }
         }
     }
 
     @ViewBuilder
     private var failureCard: some View {
-        if record.status == .failed {
+        if display.status == .failed {
             VStack(alignment: .leading, spacing: 8) {
                 Text("Failure reason")
                     .font(.caption.weight(.semibold))
                     .foregroundStyle(.secondary)
-                Text(record.failureReason ?? "The watermark could not be extracted from this image.")
+                Text(display.failureReason ?? defaultFailureCopy)
                     .font(.subheadline)
                     .foregroundStyle(.secondary)
                     .fixedSize(horizontal: false, vertical: true)
@@ -208,6 +249,15 @@ struct ExtractionDetailView: View {
         }
     }
 
+    private var defaultFailureCopy: String {
+        switch display.operationKind {
+        case .extract:
+            return "The watermark could not be extracted from this image."
+        case .embed:
+            return "The watermark could not be embedded in this image."
+        }
+    }
+
     private func metricCard(title: String, value: String, systemImage: String) -> some View {
         VStack(alignment: .leading, spacing: 8) {
             HStack(spacing: 6) {
@@ -218,7 +268,7 @@ struct ExtractionDetailView: View {
                     .font(.subheadline)
                     .foregroundStyle(.secondary)
             }
-            
+
             Text(value)
                 .font(.headline.weight(.semibold))
                 .foregroundStyle(.primary)
@@ -229,5 +279,12 @@ struct ExtractionDetailView: View {
             RoundedRectangle(cornerRadius: 12, style: .continuous)
                 .fill(Color(uiColor: .secondarySystemGroupedBackground))
         }
+    }
+}
+
+extension ExtractionDetailView {
+    /// Convenience for the extract tab’s in-memory `ExtractionRecord` list.
+    init(record: ExtractionRecord) {
+        self.init(display: OperationDetailDisplay(extraction: record))
     }
 }

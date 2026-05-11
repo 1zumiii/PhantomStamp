@@ -23,6 +23,13 @@ enum HistoryFilter: String, CaseIterable, Identifiable {
     var id: String { rawValue }
 }
 
+/// One dated section in the history list (stable `id` for SwiftUI even if the calendar heading repeats across years).
+struct HistoryRecordSection: Identifiable {
+    let id: String
+    let sectionTitle: String
+    let records: [WatermarkHistoryRecord]
+}
+
 // MARK: - ViewModel
 
 @MainActor
@@ -63,21 +70,29 @@ final class HistoryViewModel: ObservableObject {
     // MARK: Derived — grouped
 
     /// Filtered records grouped into dated sections, sorted newest-first.
-    /// Returns an ordered array of (sectionTitle, records) pairs so the
-    /// view can render section headers without any formatting logic of its own.
     var groupedRecords: [(key: String, value: [WatermarkHistoryRecord])] {
+        groupedRecordSections.map { (key: $0.sectionTitle, value: $0.records) }
+    }
+
+    /// Same grouping as `groupedRecords` with a stable per-section identifier for `ForEach`.
+    var groupedRecordSections: [HistoryRecordSection] {
         let grouped = Dictionary(grouping: filteredRecords) { record in
             HistoryFormatters.sectionHeader(for: record.timestamp)
         }
 
         return grouped
-            .map { (
-                key: $0.key,
-                value: $0.value.sorted { $0.timestamp > $1.timestamp }
-            )}
+            .map { title, records in
+                let sorted = records.sorted { $0.timestamp > $1.timestamp }
+                let idSeed = sorted.map(\.id.uuidString).sorted().joined(separator: ",")
+                return HistoryRecordSection(
+                    id: "\(title)|\(idSeed)",
+                    sectionTitle: title,
+                    records: sorted
+                )
+            }
             .sorted { lhs, rhs in
-                let lDate = lhs.value.first?.timestamp ?? .distantPast
-                let rDate = rhs.value.first?.timestamp ?? .distantPast
+                let lDate = lhs.records.first?.timestamp ?? .distantPast
+                let rDate = rhs.records.first?.timestamp ?? .distantPast
                 return lDate > rDate
             }
     }

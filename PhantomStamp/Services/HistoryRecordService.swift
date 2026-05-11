@@ -67,6 +67,10 @@ enum HistoryRecordService {
     static func insertAndSave(_ record: WatermarkHistoryRecord, context: ModelContext) {
         context.insert(record)
         PersistenceService.save(context)
+        NotificationCenter.default.post(
+            name: AppConstants.Notifications.watermarkHistoryRecordsDidChange,
+            object: nil
+        )
     }
 
     // MARK: - Read
