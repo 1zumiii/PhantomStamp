@@ -93,7 +93,7 @@ struct ExtractionDetailView: View {
                     VStack(spacing: 10) {
                         Image(systemName: "photo")
                             .font(.system(size: 42, weight: .semibold))
-                            .foregroundStyle(.black.opacity(0.2))
+                            .foregroundStyle(.black.opacity(0.3))
                     }
                     .frame(width: width, height: height)
                 }
@@ -136,10 +136,10 @@ struct ExtractionDetailView: View {
         let isSuccess = display.status == .success
         let isFailed = display.status == .failed
 
-        let fgColor: Color = isSuccess ? .green : (isFailed ? .red : .orange)
-        let bgColor: Color = .black.opacity(0.24)
+        let fgColor: Color = isSuccess ? .green : (isFailed ? .orange : .orange)
+        let bgColor: Color = .black.opacity(0.3)
         let iconName = isSuccess ? "checkmark.circle.fill" : (isFailed ? "xmark.octagon.fill" : "clock.fill")
-        let text = isSuccess ? "Success" : (isFailed ? "Failed" : "Pending")
+        let text = isSuccess ? "Success" : (isFailed ? "Not Found" : "Pending")
 
         return HStack(spacing: 6) {
             Image(systemName: iconName)

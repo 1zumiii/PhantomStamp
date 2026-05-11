@@ -82,7 +82,6 @@ final class WatermarkInsertViewModel {
     func dismissSuccessOverlayAndResetUploadState() {
         showSuccessOverlay = false
         selectedPhotoItems = []
-        watermarkPayload = ""
     }
 
     func embedWatermark() async {

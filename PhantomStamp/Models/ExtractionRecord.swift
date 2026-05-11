@@ -9,7 +9,7 @@ import UIKit
 enum ExtractionStatus: String, CaseIterable, Identifiable {
     case pending = "Pending"
     case extracted = "Extracted"
-    case failed = "Failed"
+    case failed = "Not Found"
 
     var id: String { rawValue }
 
@@ -22,7 +22,7 @@ enum ExtractionStatus: String, CaseIterable, Identifiable {
         case .extracted:
             return .green
         case .failed:
-            return .red
+            return .orange
         }
     }
 

@@ -263,7 +263,7 @@ private struct WatermarkHistoryCardRow: View {
         .background(Color(uiColor: .secondarySystemGroupedBackground))
         .overlay(alignment: .trailing) {
             Rectangle()
-                .fill(record.status == .success ? Color.green.opacity(0.55) : Color.red.opacity(0.55))
+                .fill(record.status == .success ? Color.green.opacity(0.55) : Color.orange.opacity(0.55))
                 .frame(width: 1)
         }
         .clipShape(RoundedRectangle(cornerRadius: 14, style: .continuous))
@@ -310,8 +310,8 @@ private struct WatermarkHistoryCardRow: View {
     private var statusTag: some View {
         let isSuccess = record.status == .success
         let opType = record.operationType == .embed ? "Exported" : "Extracted"
-        let text = isSuccess ? opType : "Failed"
-        let fgColor: Color = isSuccess ? (record.operationType == .embed ? .green : .blue) : .red
+        let text = isSuccess ? opType : "Not Found"
+        let fgColor: Color = isSuccess ? (record.operationType == .embed ? .green : .blue) : .orange
         let bgColor: Color = fgColor.opacity(0.12)
         
         return HStack(spacing: 4) {

@@ -20,7 +20,7 @@ enum HistoryFilter: String, CaseIterable, Identifiable {
     case all       = "All"
     case embedded  = "Embedded"
     case extracted = "Extracted"
-    case failed    = "Failed"
+    case failed    = "Not Found"
 
     var id: String { rawValue }
 }
