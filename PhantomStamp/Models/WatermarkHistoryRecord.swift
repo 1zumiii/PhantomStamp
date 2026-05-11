@@ -38,10 +38,13 @@ final class WatermarkHistoryRecord {
     /// Error log. Only has a value when status == .failed, to help users click to see why it failed.
     var errorMessage: String?
     
-    // Image metadata (used for UI list display, never store the original image)
+    // Image metadata for UI (list uses small thumbnails; detail uses optional larger preview, not raw camera originals)
     /// Extremely compressed thumbnail data (recommended JPEG, q=0.5, size should be within 200x200)
     /// Use .externalStorage to tell SwiftData to automatically detach to an external file when the data is large, to ensure the speed of SQLite queries.
     @Attribute(.externalStorage) var thumbnailData: Data?
+    /// Larger JPEG for the history detail hero (downscaled from the source at save time; not the raw camera file).
+    /// Older rows may have `nil` here and fall back to `thumbnailData`.
+    @Attribute(.externalStorage) var detailPreviewData: Data?
     var imageWidth: Int
     var imageHeight: Int
     
@@ -58,6 +61,7 @@ final class WatermarkHistoryRecord {
         payload: String? = nil,
         errorMessage: String? = nil,
         thumbnailData: Data? = nil,
+        detailPreviewData: Data? = nil,
         imageWidth: Int = 0,
         imageHeight: Int = 0,
         processingDurationMs: Double = 0,
@@ -70,6 +74,7 @@ final class WatermarkHistoryRecord {
         self.payload = payload
         self.errorMessage = errorMessage
         self.thumbnailData = thumbnailData
+        self.detailPreviewData = detailPreviewData
         self.imageWidth = imageWidth
         self.imageHeight = imageHeight
         self.processingDurationMs = processingDurationMs

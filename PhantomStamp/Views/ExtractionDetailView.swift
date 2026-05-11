@@ -3,11 +3,17 @@
 //  PhantomStamp
 //
 
+import SwiftData
 import SwiftUI
+import UIKit
 
 /// Unified detail screen for a single embed/extract operation (live session or history).
 struct ExtractionDetailView: View {
     let display: OperationDetailDisplay
+
+    @Environment(\.modelContext) private var modelContext
+    @Environment(\.dismiss) private var dismiss
+    @State private var showDeleteConfirmation = false
 
     var body: some View {
         ScrollView {
@@ -23,8 +29,47 @@ struct ExtractionDetailView: View {
         }
         .scrollIndicators(.hidden)
         .background(Color(uiColor: .systemGroupedBackground))
-        .navigationTitle("Record detail")
+        .navigationTitle(display.navigationTitleName)
         .navigationBarTitleDisplayMode(.large)
+        .toolbar {
+            if display.persistedHistoryRecordId != nil {
+                ToolbarItem(placement: .topBarTrailing) {
+                    Button(role: .destructive) {
+                        showDeleteConfirmation = true
+                    } label: {
+                        Image(systemName: "trash")
+                            .font(.body.weight(.semibold))
+                            .foregroundStyle(.red)
+                    }
+                    .accessibilityLabel("Delete from history")
+                }
+            }
+        }
+        .alert("Delete this entry?", isPresented: $showDeleteConfirmation) {
+            Button("Cancel", role: .cancel) {}
+            Button("Delete", role: .destructive) {
+                deletePersistedHistoryIfNeeded()
+            }
+        } message: {
+            Text(
+                "“\(display.imageName)” will be removed from history on this device. This cannot be undone."
+            )
+        }
+    }
+
+    private func deletePersistedHistoryIfNeeded() {
+        guard let id = display.persistedHistoryRecordId else { return }
+        do {
+            _ = try HistoryRecordService.deleteRecord(id: id, context: modelContext)
+            NotificationCenter.default.post(
+                name: AppConstants.Notifications.watermarkHistoryRecordsDidChange,
+                object: nil
+            )
+            UINotificationFeedbackGenerator().notificationOccurred(.success)
+            dismiss()
+        } catch {
+            print("[ExtractionDetailView] delete failed: \(error)")
+        }
     }
 
     private var heroCard: some View {
@@ -59,11 +104,11 @@ struct ExtractionDetailView: View {
         }
         .frame(height: heroHeight(forWidth: UIScreen.main.bounds.width - 40))
         .overlay(alignment: .bottomLeading) {
-            Text(display.imageName)
-                .font(.subheadline.weight(.semibold))
+            Text(display.formatBadgeUppercase)
+                .font(.system(size: 11, weight: .bold))
                 .foregroundStyle(.white)
-                .padding(.horizontal, 14)
-                .padding(.vertical, 8)
+                .padding(.horizontal, 10)
+                .padding(.vertical, 6)
                 .background {
                     Capsule(style: .continuous)
                         .fill(Color.black.opacity(0.45))
