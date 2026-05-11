@@ -6,7 +6,6 @@
 import Combine
 import SwiftData
 import SwiftUI
-import UIKit
 
 struct HistoryView: View {
     @Environment(\.modelContext) private var modelContext
@@ -14,10 +13,6 @@ struct HistoryView: View {
     var listRefreshToken: Int = 0
 
     @StateObject private var viewModel = HistoryViewModel()
-    @State private var pendingDeleteRecordID: UUID?
-    @State private var saveErrorMessage: String?
-    @State private var showSaveSuccessToast = false
-    @State private var saveSuccessFeedbackTrigger = 0
 
     var body: some View {
         NavigationStack {
@@ -27,7 +22,7 @@ struct HistoryView: View {
                     .frame(maxWidth: .infinity, maxHeight: .infinity)
             }
             .overlay(alignment: .bottom) {
-                if showSaveSuccessToast {
+                if viewModel.showSaveSuccessToast {
                     Label("Saved to Photos", systemImage: "checkmark.circle.fill")
                         .font(.subheadline.weight(.semibold))
                         .foregroundStyle(.primary)
@@ -39,8 +34,8 @@ struct HistoryView: View {
                         .transition(.move(edge: .bottom).combined(with: .opacity))
                 }
             }
-            .animation(.spring(response: 0.45, dampingFraction: 0.82), value: showSaveSuccessToast)
-            .sensoryFeedback(.success, trigger: saveSuccessFeedbackTrigger)
+            .animation(.spring(response: 0.45, dampingFraction: 0.82), value: viewModel.showSaveSuccessToast)
+            .sensoryFeedback(.success, trigger: viewModel.saveSuccessFeedbackTrigger)
             .navigationTitle("History")
             .toolbar {
                 ToolbarItem(placement: .topBarTrailing) {
@@ -72,76 +67,36 @@ struct HistoryView: View {
             }
             .alert("Delete this entry?", isPresented: deleteConfirmBinding) {
                 Button("Cancel", role: .cancel) {
-                    pendingDeleteRecordID = nil
+                    viewModel.cancelPendingDelete()
                 }
                 Button("Delete", role: .destructive) {
-                    if let id = pendingDeleteRecordID,
-                       let record = viewModel.records.first(where: { $0.id == id }) {
-                        viewModel.delete(record: record, context: modelContext)
-                    }
-                    pendingDeleteRecordID = nil
+                    viewModel.confirmPendingDelete(context: modelContext)
                 }
             } message: {
-                Text(deleteConfirmationMessage)
+                Text(viewModel.deleteEntryConfirmationMessage)
             }
             .alert("Could not save", isPresented: saveErrorBinding) {
                 Button("OK", role: .cancel) {
-                    saveErrorMessage = nil
+                    viewModel.dismissSaveError()
                 }
             } message: {
-                Text(saveErrorMessage ?? "")
+                Text(viewModel.saveErrorMessage ?? "")
             }
         }
     }
 
     private var deleteConfirmBinding: Binding<Bool> {
         Binding(
-            get: { pendingDeleteRecordID != nil },
-            set: { if !$0 { pendingDeleteRecordID = nil } }
+            get: { viewModel.pendingDeleteRecordId != nil },
+            set: { if !$0 { viewModel.cancelPendingDelete() } }
         )
-    }
-
-    private var deleteConfirmationMessage: String {
-        guard let id = pendingDeleteRecordID,
-              let record = viewModel.records.first(where: { $0.id == id }) else {
-            return "This cannot be undone."
-        }
-        let name = OperationDetailDisplay.historyListFileName(for: record)
-        return "“\(name)” will be removed from history on this device. This cannot be undone."
     }
 
     private var saveErrorBinding: Binding<Bool> {
         Binding(
-            get: { saveErrorMessage != nil },
-            set: { if !$0 { saveErrorMessage = nil } }
+            get: { viewModel.saveErrorMessage != nil },
+            set: { if !$0 { viewModel.dismissSaveError() } }
         )
-    }
-
-    private func requestDelete(record: WatermarkHistoryRecord) {
-        pendingDeleteRecordID = record.id
-    }
-
-    private func saveRecordThumbnailToPhotos(_ record: WatermarkHistoryRecord) {
-        Task { @MainActor in
-            await PhotoLibraryExporter.preflightAddOnlyAuthorizationIfNeeded()
-            let data = record.detailPreviewData ?? record.thumbnailData
-            guard let data, let image = UIImage(data: data) else {
-                saveErrorMessage = "There is no preview image to save."
-                return
-            }
-            do {
-                try await PhotoLibraryExporter.saveToPhotoLibrary(image)
-                UINotificationFeedbackGenerator().notificationOccurred(.success)
-                saveSuccessFeedbackTrigger += 1
-                withAnimation { showSaveSuccessToast = true }
-                Task { @MainActor in
-                    try? await Task.sleep(for: .seconds(2.2))
-                    withAnimation { showSaveSuccessToast = false }
-                }
-            } catch {
-                saveErrorMessage = error.localizedDescription
-            }
-        }
     }
 
     private var filterBar: some View {
@@ -199,10 +154,10 @@ struct HistoryView: View {
                                 WatermarkHistoryCardRow(
                                     record: record,
                                     onDelete: record.status == .failed
-                                        ? { requestDelete(record: record) }
+                                        ? { viewModel.requestDeleteConfirmation(for: record) }
                                         : nil,
                                     onSave: record.status == .success
-                                        ? { saveRecordThumbnailToPhotos(record) }
+                                        ? { viewModel.saveRecordToPhotoLibrary(record) }
                                         : nil
                                 )
                                 .navigationLinkIndicatorVisibility(.hidden)
@@ -237,78 +192,72 @@ private struct WatermarkHistoryCardRow: View {
     var onSave: (() -> Void)?
 
     var body: some View {
-        HStack(alignment: .top, spacing: 0) {
-            ZStack {
-                NavigationLink {
-                    ExtractionDetailView(display: OperationDetailDisplay(history: record))
-                } label: {
-                    EmptyView()
-                }
-                .opacity(0)
+        ZStack {
+            NavigationLink {
+                ExtractionDetailView(display: OperationDetailDisplay(history: record))
+            } label: {
+                EmptyView()
+            }
+            .opacity(0)
 
-                HStack(alignment: .top, spacing: 0) {
-                    thumbnail
+            HStack(alignment: .top, spacing: 0) {
+                thumbnail
 
-                    VStack(alignment: .leading, spacing: 6) {
-                        HStack(alignment: .firstTextBaseline) {
-                            Text(OperationDetailDisplay.historyListTitleBase(for: record))
-                                .font(.headline.weight(.semibold))
-                                .foregroundStyle(.primary)
-                                .lineLimit(1)
+                VStack(alignment: .leading, spacing: 6) {
+                    
+                    HStack(alignment: .firstTextBaseline) {
+                        Text(OperationDetailDisplay.historyListTitleBase(for: record))
+                            .font(.headline.weight(.semibold))
+                            .foregroundStyle(.primary)
+                            .lineLimit(1)
 
-                            Spacer(minLength: 10)
+                        Spacer(minLength: 10)
 
-                            Text(HistoryFormatters.relativeTimeString(for: record.timestamp))
-                                .font(.caption.weight(.medium))
-                                .foregroundStyle(.tertiary)
-                                .lineLimit(1)
-                        }.frame(maxWidth: .infinity, alignment: .leading)
+                        Text(HistoryFormatters.relativeTimeString(for: record.timestamp))
+                            .font(.caption.weight(.medium))
+                            .foregroundStyle(.tertiary)
+                            .lineLimit(1)
+                    }
 
-                        HStack(spacing: 8) {
-                            statusTag
+                    
+                    HStack(spacing: 8) {
+                        statusTag
 
-                            if record.status == .success {
-                                Text("•")
-                                    .foregroundStyle(.secondary)
-                                    .font(.caption)
-                                Text(confidenceLevel)
-                                    .font(.caption)
-                                    .foregroundStyle(.secondary)
+                        if record.status == .success {
+                            Text("•")
+                                .foregroundStyle(.secondary)
+                                .font(.caption)
+                            Text(HistoryViewModel.confidenceLabel(for: record))
+                                .font(.caption)
+                                .foregroundStyle(.secondary)
+                        }
+                    }
+                    .padding(.top, 2)
+
+                    Spacer(minLength: 0)
+
+                    
+                    HStack(spacing: 12) {
+                        Spacer()
+                        
+                        if let onDelete {
+                            Button(action: onDelete) {
+                                actionButton(icon: "trash", isDestructive: true)
                             }
+                            .buttonStyle(.plain)
                         }
-                        .padding(.top, 2)
-
-                        Spacer(minLength: 0)
-                    }
-                    .frame(maxWidth: .infinity, alignment: .leading)
-                    .padding(.vertical, 14)
-                    .padding(.leading, 14)
-                    .padding(.trailing, 8)
-                }
-                .allowsHitTesting(false)
-                .frame(maxWidth: .infinity, alignment: .leading)
-            }
-            .frame(maxWidth: .infinity, alignment: .leading)
-
-            VStack {
-                Spacer(minLength: 0)
-                HStack(spacing: 12) {
-                    if let onDelete {
-                        Button(action: onDelete) {
-                            actionButton(icon: "trash", isDestructive: true)
+                        if let onSave {
+                            Button(action: onSave) {
+                                actionButton(icon: "square.and.arrow.down")
+                            }
+                            .buttonStyle(.plain)
                         }
-                        .buttonStyle(.plain)
-                    }
-                    if let onSave {
-                        Button(action: onSave) {
-                            actionButton(icon: "square.and.arrow.down")
-                        }
-                        .buttonStyle(.plain)
                     }
                 }
+                .padding(.vertical, 14)
+                .padding(.leading, 14)
+                .padding(.trailing, 14)
             }
-            .padding(.vertical, 14)
-            .padding(.trailing, 14)
         }
         .frame(height: 110)
         .background(Color(uiColor: .secondarySystemGroupedBackground))
@@ -319,13 +268,6 @@ private struct WatermarkHistoryCardRow: View {
         }
         .clipShape(RoundedRectangle(cornerRadius: 14, style: .continuous))
         .contentShape(Rectangle())
-    }
-    
-    private var confidenceLevel: String {
-        guard let sync = record.syncMatchCount else { return "High" }
-        if sync > 28 { return "High" }
-        if sync > 16 { return "Medium" }
-        return "Low"
     }
 
     @ViewBuilder
