@@ -347,7 +347,7 @@ struct RobustnessTestingView: View {
             userInfo: ["payload": ProgressPayload(step: .preparation, percentage: 0.15)]
         )
 
-        let r = await WatermarkEmbedOnlyTests.runOnBundledTestImg(text: "水印OK")
+        let r = await WatermarkEmbedOnlyTests.runOnBundledTestImg(text: "watermark OK")
         let ok = r.imageLoaded && r.embedSucceeded
         let status = ok ? "PASS" : "FAIL"
         print("[TestPage] EmbedOnly \(status) totalMs=\(String(format: "%.2f", r.totalMs)) events=\(r.progressEventCount)")
@@ -403,7 +403,7 @@ struct RobustnessTestingView: View {
         isLoading = true
         defer { isLoading = false }
 
-        let r = await WatermarkMultiFileTests.runMultiFileEmbedOnBundledTestImg(text: "Batch水印OK", fileCount: fileCount)
+        let r = await WatermarkMultiFileTests.runMultiFileEmbedOnBundledTestImg(text: "Batch watermark OK", fileCount: fileCount)
         let ok = r.imageLoaded && r.embedSucceeded
         let status = ok ? "PASS" : "FAIL"
         print("[TestPage] MultiFileEmbed \(status) files=\(r.fileCount) totalMs=\(String(format: "%.2f", r.totalMs))")

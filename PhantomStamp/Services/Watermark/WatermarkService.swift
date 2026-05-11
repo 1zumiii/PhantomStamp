@@ -21,6 +21,18 @@ class WatermarkService: WatermarkServiceProtocol {
         batchUserNotificationDepth > 0
     }
 
+    /// Heavy-matrix extract phase: payload after sync strip, plus optional diagnostics for history UI.
+    private struct ExtractMatrixWorkResult: Sendable {
+        var payloadBitsWithoutSync: [Int]
+        var offsetScanBestSyncBits: Int
+        var gridOffsetX: Int?
+        var gridOffsetY: Int?
+        var rawBitGridRows: Int
+        var rawBitGridCols: Int
+        var majorityBestSyncBits: Int?
+        var majorityMacroTileWidth: Int?
+    }
+
     private func userAllowsWatermarkNotifications() async -> Bool {
         await MainActor.run {
             settingsStore?.watermarkOperationNotificationsEnabled ?? AppConstants.SettingsDefault.watermarkOperationNotifications
@@ -134,7 +146,7 @@ class WatermarkService: WatermarkServiceProtocol {
             let syncBits = getSyncMarkerBits()
             let payloadBits = syncBits + eccBits
             reportProgress(step: .macroblockBuild, percentage: prepEnd * 0.80)
-            // Convert the one-dimensional data stream to a two-dimensional macroblock (to prevent raster断裂问题)
+            // Convert the one-dimensional data stream to a two-dimensional macroblock (to prevent rasterization issues)
             let macroblock = build2DTile(from: payloadBits)
             reportProgress(step: .macroblockBuild, percentage: prepEnd)
 
@@ -169,20 +181,26 @@ class WatermarkService: WatermarkServiceProtocol {
             reportProgress(step: .processingStrips, percentage: colorEnd)
 
             let stripCount = imageStrips.count
-            try await withThrowingTaskGroup(of: ImageStrip.self) { group in
+            var embedVisited8x8Blocks = 0
+            var embedSmoothSkipped8x8Blocks = 0
+            try await withThrowingTaskGroup(of: (ImageStrip, Int, Int).self) { group in
                 for strip in imageStrips {
                     group.addTask {
                         // force memory recycling to prevent OOM silent crash caused by large image slicing computation
                         autoreleasepool {
-                            self.processSingleStripForEmbedding(strip: strip, macroblock: macroblock)
+                            let out = self.processSingleStripForEmbedding(strip: strip, macroblock: macroblock)
+                            return (out.strip, out.visited8x8Blocks, out.smoothSkipped8x8Blocks)
                         }
                     }
                 }
 
                 var completedStrips = 0
-                for try await processedStrip in group {
+                for try await triple in group {
+                    let (processedStrip, visited, skipped) = triple
                     // overwrite the processed strip back to the original strips array (located by `globalYOffset`).
                     updateStripInPlace(&imageStrips, with: processedStrip)
+                    embedVisited8x8Blocks += visited
+                    embedSmoothSkipped8x8Blocks += skipped
                     completedStrips += 1
                     if stripCount > 0 {
                         let t = colorEnd + stripSpan * Double(completedStrips) / Double(stripCount)
@@ -223,7 +241,9 @@ class WatermarkService: WatermarkServiceProtocol {
                 inputImage: image,
                 outputImage: finalImage,
                 error: nil,
-                startedAt: historyStarted
+                startedAt: historyStarted,
+                embedVisited8x8BlockCount: embedVisited8x8Blocks,
+                embedSmoothSkipped8x8BlockCount: embedSmoothSkipped8x8Blocks
             )
             if !shouldSuppressSingleOperationNotification {
                 await deliverWatermarkNotificationIfAllowed {
@@ -241,7 +261,9 @@ class WatermarkService: WatermarkServiceProtocol {
                 inputImage: image,
                 outputImage: nil,
                 error: error,
-                startedAt: historyStarted
+                startedAt: historyStarted,
+                embedVisited8x8BlockCount: nil,
+                embedSmoothSkipped8x8BlockCount: nil
             )
             if !shouldSuppressSingleOperationNotification {
                 await deliverWatermarkNotificationIfAllowed {
@@ -285,13 +307,14 @@ class WatermarkService: WatermarkServiceProtocol {
                 
 
         let historyStarted = CFAbsoluteTimeGetCurrent()
+        var extractWorkForHistory: ExtractMatrixWorkResult?
 
         do {
             reportProgress(step: .extractPreparation, percentage: 0)
             reportProgress(step: .extractPreparation, percentage: 0.06)
 
             // important fix: use Task.detached to force the heavy matrix computation to run in the background concurrency pool
-            let payloadBits = try await Task.detached(priority: .userInitiated) { [weak self] in
+            let work = try await Task.detached(priority: .userInitiated) { [weak self] in
                 guard let self = self else { throw WatermarkError.processingError }
 
                 // 1. image preprocessing
@@ -300,36 +323,64 @@ class WatermarkService: WatermarkServiceProtocol {
                 }
                 let yChannel = ycbcrImage.Y
                 await reportProgress(step: .extractConvertToYCbCr, percentage: 0.12)
-                
+
                 // 2. physical and logical alignment
-                guard let gridOffset = await self.findGridOffsetAndSyncMarker(in: yChannel, onOffsetProgress: { t in
+                let gridScan = await self.findGridOffsetAndSyncMarker(in: yChannel, onOffsetProgress: { t in
                     // Map alignment scan into [0.12, 0.55].
                     let pct = 0.12 + (0.55 - 0.12) * min(max(t, 0), 1)
                     reportProgress(step: .extractOffsetScan, percentage: pct)
-                }) else {
-                    throw WatermarkError.extractFailed
-                }
+                })
                 await reportProgress(step: .extractOffsetScan, percentage: 0.55)
-                
+
+                guard let gridOffset = gridScan.offset else {
+                    return ExtractMatrixWorkResult(
+                        payloadBitsWithoutSync: [],
+                        offsetScanBestSyncBits: gridScan.bestSyncBitsMatched,
+                        gridOffsetX: nil,
+                        gridOffsetY: nil,
+                        rawBitGridRows: 0,
+                        rawBitGridCols: 0,
+                        majorityBestSyncBits: nil,
+                        majorityMacroTileWidth: nil
+                    )
+                }
+
                 // 3. data extraction
                 let rawExtractedBits = await self.extractBitsWithOffset(yChannel, offset: gridOffset)
                 await reportProgress(step: .extractBitGrid, percentage: 0.72)
-                
+
                 // 4. data recovery and decoding
-                let votedBits = await self.applyMajorityVoting(to: rawExtractedBits)
+                let voting = await self.applyMajorityVotingWithDiagnostics(to: rawExtractedBits)
+                let votedBits = voting.bits
                 await reportProgress(step: .extractMajorityVoting, percentage: 0.85)
-                
+
                 #if DEBUG
                 let rows = rawExtractedBits.count
                 let cols = rawExtractedBits.first?.count ?? 0
                 print("[WatermarkService] DEBUG extract: gridOffset=(\(Int(gridOffset.x)),\(Int(gridOffset.y))) rawBits=\(rows)x\(cols) votedBits=\(votedBits.count)")
                 #endif
-                
-                // remove the sync header
-                let syncCount = await getSyncMarkerBits().count
-                return votedBits.count >= syncCount ? Array(votedBits.dropFirst(syncCount)) : []
-            }.value // wait for the background computation result
 
+                let syncCount = getSyncMarkerBits().count
+                let payload = votedBits.count >= syncCount ? Array(votedBits.dropFirst(syncCount)) : []
+                let maj = voting.diagnostics
+                return ExtractMatrixWorkResult(
+                    payloadBitsWithoutSync: payload,
+                    offsetScanBestSyncBits: gridScan.bestSyncBitsMatched,
+                    gridOffsetX: Int(gridOffset.x),
+                    gridOffsetY: Int(gridOffset.y),
+                    rawBitGridRows: rawExtractedBits.count,
+                    rawBitGridCols: rawExtractedBits.first?.count ?? 0,
+                    majorityBestSyncBits: maj?.bestSyncBitsMatched,
+                    majorityMacroTileWidth: maj?.macroTileWidth
+                )
+            }.value // wait for the background computation result
+            extractWorkForHistory = work
+
+            if work.gridOffsetX == nil || work.gridOffsetY == nil {
+                throw WatermarkError.extractFailed
+            }
+
+            let payloadBits = work.payloadBitsWithoutSync
 
             #if DEBUG
             if !payloadBits.isEmpty {
@@ -369,7 +420,8 @@ class WatermarkService: WatermarkServiceProtocol {
                         image: image,
                         extractedText: correctedText,
                         error: nil,
-                        startedAt: historyStarted
+                        startedAt: historyStarted,
+                        work: work
                     )
                     if !shouldSuppressSingleOperationNotification {
                         await deliverWatermarkNotificationIfAllowed {
@@ -396,7 +448,8 @@ class WatermarkService: WatermarkServiceProtocol {
                 image: image,
                 extractedText: nil,
                 error: error,
-                startedAt: historyStarted
+                startedAt: historyStarted,
+                work: extractWorkForHistory
             )
             if !shouldSuppressSingleOperationNotification {
                 await deliverWatermarkNotificationIfAllowed {
@@ -562,7 +615,9 @@ class WatermarkService: WatermarkServiceProtocol {
         inputImage: UIImage,
         outputImage: UIImage?,
         error: Error?,
-        startedAt: CFAbsoluteTime
+        startedAt: CFAbsoluteTime,
+        embedVisited8x8BlockCount: Int? = nil,
+        embedSmoothSkipped8x8BlockCount: Int? = nil
     ) async {
         guard await userAllowsEmbedHistoryRecords() else { return }
         guard let ctx = historyModelContext else { return }
@@ -573,7 +628,9 @@ class WatermarkService: WatermarkServiceProtocol {
             payloadText: text,
             sourceImageForThumbnail: thumbnailSource,
             error: error,
-            durationMs: durationMs
+            durationMs: durationMs,
+            embedVisited8x8BlockCount: embedVisited8x8BlockCount,
+            embedSmoothSkipped8x8BlockCount: embedSmoothSkipped8x8BlockCount
         )
         await MainActor.run {
             HistoryRecordService.insertAndSave(record, context: ctx)
@@ -585,18 +642,33 @@ class WatermarkService: WatermarkServiceProtocol {
         image: UIImage,
         extractedText: String?,
         error: Error?,
-        startedAt: CFAbsoluteTime
+        startedAt: CFAbsoluteTime,
+        work: ExtractMatrixWorkResult? = nil
     ) async {
         guard await userAllowsEmbedHistoryRecords() else { return }
         guard let ctx = historyModelContext else { return }
         let durationMs = (CFAbsoluteTimeGetCurrent() - startedAt) * 1000
+        let rawRows: Int? = {
+            guard let w = work, w.rawBitGridRows > 0 else { return nil }
+            return w.rawBitGridRows
+        }()
+        let rawCols: Int? = {
+            guard let w = work, w.rawBitGridCols > 0 else { return nil }
+            return w.rawBitGridCols
+        }()
         let record = HistoryRecordService.makeExtractRecord(
             succeeded: succeeded,
             extractedText: extractedText,
             sourceImage: image,
             error: error,
             durationMs: durationMs,
-            syncMatchCount: nil
+            syncMatchCount: work?.offsetScanBestSyncBits,
+            extractGridOffsetXPx: work?.gridOffsetX,
+            extractGridOffsetYPx: work?.gridOffsetY,
+            extractMajoritySyncBits: work?.majorityBestSyncBits,
+            extractMacroTileWidth: work?.majorityMacroTileWidth,
+            extractRawBitGridRows: rawRows,
+            extractRawBitGridCols: rawCols
         )
         await MainActor.run {
             HistoryRecordService.insertAndSave(record, context: ctx)

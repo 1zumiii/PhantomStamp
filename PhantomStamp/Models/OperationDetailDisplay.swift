@@ -47,7 +47,16 @@ struct OperationDetailDisplay {
     var imagePixelWidth: Int?
     var imagePixelHeight: Int?
     var occurredAt: Date
+    /// Offset-scan phase: best sync bits matched (out of 32). Extract only; embed rows leave this `nil`.
     var syncMatchCount: Int?
+    var embedVisited8x8BlockCount: Int?
+    var embedSmoothSkipped8x8BlockCount: Int?
+    var extractGridOffsetXPx: Int?
+    var extractGridOffsetYPx: Int?
+    var extractMajoritySyncBits: Int?
+    var extractMacroTileWidth: Int?
+    var extractRawBitGridRows: Int?
+    var extractRawBitGridCols: Int?
     /// When non-`nil`, this row exists in SwiftData history and may be deleted from the detail screen.
     var persistedHistoryRecordId: UUID?
 
@@ -63,6 +72,14 @@ struct OperationDetailDisplay {
         imagePixelHeight: Int?,
         occurredAt: Date,
         syncMatchCount: Int? = nil,
+        embedVisited8x8BlockCount: Int? = nil,
+        embedSmoothSkipped8x8BlockCount: Int? = nil,
+        extractGridOffsetXPx: Int? = nil,
+        extractGridOffsetYPx: Int? = nil,
+        extractMajoritySyncBits: Int? = nil,
+        extractMacroTileWidth: Int? = nil,
+        extractRawBitGridRows: Int? = nil,
+        extractRawBitGridCols: Int? = nil,
         persistedHistoryRecordId: UUID? = nil
     ) {
         self.imageName = imageName
@@ -76,6 +93,14 @@ struct OperationDetailDisplay {
         self.imagePixelHeight = imagePixelHeight
         self.occurredAt = occurredAt
         self.syncMatchCount = syncMatchCount
+        self.embedVisited8x8BlockCount = embedVisited8x8BlockCount
+        self.embedSmoothSkipped8x8BlockCount = embedSmoothSkipped8x8BlockCount
+        self.extractGridOffsetXPx = extractGridOffsetXPx
+        self.extractGridOffsetYPx = extractGridOffsetYPx
+        self.extractMajoritySyncBits = extractMajoritySyncBits
+        self.extractMacroTileWidth = extractMacroTileWidth
+        self.extractRawBitGridRows = extractRawBitGridRows
+        self.extractRawBitGridCols = extractRawBitGridCols
         self.persistedHistoryRecordId = persistedHistoryRecordId
     }
 
@@ -119,6 +144,14 @@ extension OperationDetailDisplay {
             imagePixelHeight: ih,
             occurredAt: record.createdAt,
             syncMatchCount: nil,
+            embedVisited8x8BlockCount: nil,
+            embedSmoothSkipped8x8BlockCount: nil,
+            extractGridOffsetXPx: nil,
+            extractGridOffsetYPx: nil,
+            extractMajoritySyncBits: nil,
+            extractMacroTileWidth: nil,
+            extractRawBitGridRows: nil,
+            extractRawBitGridCols: nil,
             persistedHistoryRecordId: nil
         )
     }
@@ -141,6 +174,14 @@ extension OperationDetailDisplay {
             imagePixelHeight: record.imageHeight > 0 ? record.imageHeight : nil,
             occurredAt: record.timestamp,
             syncMatchCount: record.syncMatchCount,
+            embedVisited8x8BlockCount: record.embedVisited8x8BlockCount,
+            embedSmoothSkipped8x8BlockCount: record.embedSmoothSkipped8x8BlockCount,
+            extractGridOffsetXPx: record.extractGridOffsetXPx,
+            extractGridOffsetYPx: record.extractGridOffsetYPx,
+            extractMajoritySyncBits: record.extractMajoritySyncBits,
+            extractMacroTileWidth: record.extractMacroTileWidth,
+            extractRawBitGridRows: record.extractRawBitGridRows,
+            extractRawBitGridCols: record.extractRawBitGridCols,
             persistedHistoryRecordId: record.id
         )
     }

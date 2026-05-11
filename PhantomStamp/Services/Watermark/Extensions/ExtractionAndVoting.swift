@@ -14,6 +14,14 @@
 import CoreGraphics
 import Foundation
 
+/// Diagnostics from the macro-tile sync relocation + majority-voting fold.
+struct MajorityVotingDiagnostics: Sendable {
+    /// Best 32-bit sync match score on the extracted bit grid (same scale as offset scan: out of 32).
+    var bestSyncBitsMatched: Int
+    var macroTileWidth: Int
+    var votedMacroblockBitCount: Int
+}
+
 extension WatermarkService {
     func extractBitsWithOffset(_ matrix: Matrix, offset: CGPoint) -> [[Int]] {
         let startX = Int(offset.x)
@@ -46,8 +54,8 @@ extension WatermarkService {
         return bitGrid
     }
 
-    func applyMajorityVoting(to bits: [[Int]]) -> [Int] {
-        guard !bits.isEmpty, !bits[0].isEmpty else { return [] }
+    func applyMajorityVotingWithDiagnostics(to bits: [[Int]]) -> (bits: [Int], diagnostics: MajorityVotingDiagnostics?) {
+        guard !bits.isEmpty, !bits[0].isEmpty else { return ([], nil) }
         let maxRows = bits.count
         let maxCols = bits[0].count
         let syncMarker = getSyncMarkerBits()
@@ -218,7 +226,14 @@ extension WatermarkService {
             if bestMatchCount == 32 { break }
         }
 
-        guard bestMatchCount >= (syncCount - tolerance) else { return [] }
+        guard bestMatchCount >= (syncCount - tolerance) else {
+            let diag = MajorityVotingDiagnostics(
+                bestSyncBitsMatched: max(0, bestMatchCount),
+                macroTileWidth: bestW,
+                votedMacroblockBitCount: 0
+            )
+            return ([], diag)
+        }
         // If we found at least one candidate above sync tolerance but none yields a plausible payload length,
         // extraction is too noisy—fail closed.
         if !bestLengthValid {
@@ -263,7 +278,12 @@ extension WatermarkService {
                     }
                     #endif
                     if decoded != nil {
-                        return votedMacroblock
+                        let diag = MajorityVotingDiagnostics(
+                            bestSyncBitsMatched: c.matchCount,
+                            macroTileWidth: w,
+                            votedMacroblockBitCount: votedMacroblock.count
+                        )
+                        return (votedMacroblock, diag)
                     }
                 }
             }
@@ -273,13 +293,29 @@ extension WatermarkService {
             #if DEBUG
             print("[WatermarkService] DEBUG voting: all fallback decode attempts failed; returning best-sync macroblock (w=\(bestW) bx=\(bestBx) by=\(bestBy))")
             #endif
-            return computeVotedMacroblock(w: bestW, bx: bestBx, by: bestBy)
+            let voted = computeVotedMacroblock(w: bestW, bx: bestBx, by: bestBy)
+            let diag = MajorityVotingDiagnostics(
+                bestSyncBitsMatched: bestMatchCount,
+                macroTileWidth: bestW,
+                votedMacroblockBitCount: voted.count
+            )
+            return (voted, diag)
         }
         #if DEBUG
         print("[WatermarkService] DEBUG voting: best sync=\(bestMatchCount)/32 w=\(bestW) len=\(bestLengthByte) bx=\(bestBx) by=\(bestBy)")
         #endif
 
-        return computeVotedMacroblock(w: bestW, bx: bestBx, by: bestBy)
+        let voted = computeVotedMacroblock(w: bestW, bx: bestBx, by: bestBy)
+        let diag = MajorityVotingDiagnostics(
+            bestSyncBitsMatched: bestMatchCount,
+            macroTileWidth: bestW,
+            votedMacroblockBitCount: voted.count
+        )
+        return (voted, diag)
+    }
+
+    func applyMajorityVoting(to bits: [[Int]]) -> [Int] {
+        applyMajorityVotingWithDiagnostics(to: bits).bits
     }
 }
 

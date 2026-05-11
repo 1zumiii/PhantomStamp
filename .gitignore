@@ -44,7 +44,7 @@ fastlane/screenshots/**/*.png
 fastlane/test_output
 fastlane/.env*
 
-# Code Injection / 临时
+# Code Injection / Temporary files
 *.swp
 *~.nib
 *.bak

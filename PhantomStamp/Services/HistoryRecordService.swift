@@ -130,6 +130,8 @@ enum HistoryRecordService {
         sourceImageForThumbnail: UIImage,
         error: Error?,
         durationMs: Double,
+        embedVisited8x8BlockCount: Int? = nil,
+        embedSmoothSkipped8x8BlockCount: Int? = nil,
         thumbnailJPEGQuality: CGFloat = 0.5
     ) -> WatermarkHistoryRecord {
         let dims = pixelWidthHeight(of: sourceImageForThumbnail)
@@ -150,7 +152,9 @@ enum HistoryRecordService {
                 imageWidth: dims.width,
                 imageHeight: dims.height,
                 processingDurationMs: durationMs,
-                syncMatchCount: nil
+                syncMatchCount: nil,
+                embedVisited8x8BlockCount: embedVisited8x8BlockCount,
+                embedSmoothSkipped8x8BlockCount: embedSmoothSkipped8x8BlockCount
             )
         }
         return WatermarkHistoryRecord(
@@ -163,7 +167,9 @@ enum HistoryRecordService {
             imageWidth: dims.width,
             imageHeight: dims.height,
             processingDurationMs: durationMs,
-            syncMatchCount: nil
+            syncMatchCount: nil,
+            embedVisited8x8BlockCount: embedVisited8x8BlockCount,
+            embedSmoothSkipped8x8BlockCount: embedSmoothSkipped8x8BlockCount
         )
     }
 
@@ -175,6 +181,12 @@ enum HistoryRecordService {
         error: Error?,
         durationMs: Double,
         syncMatchCount: Int? = nil,
+        extractGridOffsetXPx: Int? = nil,
+        extractGridOffsetYPx: Int? = nil,
+        extractMajoritySyncBits: Int? = nil,
+        extractMacroTileWidth: Int? = nil,
+        extractRawBitGridRows: Int? = nil,
+        extractRawBitGridCols: Int? = nil,
         thumbnailJPEGQuality: CGFloat = 0.5
     ) -> WatermarkHistoryRecord {
         let dims = pixelWidthHeight(of: sourceImage)
@@ -195,7 +207,13 @@ enum HistoryRecordService {
                 imageWidth: dims.width,
                 imageHeight: dims.height,
                 processingDurationMs: durationMs,
-                syncMatchCount: syncMatchCount
+                syncMatchCount: syncMatchCount,
+                extractGridOffsetXPx: extractGridOffsetXPx,
+                extractGridOffsetYPx: extractGridOffsetYPx,
+                extractMajoritySyncBits: extractMajoritySyncBits,
+                extractMacroTileWidth: extractMacroTileWidth,
+                extractRawBitGridRows: extractRawBitGridRows,
+                extractRawBitGridCols: extractRawBitGridCols
             )
         }
         return WatermarkHistoryRecord(
@@ -208,7 +226,13 @@ enum HistoryRecordService {
             imageWidth: dims.width,
             imageHeight: dims.height,
             processingDurationMs: durationMs,
-            syncMatchCount: syncMatchCount
+            syncMatchCount: syncMatchCount,
+            extractGridOffsetXPx: extractGridOffsetXPx,
+            extractGridOffsetYPx: extractGridOffsetYPx,
+            extractMajoritySyncBits: extractMajoritySyncBits,
+            extractMacroTileWidth: extractMacroTileWidth,
+            extractRawBitGridRows: extractRawBitGridRows,
+            extractRawBitGridCols: extractRawBitGridCols
         )
     }
 }

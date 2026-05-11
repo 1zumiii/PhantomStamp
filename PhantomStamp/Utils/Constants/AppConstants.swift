@@ -157,9 +157,5 @@ enum AppConstants {
         enum Footer {
             static let versionPrefix = "PhantomStamp v"
         }
-
-        enum Preview {
-            static let sectionCaption = "Example Description"
-        }
     }
 }

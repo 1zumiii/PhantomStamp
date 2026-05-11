@@ -22,6 +22,7 @@ struct ExtractionDetailView: View {
                 headerRow
                 messageCard
                 metricsGrid
+                algorithmDiagnosticsSection
                 failureCard
             }
             .padding(.horizontal, 20)
@@ -267,8 +268,85 @@ struct ExtractionDetailView: View {
                 metricCard(title: "Format", value: formatText, systemImage: "doc")
             }
             metricCard(title: "Image size", value: sizeText, systemImage: "arrow.up.left.and.arrow.down.right")
-            if display.operationKind == .extract, let sync = display.syncMatchCount {
-                metricCard(title: "Sync matches", value: "\(sync)", systemImage: "checklist")
+        }
+    }
+
+    @ViewBuilder
+    private var algorithmDiagnosticsSection: some View {
+        switch display.operationKind {
+        case .embed:
+            embedDiagnosticsContent
+        case .extract:
+            extractDiagnosticsContent
+        }
+    }
+
+    @ViewBuilder
+    private var embedDiagnosticsContent: some View {
+        let visited = display.embedVisited8x8BlockCount
+        let skipped = display.embedSmoothSkipped8x8BlockCount
+        if visited == nil, skipped == nil {
+            EmptyView()
+        } else {
+            VStack(alignment: .leading, spacing: 12) {
+                Text("EMBED DIAGNOSTICS")
+                    .font(.caption.weight(.semibold))
+                    .foregroundStyle(.secondary)
+
+                if let v = visited {
+                    metricCard(title: "8×8 blocks scanned", value: "\(v)", systemImage: "square.grid.3x3")
+                }
+                if let s = skipped {
+                    metricCard(title: "Smooth blocks skipped", value: "\(s)", systemImage: "wind")
+                }
+                if let v = visited, v > 0 {
+                    let s = skipped ?? 0
+                    let embedded = max(0, v - s)
+                    let pct = 100.0 * Double(embedded) / Double(v)
+                    metricCard(
+                        title: "Effective embed rate",
+                        value: String(format: "%.1f%% (%d / %d)", pct, embedded, v),
+                        systemImage: "percent"
+                    )
+                }
+            }
+        }
+    }
+
+    @ViewBuilder
+    private var extractDiagnosticsContent: some View {
+        let hasAny = display.syncMatchCount != nil
+            || display.extractGridOffsetXPx != nil
+            || display.extractGridOffsetYPx != nil
+            || display.extractMajoritySyncBits != nil
+            || display.extractMacroTileWidth != nil
+            || display.extractRawBitGridRows != nil
+            || display.extractRawBitGridCols != nil
+        if !hasAny {
+            EmptyView()
+        } else {
+            VStack(alignment: .leading, spacing: 12) {
+                Text("EXTRACT DIAGNOSTICS")
+                    .font(.caption.weight(.semibold))
+                    .foregroundStyle(.secondary)
+
+                if let sync = display.syncMatchCount {
+                    metricCard(title: "Offset scan sync (best /32)", value: "\(sync) / 32", systemImage: "scope")
+                }
+                if display.extractGridOffsetXPx != nil || display.extractGridOffsetYPx != nil {
+                    let xStr = display.extractGridOffsetXPx.map(String.init) ?? "—"
+                    let yStr = display.extractGridOffsetYPx.map(String.init) ?? "—"
+                    metricCard(title: "Pixel grid offset", value: "(\(xStr), \(yStr))", systemImage: "arrow.up.left")
+                }
+                if let rows = display.extractRawBitGridRows, let cols = display.extractRawBitGridCols {
+                    metricCard(title: "Raw bit grid", value: "\(rows) × \(cols)", systemImage: "square.grid.2x2")
+                }
+                if let maj = display.extractMajoritySyncBits {
+                    metricCard(title: "Majority vote sync (best /32)", value: "\(maj) / 32", systemImage: "checkmark.circle")
+                }
+                if let w = display.extractMacroTileWidth {
+                    metricCard(title: "Macro tile width W", value: "\(w)", systemImage: "rectangle.split.3x3")
+                }
             }
         }
     }

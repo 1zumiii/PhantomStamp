@@ -50,8 +50,28 @@ final class WatermarkHistoryRecord {
     
     /// Processing time (milliseconds)
     var processingDurationMs: Double
-    /// If Extract, you can record the number of found sync headers (e.g. 32, representing perfect match)
+    /// Offset-scan phase: best sync bits matched out of 32 (pixel grid search).
     var syncMatchCount: Int?
+
+    // MARK: Embed diagnostics (optional; older rows may be nil)
+
+    /// Total 8×8 block positions visited during strip embedding.
+    var embedVisited8x8BlockCount: Int?
+    /// Blocks skipped as “too smooth” (variance below threshold) and not modified.
+    var embedSmoothSkipped8x8BlockCount: Int?
+
+    // MARK: Extract diagnostics (optional)
+
+    /// Chosen physical pixel offset of the 8×8 grid (sub-block alignment).
+    var extractGridOffsetXPx: Int?
+    var extractGridOffsetYPx: Int?
+    /// Majority-voting phase: best sync header match (out of 32) on the bit grid.
+    var extractMajoritySyncBits: Int?
+    /// Inferred macro-tile width W used when folding tiles (typically 8…18).
+    var extractMacroTileWidth: Int?
+    /// Size of the raw per-block bit grid after `extractBitsWithOffset`.
+    var extractRawBitGridRows: Int?
+    var extractRawBitGridCols: Int?
     
     init(
         id: UUID = UUID(),
@@ -65,7 +85,15 @@ final class WatermarkHistoryRecord {
         imageWidth: Int = 0,
         imageHeight: Int = 0,
         processingDurationMs: Double = 0,
-        syncMatchCount: Int? = nil
+        syncMatchCount: Int? = nil,
+        embedVisited8x8BlockCount: Int? = nil,
+        embedSmoothSkipped8x8BlockCount: Int? = nil,
+        extractGridOffsetXPx: Int? = nil,
+        extractGridOffsetYPx: Int? = nil,
+        extractMajoritySyncBits: Int? = nil,
+        extractMacroTileWidth: Int? = nil,
+        extractRawBitGridRows: Int? = nil,
+        extractRawBitGridCols: Int? = nil
     ) {
         self.id = id
         self.timestamp = timestamp
@@ -79,5 +107,13 @@ final class WatermarkHistoryRecord {
         self.imageHeight = imageHeight
         self.processingDurationMs = processingDurationMs
         self.syncMatchCount = syncMatchCount
+        self.embedVisited8x8BlockCount = embedVisited8x8BlockCount
+        self.embedSmoothSkipped8x8BlockCount = embedSmoothSkipped8x8BlockCount
+        self.extractGridOffsetXPx = extractGridOffsetXPx
+        self.extractGridOffsetYPx = extractGridOffsetYPx
+        self.extractMajoritySyncBits = extractMajoritySyncBits
+        self.extractMacroTileWidth = extractMacroTileWidth
+        self.extractRawBitGridRows = extractRawBitGridRows
+        self.extractRawBitGridCols = extractRawBitGridCols
     }
 }

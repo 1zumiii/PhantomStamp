@@ -11,11 +11,19 @@
 import CoreGraphics
 import Foundation
 
+/// Result of the 64-pixel-offset scan plus sliding-window sync search on the bit grid.
+struct GridOffsetScanResult: Sendable {
+    /// Physical top-left offset of the 8×8 DCT grid when alignment succeeds.
+    var offset: CGPoint?
+    /// Best sync-header match (out of 32 bits) observed across all offsets and windows.
+    var bestSyncBitsMatched: Int
+}
+
 extension WatermarkService {
     /// Find the physical 8×8 grid offset by scanning 64 pixel offsets and locating the sync marker
     /// via a sliding window over the extracted bit grid.
     /// - Parameter onOffsetProgress: Called occasionally during the 64-offset scan; value is 0...1.
-    func findGridOffsetAndSyncMarker(in matrix: Matrix, onOffsetProgress: ((Double) -> Void)? = nil) -> CGPoint? {
+    func findGridOffsetAndSyncMarker(in matrix: Matrix, onOffsetProgress: ((Double) -> Void)? = nil) -> GridOffsetScanResult {
         let syncMarker = getSyncMarkerBits()
         let tolerance = 4
 
@@ -87,7 +95,10 @@ extension WatermarkService {
                                 #if DEBUG
                                 print("[WatermarkService] DEBUG gridOffset best=32/32 offset=(\(offsetX),\(offsetY)) bx=\(bx) by=\(by) w=\(w)")
                                 #endif
-                                return CGPoint(x: offsetX, y: offsetY)
+                                return GridOffsetScanResult(
+                                    offset: CGPoint(x: offsetX, y: offsetY),
+                                    bestSyncBitsMatched: 32
+                                )
                             }
                         }
                     }
@@ -99,7 +110,7 @@ extension WatermarkService {
             #if DEBUG
             print("[WatermarkService] DEBUG gridOffset best=\(bestMatchCount)/32 offset=(\(bestDetails.offsetX),\(bestDetails.offsetY)) bx=\(bestDetails.bx) by=\(bestDetails.by) w=\(bestDetails.w)")
             #endif
-            return bestOffset
+            return GridOffsetScanResult(offset: bestOffset, bestSyncBitsMatched: bestMatchCount)
         }
 
         #if DEBUG
@@ -109,7 +120,7 @@ extension WatermarkService {
             print("[WatermarkService] DEBUG gridOffset no-hit best=<none>")
         }
         #endif
-        return nil
+        return GridOffsetScanResult(offset: nil, bestSyncBitsMatched: max(0, bestMatchCount))
     }
 
     /// Extract the 8×8 spatial-domain block from the global Y channel matrix based on absolute coordinates.

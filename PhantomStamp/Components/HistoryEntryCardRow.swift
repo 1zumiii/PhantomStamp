@@ -109,7 +109,7 @@ private struct HistoryRowMeta {
     }
 
     private static func parseWatermarkName(from message: String) -> String? {
-        if let v = extractBetween(message, start: "文案：", end: "）") { return v }
+        if let v = extractBetween(message, start: "Text:", end: ")") { return v }
         if let v = extractAfter(message, prefix: "text:") { return v.trimmingCharacters(in: .whitespacesAndNewlines) }
         return nil
     }

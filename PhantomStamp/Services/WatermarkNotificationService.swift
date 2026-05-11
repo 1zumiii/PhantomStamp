@@ -54,6 +54,7 @@ enum WatermarkOperationNotificationService {
     // MARK: - Single image
 
     static func notifySingleEmbedFinished(success: Bool, error: Error?) async {
+        try? await Task.sleep(nanoseconds: 8_000_000_000)
         if success {
             await scheduleImmediate(
                 title: AppConstants.Copy.WatermarkPush.embedSingleSuccessTitle,

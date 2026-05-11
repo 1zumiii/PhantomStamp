@@ -12,8 +12,10 @@ extension WatermarkService {
     // ==========================================
     // Strip embedding
     // ==========================================
-    func processSingleStripForEmbedding(strip: ImageStrip, macroblock: Macroblock2D) -> ImageStrip {
+    func processSingleStripForEmbedding(strip: ImageStrip, macroblock: Macroblock2D) -> (strip: ImageStrip, visited8x8Blocks: Int, smoothSkipped8x8Blocks: Int) {
         var resultStrip = strip
+        var visited8x8Blocks = 0
+        var smoothSkipped8x8Blocks = 0
 
         // The macro-tile starts with: sync(32) + lengthHeader(8) + payload...
         let syncBitCount = getSyncMarkerBits().count
@@ -21,6 +23,7 @@ extension WatermarkService {
 
         for blockY in stride(from: 0, to: strip.height, by: 8) {
             for blockX in stride(from: 0, to: strip.width, by: 8) {
+                visited8x8Blocks += 1
                 var pixelBlock = strip.get8x8Block(x: blockX, y: blockY)
 
                 let variance = calculateVariance(pixelBlock)
@@ -32,7 +35,10 @@ extension WatermarkService {
                 // Previously we skipped low-variance blocks which can leave some macro-cells
                 // under-embedded, making extraction bits too noisy.
                 let thresholdSmooth: Float = -1.0
-                if variance < thresholdSmooth { continue }
+                if variance < thresholdSmooth {
+                    smoothSkipped8x8Blocks += 1
+                    continue
+                }
 
                 var freqBlock = performDCT(pixelBlock)
 
@@ -62,7 +68,7 @@ extension WatermarkService {
             }
         }
 
-        return resultStrip
+        return (resultStrip, visited8x8Blocks, smoothSkipped8x8Blocks)
     }
 
     /// Embeds one payload bit into the mid-frequency band of an 8×8 DCT block.

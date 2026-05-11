@@ -75,8 +75,9 @@ enum GridAlignmentTests {
             }
 
             let got = service.findGridOffsetAndSyncMarker(in: m)
-            guard check(got != nil) else { return (false, checks) }
-            guard let p = got else { return (false, checks) }
+            guard check(got.offset != nil) else { return (false, checks) }
+            guard let p = got.offset else { return (false, checks) }
+            guard check(got.bestSyncBitsMatched == 32) else { return (false, checks) }
             if Int(p.x) != tc.expectedOffsetX || Int(p.y) != tc.expectedOffsetY {
                 #if DEBUG
                 print("[GridAlignmentTests] DEBUG case: \(tc.name)")

@@ -38,6 +38,7 @@ struct WatermarkInsertView: View {
                 .padding(.horizontal, 20)
                 .padding(.vertical, 10)
             }
+            .navigationTitle("Embed Watermark")
             .scrollIndicators(.hidden)
             .background(Color(uiColor: .systemGroupedBackground))
 
