@@ -38,6 +38,7 @@ struct WatermarkInsertView: View {
                 .padding(.horizontal, 20)
                 .padding(.vertical, 10)
             }
+            .scrollDismissesKeyboard(.interactively)
             .navigationTitle("Embed Watermark")
             .scrollIndicators(.hidden)
             .background(Color(uiColor: .systemGroupedBackground))
@@ -381,6 +382,8 @@ struct WatermarkInsertView: View {
                     )
                     .lineLimit(1...3)
                     .focused($isPayloadFocused)
+                    .submitLabel(.done)
+                    .onSubmit { isPayloadFocused = false }
                     .textInputAutocapitalization(.sentences)
                     .autocorrectionDisabled(false)
                     .textFieldStyle(.plain)
@@ -416,6 +419,12 @@ struct WatermarkInsertView: View {
         .overlay {
             RoundedRectangle(cornerRadius: 18, style: .continuous)
                 .strokeBorder(Color.primary.opacity(0.05), lineWidth: 1)
+        }
+        .toolbar {
+            ToolbarItemGroup(placement: .keyboard) {
+                Spacer()
+                Button("Done") { isPayloadFocused = false }
+            }
         }
     }
 
