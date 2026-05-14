@@ -3,7 +3,7 @@
 
 
 - Github Repository: [https://github.com/1zumiii/PhantomStamp](https://github.com/1zumiii/PhantomStamp)
-- Video Presentation: [https://drive.google.com/file/d/15GnYQnf7gdtKGop4bj4VxN8G0tqVymbQ/view?usp=sharing](https://drive.google.com/file/d/15GnYQnf7gdtKGop4bj4VxN8G0tqVymbQ/view?usp=sharing)
+- Video Presentation: [https://drive.google.com/file/d/1rBPoBV3JAGi38SdUDUDxOj4K1WqetIcT/view?usp=sharing](https://drive.google.com/file/d/1rBPoBV3JAGi38SdUDUDxOj4K1WqetIcT/view?usp=sharing)
 - Prototype: [https://www.figma.com/proto/GKE5AVKHtmakByYIsy8D9o/PhantomStamp?node-id=0-1&t=nQGHNjCcTTFPQSyT-1](https://www.figma.com/proto/GKE5AVKHtmakByYIsy8D9o/PhantomStamp?node-id=0-1&t=nQGHNjCcTTFPQSyT-1)
 
 
