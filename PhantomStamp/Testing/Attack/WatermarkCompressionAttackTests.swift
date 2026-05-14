@@ -13,6 +13,22 @@ import Foundation
 import UIKit
 
 enum WatermarkCompressionAttackTests {
+    /// Keeps `UserSettingsStore` alive while `WatermarkService.settingsStore` is `weak`.
+    /// Threshold `-1` makes `variance < threshold` impossible for non‑negative block variance, so every 8×8 tile is actually embedded (matches historical test behavior).
+    @MainActor
+    private final class WatermarkServiceTestBinding {
+        let settingsStore: UserSettingsStore
+        let service: WatermarkService
+
+        init(textureVarianceThreshold: Double) {
+            let suite = UserDefaults(suiteName: "phantomstamp.testing.compression.\(UUID().uuidString)")!
+            settingsStore = UserSettingsStore(defaults: suite)
+            settingsStore.textureVarianceThreshold = textureVarianceThreshold
+            service = WatermarkService()
+            service.settingsStore = settingsStore
+        }
+    }
+
     struct Report: Sendable {
         var imageLoaded: Bool
         var embedSucceeded: Bool
@@ -64,7 +80,8 @@ enum WatermarkCompressionAttackTests {
         }
 
         let text = "Successful"
-        let service = WatermarkService()
+        let binding = await MainActor.run { WatermarkServiceTestBinding(textureVarianceThreshold: -1) }
+        let service = binding.service
 
         let watermarked: UIImage
         do {
@@ -156,7 +173,8 @@ enum WatermarkCompressionAttackTests {
         }
 
         let expectedText = "Successful"
-        let service = WatermarkService()
+        let binding = await MainActor.run { WatermarkServiceTestBinding(textureVarianceThreshold: -1) }
+        let service = binding.service
 
         let watermarked: UIImage
         do {
