@@ -42,6 +42,6 @@ extension AppConstants {
         static let saveToPhotos: Bool            = true
 
         /// Recommended default: subtle protection without killing redundancy.
-        static let textureVarianceThreshold: Double = 2.0
+        static let textureVarianceThreshold: Double = 0.0
     }
 }

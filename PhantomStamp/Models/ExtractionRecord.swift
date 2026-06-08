@@ -18,7 +18,7 @@ enum ExtractionStatus: String, CaseIterable, Identifiable {
     var tintColor: Color {
         switch self {
         case .pending:
-            return .orange
+            return .purple
         case .extracted:
             return .green
         case .failed:

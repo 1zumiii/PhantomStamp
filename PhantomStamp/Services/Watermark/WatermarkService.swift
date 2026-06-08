@@ -371,13 +371,13 @@ class WatermarkService: WatermarkServiceProtocol {
                 // ==========================================
                 // [New Feature] Extract Region + DFT Global Star Seeking
                 // ==========================================
-                let transformParams = self.detectGeometricTransforms(in: yChannel)
+                let transformParams = await self.detectGeometricTransforms(in: yChannel)
                 await reportProgress(step: .extractDetectTransforms, percentage: 0.20)
 
                 // ==========================================
                 // [New Feature] Spatial Domain Inverse Interpolation Correction (Deskewing)
                 // ==========================================
-                let deskewedYChannel = self.deskewImage(yChannel, angle: transformParams.angle, scale: transformParams.scale)
+                let deskewedYChannel = await self.deskewImage(yChannel, angle: transformParams.angle, scale: transformParams.scale)
                 await reportProgress(step: .extractDeskew, percentage: 0.28)
 
 
@@ -417,7 +417,7 @@ class WatermarkService: WatermarkServiceProtocol {
                 print("[WatermarkService] DEBUG extract: gridOffset=(\(Int(gridOffset.x)),\(Int(gridOffset.y))) rawBits=\(rows)x\(cols) votedBits=\(votedBits.count)")
                 #endif
 
-                let syncCount = getSyncMarkerBits().count
+                let syncCount = await getSyncMarkerBits().count
                 let payload = votedBits.count >= syncCount ? Array(votedBits.dropFirst(syncCount)) : []
                 let maj = voting.diagnostics
                 return ExtractMatrixWorkResult(

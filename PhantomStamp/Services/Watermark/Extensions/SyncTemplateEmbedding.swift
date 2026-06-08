@@ -72,8 +72,7 @@ extension WatermarkService {
     /// - Heavy I/O operation! This should be called ONCE per app lifecycle.
     ///   Cache the result in a static or singleton property.
     func loadSpatialSyncTemplate() -> FFTFloatMatrix {
-        // TODO: Implement JSON loading and parsing.
-        fatalError("Not implemented")
+        return WatermarkService.cachedSyncTemplate
     }
     
     /// Maps global image coordinates to local 512x512 template coordinates.
@@ -94,4 +93,40 @@ extension WatermarkService {
         // TODO: Implement min(max(value, 0.0), 255.0).
         return value
     }
+    
+    
+    // ==========================================
+    // MARK: - Pre-computed Sync Template Cache
+    // ==========================================
+    
+    private static let cachedSyncTemplate: FFTFloatMatrix = {
+        let fileName = "sync_template_512"
+        let ext = "bin"
+        
+        // Find the binary file in the App Bundle
+        guard let url = Bundle.main.url(forResource: fileName, withExtension: ext) else {
+            fatalError("Fatal error: Could not find \(fileName).\(ext) in the App Bundle! Please check the Target selection in Xcode.")
+        }
+        
+        do {
+            // Read the entire file into memory
+            let data = try Data(contentsOf: url)
+            
+            // Strictly validate file byte count: 512 * 512 * 4 bytes (each Float is 4 bytes)
+            let expectedBytes = 512 * 512 * 4
+            precondition(data.count == expectedBytes, "Template file corrupted: size not equal to \(expectedBytes) bytes")
+            
+            // High-performance pointer bridging: directly map the raw byte stream to a Float array, without any loop parsing overhead
+            let floatArray = data.withUnsafeBytes { (bufferPointer: UnsafeRawBufferPointer) -> [Float] in
+                // Bind the untyped memory buffer to a standard Float memory block
+                let boundPointer = bufferPointer.bindMemory(to: Float.self)
+                return Array(boundPointer)
+            }
+            
+            return FFTFloatMatrix(width: 512, height: 512, values: floatArray)
+            
+        } catch {
+            fatalError("Fatal error: Failed to load sync template binary file - \(error)")
+        }
+    }()
 }
