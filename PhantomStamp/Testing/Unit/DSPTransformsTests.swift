@@ -28,25 +28,25 @@ enum DSPTransformsTests {
         let service = WatermarkService()
 
         let constantValue: Float = 42
-        let constant = Matrix8x8(values: [Float](repeating: constantValue, count: Matrix8x8.elementCount))
+        let constant = DCTMatrix8x8(values: [Float](repeating: constantValue, count: DCTMatrix8x8.elementCount))
         let vConst = service.calculateVariance(constant)
         let varianceConstantPassed = WatermarkTestUtils.approxEqual(vConst, 0, eps: 1e-6)
 
-        let ramp = Matrix8x8(values: (0..<Matrix8x8.elementCount).map { Float($0) })
+        let ramp = DCTMatrix8x8(values: (0..<DCTMatrix8x8.elementCount).map { Float($0) })
         let vRamp = service.calculateVariance(ramp)
         let varianceRampPassed = WatermarkTestUtils.approxEqual(vRamp, 341.25, eps: 1e-4)
 
         let freqConst = service.performDCT(constant)
         var maxNonDCAbs: Float = 0
-        for u in 0..<Matrix8x8.side {
-            for v in 0..<Matrix8x8.side {
+        for u in 0..<DCTMatrix8x8.side {
+            for v in 0..<DCTMatrix8x8.side {
                 if u == 0 && v == 0 { continue }
                 maxNonDCAbs = max(maxNonDCAbs, abs(freqConst[u, v]))
             }
         }
         let dctConstantDcOnlyPassed = maxNonDCAbs <= 1e-3
 
-        let randomBlock = Matrix8x8(values: WatermarkTestUtils.makeDeterministicBlock(seed: 0xC0FFEE))
+        let randomBlock = DCTMatrix8x8(values: WatermarkTestUtils.makeDeterministicBlock(seed: 0xC0FFEE))
         let roundTripped = service.performIDCT(service.performDCT(randomBlock))
         let (maxAbsError, mae) = WatermarkTestUtils.errorMetrics(a: randomBlock.values, b: roundTripped.values)
         let dctIdctRoundTripPassed = maxAbsError <= 1e-2 && mae <= 5e-3

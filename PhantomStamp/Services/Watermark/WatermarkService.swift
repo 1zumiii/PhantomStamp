@@ -235,6 +235,16 @@ class WatermarkService: WatermarkServiceProtocol {
             reassembleStrips(imageStrips, into: &ycbcrImage.Y)
             reportProgress(step: .reassembling, percentage: stripsEnd + (1 - stripsEnd) * 0.52)
             
+
+            // ==========================================
+            // New Feature: Upgrade to Hybrid Architecture
+            // Add DFT Frequency-Domain Sync Template to protect Geometric Attacks
+            // ==========================================
+            let syncTemplate = loadSpatialSyncTemplate()
+            let templateIntensity: Float = 2.5 // control the intensity of the template ripple
+            applySpatialTiling(to: &ycbcrImage.Y, template: syncTemplate, intensity: templateIntensity)
+
+
             // Final color conversion back to UIImage.
             reportProgress(step: .rgbRebuild, percentage: stripsEnd + (1 - stripsEnd) * 0.72)
 
@@ -351,8 +361,28 @@ class WatermarkService: WatermarkServiceProtocol {
                 let yChannel = ycbcrImage.Y
                 await reportProgress(step: .extractConvertToYCbCr, percentage: 0.12)
 
+
+                // ==========================================
+                // New Feature: Upgrade to Hybrid Architecture
+                // Added correction for geometric attacks such as scaling and rotation
+                // ==========================================
+
+
+                // ==========================================
+                // [New Feature] Extract Region + DFT Global Star Seeking
+                // ==========================================
+                let transformParams = self.detectGeometricTransforms(in: yChannel)
+                await reportProgress(step: .extractDetectTransforms, percentage: 0.20)
+
+                // ==========================================
+                // [New Feature] Spatial Domain Inverse Interpolation Correction (Deskewing)
+                // ==========================================
+                let deskewedYChannel = self.deskewImage(yChannel, angle: transformParams.angle, scale: transformParams.scale)
+                await reportProgress(step: .extractDeskew, percentage: 0.28)
+
+
                 // 2. physical and logical alignment
-                let gridScan = await self.findGridOffsetAndSyncMarker(in: yChannel, onOffsetProgress: { t in
+                let gridScan = await self.findGridOffsetAndSyncMarker(in: deskewedYChannel, onOffsetProgress: { t in
                     // Map alignment scan into [0.12, 0.55].
                     let pct = 0.12 + (0.55 - 0.12) * min(max(t, 0), 1)
                     reportProgress(step: .extractOffsetScan, percentage: pct)

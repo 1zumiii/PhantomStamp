@@ -53,8 +53,8 @@ enum GridAlignmentTests {
         ]
 
         for tc in cases {
-            let width = tc.expectedOffsetX + tc.blockCount * Matrix8x8.side + 8
-            let height = tc.expectedOffsetY + tc.blockCount * Matrix8x8.side + 8
+            let width = tc.expectedOffsetX + tc.blockCount * DCTMatrix8x8.side + 8
+            let height = tc.expectedOffsetY + tc.blockCount * DCTMatrix8x8.side + 8
 
             var m = Matrix(width: width, height: height, data: [])
             m.data = [UInt8](repeating: 0, count: width * height)
@@ -67,8 +67,8 @@ enum GridAlignmentTests {
             for i in 0..<32 {
                 let r = tc.by + (i / tc.w)
                 let c = tc.bx + (i % tc.w)
-                let px = tc.expectedOffsetX + c * Matrix8x8.side
-                let py = tc.expectedOffsetY + r * Matrix8x8.side
+                let px = tc.expectedOffsetX + c * DCTMatrix8x8.side
+                let py = tc.expectedOffsetY + r * DCTMatrix8x8.side
                 let stampedBit = tc.mismatchedBits.contains(i) ? (1 - sync[i]) : sync[i]
                 let spatial = makeSpatialBlockForEmbeddedBit(service: service, bit: stampedBit, seed: UInt64(0xABC000 + i) ^ tc.seed)
                 writeSpatialBlock(&m, spatial, x: px, y: py)
@@ -100,9 +100,9 @@ enum GridAlignmentTests {
         return (true, checks)
     }
 
-    private static func makeSpatialBlockForEmbeddedBit(service: WatermarkService, bit: Int, seed: UInt64) -> Matrix8x8 {
+    private static func makeSpatialBlockForEmbeddedBit(service: WatermarkService, bit: Int, seed: UInt64) -> DCTMatrix8x8 {
         var rng = WatermarkTestUtils.SplitMix64(state: seed)
-        var spatial = Matrix8x8(values: [Float](repeating: 0, count: Matrix8x8.elementCount))
+        var spatial = DCTMatrix8x8(values: [Float](repeating: 0, count: DCTMatrix8x8.elementCount))
         for i in 0..<spatial.values.count {
             spatial.values[i] = rng.nextUnitFloat() * 160.0 + 40.0
         }
@@ -111,9 +111,9 @@ enum GridAlignmentTests {
         return service.performIDCT(freq)
     }
 
-    private static func writeSpatialBlock(_ matrix: inout Matrix, _ block: Matrix8x8, x: Int, y: Int) {
-        for row in 0..<Matrix8x8.side {
-            for col in 0..<Matrix8x8.side {
+    private static func writeSpatialBlock(_ matrix: inout Matrix, _ block: DCTMatrix8x8, x: Int, y: Int) {
+        for row in 0..<DCTMatrix8x8.side {
+            for col in 0..<DCTMatrix8x8.side {
                 matrix.data[(y + row) * matrix.width + (x + col)] = UInt8(clamping: Int(block[row, col].rounded()))
             }
         }
