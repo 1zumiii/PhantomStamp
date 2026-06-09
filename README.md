@@ -47,8 +47,6 @@ The extraction algorithm operates entirely blindly (requires no original image):
 - **64-Offset Sliding Window Scan:** Re-aligns the grid origin perfectly even if the image suffers from severe translation or cropping attacks.
 - **Global Majority Voting:** The 2D watermark tile is redundantly paved across the entire image. The algorithm aggregates surviving data from all valid fragments (including edge-cropped macroblocks) to recover the most likely true payload. This approach survives severe JPEG compression at quality levels as low as ~51%.
 
----
-
 ## 4. Technical Highlights
 
 - **Pareto-Optimal DSP Trade-offs:** Achieved an idealized equilibrium in the frequency domain. By introducing a **Gaussian Prior Probability Weighting** during the sub-pixel peak fitting phase (Matched Filtering), the system perfectly neutralizes the $1/f^2$ spectral leakage ("DC pull") inherent in natural images. This yields a static alignment error of practically zero ($\approx 0.001^\circ$ angle, $<0.0001$ scale) while sustaining robust detection under isotropic scaling up to 1.50x+.
@@ -58,7 +56,23 @@ The extraction algorithm operates entirely blindly (requires no original image):
 - **Event-Driven MVVM & State Machine:** Completely decouples complex mathematical transformations from the View layer. The UI is driven by a robust enumeration-based state machine and `CheckedContinuation`, achieving a true zero-polling event-driven pump that consumes negligible CPU overhead when idle.
 - **Adaptive Backpressure via Min-Heap:** Developed a highly resilient SwiftUI progress overlay to handle the massive influx of out-of-order progress events from the concurrent backend. It utilizes a custom **Min-Heap priority queue** to reduce sorting overhead from `O(n log n)` to amortized `O(log n)`. Combined with dynamic pacing, it automatically fast-forwards animations under heavy event backlogs, ensuring smooth 60fps rendering without freezing the main thread.
 
-## 5. Tech Stack
+## 5. Performance & Limit Testing
+
+PhantomStamp employs a rigorous, automated **Smart Step Boundary Scan** to evaluate the hybrid architecture's absolute physical limits under severe geometric attacks. By differentiating between algorithmic failures and theoretical DSP boundaries, the system is calibrated to the Pareto-Optimal point.
+
+### 5.1 Geometric Resilience (Intensity = 4.0 - 5.0)
+- **Static Precision:** Utilizing a Sub-pixel Parabolic Fitting combined with a Matched Gaussian Prior Filter, the extraction drift is practically eliminated (Angle Error $\le 0.002^\circ$, Scale Relative Error $\le 0.0003$).
+- **Rotation Resilience:** Operates flawlessly within $(-45^\circ, 45^\circ)$. To break the theoretical 4-fold symmetry ambiguity inherent to cross-shaped FFT spectra, an elegant heuristic retry mechanism is integrated into the FEC layer, testing orthogonal hypotheses to achieve full $360^\circ$ immunity.
+- **Scaling Resilience:** Demonstrates highly asymmetric robustness tailored for real-world screenshot attacks. It survives severe image upscaling up to **1.50x**, while gracefully degrading below **0.85x** as the downsampled frequency peaks are pushed out of the Gaussian prior's safety envelope and masked by natural image noise.
+
+### 5.2 Conquering the DSP "Death Valley"
+Through high-granularity fuzzing, we identified and mitigated two critical DSP phenomena:
+1. **Bilinear Death Valley:** Minimal deformations (e.g., $\pm 2^\circ$ or $0.98x$) force nearly 100% of the image pixels into non-integer coordinates, triggering global low-pass filtering via bilinear interpolation.
+2. **Phase Cancellation (Swiss Cheese Effect):** Specific fractional scaling ratios (e.g., $1.07x$) occasionally cause destructive interference between the resampling grid and the host's natural textures.
+
+**Solution:** By exposing the `Intensity` parameter (defaulting to the 4.0 - 5.0 tier for the "Balanced/Paranoid" modes), PhantomStamp injects just enough energetic armor into the mid-frequency spectrum to bridge these interpolation valleys, maintaining seamless extraction without triggering the Human Visual System (HVS) threshold.
+
+## 6. Tech Stack
 
 - **Language:** Swift 6.3+
 - **UI Framework:** SwiftUI
