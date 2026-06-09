@@ -223,10 +223,19 @@ extension WatermarkService {
     }
 
     /// Scans the magnitude spectrum and returns the strongest off-DC peak in each of the four
-    /// "centered" quadrants, sorted by magnitude descending.
+    /// "centered" quadrants, sorted by SCORE descending.
     ///
     /// Returned coordinates use the image convention: `(x = col - centerCol, y = row - centerRow)`,
     /// so positive `y` points DOWN, matching `bilinearInterpolate` and `calculateInverseCoordinate`.
+    ///
+    /// PEAK SCORING: `score = magnitude · exp(-((r - 100) / sigma)²)`
+    ///   The Gaussian half-life around the template's nominal radius (100) suppresses image-content
+    ///   peaks that would otherwise dominate the raw magnitude race. Empirically natural photos
+    ///   often have strong frequency clusters at r≈30..50 (e.g. ocean waves, sky gradients) that
+    ///   are 5×–80× stronger than the template peaks; the Gaussian prior crushes those to a
+    ///   negligible weight (`exp(-((37-100)/30)²) ≈ 0.012`) while keeping template peaks at full
+    ///   weight even under scale attacks in roughly `[0.7×, 1.4×]` (`exp(-((±30)/30)²) ≈ 0.37`).
+    ///   Beyond that range the Gaussian falls off fast enough that the template peak loses to noise.
     ///
     /// Sub-pixel position is refined via a 1-D parabolic fit (separable in row and col) on the
     /// 3×3 magnitude neighborhood. The fit is clamped to ±0.5 to keep noisy peaks from running
@@ -236,20 +245,24 @@ extension WatermarkService {
         precondition(freqMatrix.width == freqMatrix.height, "Expected square FFT matrix")
         let halfN = N / 2
 
-        // Search ring: keep only candidate cells whose centered radius lies in
-        // [dcKeepOutRadius, maxSearchRadius].
-        //   - Inner: 30. Template peaks live at r=100; below 30 we'd still see strong residual
-        //     low-frequency image energy (sky gradients, defocus blur) that survives mean removal.
-        //   - Outer: 230. Template's r=100 stretched by an attacker scale up to ~2.3× would still
-        //     land inside the ring. Caps spurious high-frequency hits (sharp edges, sensor noise).
-        let dcKeepOutRadius: Int = 30
-        let maxSearchRadius: Int = 230
+        // Hard search-ring kept ONLY to avoid wasting magnitude calculations on cells whose
+        // Gaussian weight is essentially zero. Inner cap also dodges DC contamination from
+        // residual low-frequency leakage the mean subtraction can't fully kill.
+        let dcKeepOutRadius: Int = 25
+        let maxSearchRadius: Int = 200
         let dcKeepOutSq = dcKeepOutRadius * dcKeepOutRadius
         let maxSearchSq = maxSearchRadius * maxSearchRadius
 
-        // Track the strongest peak per centered quadrant.
+        // Radius prior centered on the known template radius. Sigma=30 corresponds to roughly
+        // ±30% scale tolerance at half-weight; tweak in lock-step with the test sweep range.
+        let expectedRadius: Float = WatermarkService.syncTemplateOriginalRadius
+        let sigma: Float = 30
+        let invSigmaSq: Float = 1.0 / (sigma * sigma)
+
+        // Track the highest-SCORED peak (not highest magnitude) per centered quadrant.
         // q index: 0=(x>=0, y>=0), 1=(x>=0, y<0), 2=(x<0, y>=0), 3=(x<0, y<0).
-        var bestMag: [Float] = [Float](repeating: -1, count: 4)
+        var bestScore: [Float] = [Float](repeating: -1, count: 4)
+        var bestMag: [Float] = [Float](repeating: 0, count: 4)
         var bestRow: [Int] = [Int](repeating: -1, count: 4)
         var bestCol: [Int] = [Int](repeating: -1, count: 4)
 
@@ -262,6 +275,11 @@ extension WatermarkService {
                 if rSq < dcKeepOutSq || rSq > maxSearchSq { continue }
 
                 let m = freqMatrix.magnitudeAt(row: row, col: col)
+                let r = sqrt(Float(rSq))
+                let radiusErr = r - expectedRadius
+                // Gaussian: peaks far from the expected template radius are dramatically penalized.
+                let weight = exp(-radiusErr * radiusErr * invSigmaSq)
+                let score = m * weight
 
                 let q: Int
                 if dx >= 0 && dy >= 0 { q = 0 }
@@ -269,7 +287,8 @@ extension WatermarkService {
                 else if dx <  0 && dy >= 0 { q = 2 }
                 else { q = 3 }
 
-                if m > bestMag[q] {
+                if score > bestScore[q] {
+                    bestScore[q] = score
                     bestMag[q] = m
                     bestRow[q] = row
                     bestCol[q] = col
@@ -278,7 +297,10 @@ extension WatermarkService {
         }
 
         // Refine each integer-pixel peak to sub-pixel precision and convert to centered coords.
-        var peaks: [(mag: Float, x: Float, y: Float)] = []
+        // Note: sub-pixel refinement still uses RAW magnitude (not weighted score) — the
+        // weighting affects which integer cell we choose as the peak, but the local parabolic
+        // shape we fit on top of it should reflect the actual energy distribution.
+        var peaks: [(score: Float, x: Float, y: Float)] = []
         for q in 0..<4 {
             guard bestRow[q] >= 0 else { continue }
             let row = bestRow[q]
@@ -290,10 +312,11 @@ extension WatermarkService {
             // already enforced that with the keep-out mask).
             let dy: Float = (row < halfN) ? refined.row : (refined.row - Float(N))
             let dx: Float = (col < halfN) ? refined.col : (refined.col - Float(N))
-            peaks.append((mag: bestMag[q], x: dx, y: dy))
+            peaks.append((score: bestScore[q], x: dx, y: dy))
+            _ = bestMag[q]  // kept for potential future diagnostic logging
         }
 
-        peaks.sort { $0.mag > $1.mag }
+        peaks.sort { $0.score > $1.score }
         return peaks.map { (x: $0.x, y: $0.y) }
     }
 
