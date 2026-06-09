@@ -238,8 +238,8 @@ struct RobustnessTestingView: View {
                 Divider().opacity(0.25)
 
                 testRow(
-                    title: "Basic round-trip + identity detect",
-                    subtitle: "Embed → extract on TestImg, plus `detectGeometricTransforms` on the un-attacked image (expects angle≈0, scale≈1).",
+                    title: "Identity detection (no attack)",
+                    subtitle: "Embed → run `detectGeometricTransforms` on the un-attacked image. PASS iff detector returns angle≈0 and scale≈1 (detector-only — bit extraction not exercised).",
                     runTitle: "Run",
                     style: .prominent
                 ) {
@@ -249,8 +249,8 @@ struct RobustnessTestingView: View {
                 Divider().opacity(0.25)
 
                 testRow(
-                    title: "Rotation + scale limit sweep",
-                    subtitle: "Sweeps rotation ±15° and scale 0.85×–1.15×. Reports the largest still-passing attack and saves boundary images.",
+                    title: "Rotation + scale detector sweep",
+                    subtitle: "For each known attack (rotation ±15°, scale 0.85×–1.15×), PASS iff the detector recovers the same parameters within ±0.5° / ±2%. Top FFT peaks printed for each case.",
                     runTitle: "Run",
                     style: .normal
                 ) {
@@ -555,8 +555,10 @@ struct RobustnessTestingView: View {
 
     // MARK: - Geometric (DFT sync template) tests
 
-    /// Basic functional check: embed → extract → confirm `detectGeometricTransforms` returns
-    /// (≈0°, ≈1×) on the un-attacked watermarked image.
+    /// Basic detector check: embed → run `detectGeometricTransforms` on the un-attacked image.
+    /// PASS criterion is detection accuracy only: angle ≈ 0° and scale ≈ 1×, within the test
+    /// module's tolerances. The bit-extraction pipeline is intentionally NOT exercised here so
+    /// any failure points directly at the geometric module.
     private func runSyncTemplateBasicTest() async {
         isLoading = true
         defer { isLoading = false }
@@ -575,13 +577,19 @@ struct RobustnessTestingView: View {
         let r = await SyncTemplateGeometricAttackTests.runBasicSyncTemplateOnBundledTestImg(
             syncTemplateIntensity: intensity
         )
-        let ok = r.imageLoaded && r.embedSucceeded && r.extractSucceeded
-            && r.textRoundTripPassed && r.noAttackDetectedIdentity
+        let ok = r.imageLoaded && r.embedSucceeded && r.detectionRan && r.detectedIdentity
         let status = ok ? "PASS" : "FAIL"
         let detAng = r.detectedAngleDegrees.map { String(format: "%.4f°", $0) } ?? "nil"
         let detSc = r.detectedScale.map { String(format: "%.6f", $0) } ?? "nil"
         let px = r.watermarkedPx.map { "\($0.w)x\($0.h)px" } ?? "nil"
-        print("[TestPage] SyncTemplateBasic \(status) intensity=\(String(format: "%.2f", intensity)) px=\(px) detected(angle=\(detAng), scale=\(detSc)) extracted=\(r.extractedText ?? "nil") identity=\(r.noAttackDetectedIdentity ? "PASS" : "FAIL")")
+        let tolA = SyncTemplateGeometricAttackTests.angleToleranceDegrees
+        let tolS = SyncTemplateGeometricAttackTests.scaleRelativeTolerance
+        print("[TestPage] SyncTemplateBasic \(status) intensity=\(String(format: "%.2f", intensity)) px=\(px) detected(angle=\(detAng), scale=\(detSc)) tol(|angle|≤\(String(format: "%.2f°", tolA)), |scale-1|≤\(String(format: "%.2f", tolS)))")
+        // Top peaks help see whether the template peaks (r≈100, ±45°) actually won the magnitude
+        // race vs image-content peaks at other radii.
+        for (i, p) in r.topPeaks.enumerated() {
+            print("  - peak[\(i)] r=\(String(format: "%6.2f", p.radius)) θ=\(String(format: "%+7.2f°", p.angleDegrees)) (x=\(String(format: "%+6.2f", p.centeredX)), y=\(String(format: "%+6.2f", p.centeredY)))")
+        }
 
         NotificationCenter.default.post(
             name: AppConstants.Notifications.watermarkProgress,
@@ -591,12 +599,13 @@ struct RobustnessTestingView: View {
         NotificationCenter.default.post(name: AppConstants.Notifications.watermarkProgressOverlayDidEnd, object: nil)
 
         if !ok {
-            present("Sync template basic test failed. extracted=\(r.extractedText ?? "nil") detected(angle=\(detAng), scale=\(detSc))")
+            present("Sync template basic test failed. detected(angle=\(detAng), scale=\(detSc)). Top peak r=\(r.topPeaks.first.map { String(format: "%.1f", $0.radius) } ?? "nil").")
         }
     }
 
-    /// Rotation + isotropic-scale sweep. Reports the largest still-passing attack on both axes
-    /// and saves the boundary images to the photo library (via the test helper).
+    /// Rotation + isotropic-scale detector sweep. For each known attack, asks the detector to
+    /// recover (angle, scale) and records the numeric error. Reports the largest attack still
+    /// inside the detector's tolerance window on each axis.
     private func runSyncTemplateLimitSweep() async {
         isLoading = true
         defer { isLoading = false }
@@ -618,19 +627,27 @@ struct RobustnessTestingView: View {
         let rotLimit = r.maxPassingAbsRotationDegrees.map { String(format: "±%.2f°", $0) } ?? "none"
         let minSc = r.minPassingScaleFactor.map { String(format: "%.3f", $0) } ?? "none"
         let maxSc = r.maxPassingScaleFactor.map { String(format: "%.3f", $0) } ?? "none"
-        print("[TestPage] SyncTemplateSweep \(status) intensity=\(String(format: "%.2f", intensity)) rotationLimit=\(rotLimit) scaleRange=[\(minSc), \(maxSc)] rotCases=\(r.rotationCases.count) scaleCases=\(r.scaleCases.count)")
-        // Per-case detail to make tuning iterations easier from the console.
+        let tolA = SyncTemplateGeometricAttackTests.angleToleranceDegrees
+        let tolS = SyncTemplateGeometricAttackTests.scaleRelativeTolerance
+        print("[TestPage] SyncTemplateSweep \(status) intensity=\(String(format: "%.2f", intensity)) rotationLimit=\(rotLimit) scaleRange=[\(minSc), \(maxSc)] tol(|angleErr|≤\(String(format: "%.2f°", tolA)), |scaleRelErr|≤\(String(format: "%.2f", tolS))) rotCases=\(r.rotationCases.count) scaleCases=\(r.scaleCases.count)")
+
+        // Per-case detail with detected values, errors, AND top peaks — makes tuning iterations
+        // (intensity, search ring, etc.) easy from the console.
         for c in r.rotationCases {
             let detAng = c.detectedAngleDegrees.map { String(format: "%.3f°", $0) } ?? "nil"
             let detSc = c.detectedScale.map { String(format: "%.4f", $0) } ?? "nil"
-            let pass = c.textRoundTripPassed ? "PASS" : "FAIL"
-            print("  - rotation \(String(format: "%+6.2f°", c.attackParam)) \(pass) detected(angle=\(detAng), scale=\(detSc)) extracted=\(c.extractedText ?? "nil")")
+            let angErr = c.angleErrorDegrees.map { String(format: "%.3f°", $0) } ?? "nil"
+            let scErr = c.scaleRelativeError.map { String(format: "%.4f", $0) } ?? "nil"
+            let pass = c.passed ? "PASS" : "FAIL"
+            print("  - rotation \(String(format: "%+6.2f°", c.attackParam)) \(pass) detected(angle=\(detAng), scale=\(detSc)) err(angle=\(angErr), scaleRel=\(scErr)) topPeak r=\(c.topPeaks.first.map { String(format: "%.1f", $0.radius) } ?? "nil") θ=\(c.topPeaks.first.map { String(format: "%+.1f°", $0.angleDegrees) } ?? "nil")")
         }
         for c in r.scaleCases {
             let detAng = c.detectedAngleDegrees.map { String(format: "%.3f°", $0) } ?? "nil"
             let detSc = c.detectedScale.map { String(format: "%.4f", $0) } ?? "nil"
-            let pass = c.textRoundTripPassed ? "PASS" : "FAIL"
-            print("  - scale    \(String(format: "%5.3fx", c.attackParam)) \(pass) detected(angle=\(detAng), scale=\(detSc)) extracted=\(c.extractedText ?? "nil")")
+            let angErr = c.angleErrorDegrees.map { String(format: "%.3f°", $0) } ?? "nil"
+            let scErr = c.scaleRelativeError.map { String(format: "%.4f", $0) } ?? "nil"
+            let pass = c.passed ? "PASS" : "FAIL"
+            print("  - scale    \(String(format: "%5.3fx", c.attackParam)) \(pass) detected(angle=\(detAng), scale=\(detSc)) err(angle=\(angErr), scaleRel=\(scErr)) topPeak r=\(c.topPeaks.first.map { String(format: "%.1f", $0.radius) } ?? "nil") θ=\(c.topPeaks.first.map { String(format: "%+.1f°", $0.angleDegrees) } ?? "nil")")
         }
 
         NotificationCenter.default.post(

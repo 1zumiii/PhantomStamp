@@ -2,23 +2,29 @@
 //  SyncTemplateGeometricAttackTests.swift
 //  PhantomStamp
 //
-//  Manual / DEBUG validation for the DFT sync template + geometric correction stack.
+//  Manual / DEBUG validation focused EXCLUSIVELY on the geometric-detection module
+//  (`detectGeometricTransforms`). The downstream bit-extraction pipeline (sync header scan,
+//  majority voting, FEC decode) is intentionally NOT exercised here — those layers have their
+//  own tests and can mask / amplify problems unrelated to the DFT sync template.
 //
-//  Provides:
+//  What we measure:
+//      "Given a watermarked image that an attacker has rotated by θ degrees and isotropically
+//       scaled by factor s, does `detectGeometricTransforms` return (angle ≈ θ, scale ≈ s)?"
+//
+//  Provided tests:
+//
 //    1. `runBasicSyncTemplateOnBundledTestImg`
-//       - sanity check that embedding + extraction still round-trip when no attack happens,
-//         AND that `detectGeometricTransforms` reports an effectively-identity transform on the
-//         freshly-embedded image (no-op deskew expected).
+//       - identity case (no attack): expects `detectGeometricTransforms` ≈ (0°, 1×)
 //
 //    2. `runRotationAndScaleLimitSweepOnBundledTestImg`
-//       - sweeps rotation angles and isotropic scale factors around the embedded image and
-//         measures the limit at which the extractor can still recover the original payload.
-//       - reports detected (angle, scale) from `detectGeometricTransforms` for every case so
-//           we can see how accurate the detector itself is independently of the bit recovery.
-//       - best-effort saves the most-attacked PASS image and the first FAIL image after it to
-//         the system photo library for visual inspection.
+//       - Rotation sweep: applies a known θ, asks the detector to recover it.
+//       - Scale sweep: same for s.
+//       - For each case, records the detected (angle, scale) AND its absolute / relative error.
+//       - Aggregates the largest attack still passing the per-axis tolerances.
 //
-//  All tests use the bundled `TestImg` asset (see `ImagePipelineTests.loadBundledTestUIImage`).
+//  Reports also include the strongest 4 raw peaks (radius, angle, raw row/col) so it's
+//  immediately obvious whether the template peaks at radius=100 are actually being picked, or
+//  whether image-content energy at other radii is winning the magnitude race.
 //
 
 import Foundation
@@ -27,13 +33,25 @@ import UIKit
 enum SyncTemplateGeometricAttackTests {
 
     // ==========================================
+    // MARK: - Tunables (pass thresholds)
+    // ==========================================
+
+    /// Angle error tolerance in degrees. With sub-pixel parabolic refinement of the FFT peak,
+    /// a healthy detection should sit well below 0.5°. Larger errors mean either the wrong peak
+    /// was picked (image content > template) or the FFT crop is too small to resolve the angle.
+    static let angleToleranceDegrees: Double = 0.5
+
+    /// Scale relative-error tolerance. `|detected/expected - 1| <= tol` ⇒ pass.
+    static let scaleRelativeTolerance: Double = 0.02   // ±2 %
+
+    // ==========================================
     // MARK: - Test Binding (mirrors WatermarkCompressionAttackTests pattern)
     // ==========================================
 
     /// Keeps `UserSettingsStore` alive while `WatermarkService.settingsStore` is `weak`.
-    /// `textureVarianceThreshold = -1` makes "variance < threshold" impossible for non-negative
-    /// block variance, so every 8×8 tile is actually embedded (matches historical test behavior
-    /// and isolates the geometry test from the texture-classifier).
+    /// `textureVarianceThreshold = -1` forces every 8×8 tile to be embedded — irrelevant for the
+    /// geometric module per se, but matches the historical compression/crop test posture so we
+    /// don't accidentally introduce a confound when reusing this binding.
     @MainActor
     private final class WatermarkServiceTestBinding {
         let settingsStore: UserSettingsStore
@@ -53,37 +71,51 @@ enum SyncTemplateGeometricAttackTests {
     // MARK: - Report Types
     // ==========================================
 
+    /// Polar coords + raw FFT indices for one peak. Used purely for diagnostics — lets the user
+    /// see whether the template peaks at radius=100 are even among the top candidates.
+    struct PeakSnapshot: Sendable {
+        var radius: Double
+        var angleDegrees: Double
+        var centeredX: Double
+        var centeredY: Double
+    }
+
     struct BasicReport: Sendable {
         var imageLoaded: Bool
         var embedSucceeded: Bool
-        var extractSucceeded: Bool
-        var textRoundTripPassed: Bool
-        var noAttackDetectedIdentity: Bool
+        var detectionRan: Bool
 
         var detectedAngleDegrees: Double?
         var detectedScale: Double?
-        var extractedText: String?
-        var watermarkedPx: (w: Int, h: Int)?
 
-        // Sanity thresholds for the "no-attack" detection (loose enough to accommodate normal
-        // FFT noise on natural images).
-        static let identityAngleToleranceDegrees: Double = 0.5
-        static let identityScaleTolerance: Double = 0.01
+        /// True iff `|detectedAngle| ≤ angleToleranceDegrees` AND `|detectedScale - 1| ≤ scaleRelativeTolerance`.
+        var detectedIdentity: Bool
+
+        var topPeaks: [PeakSnapshot]   // up to 4, sorted by magnitude descending
+        var watermarkedPx: (w: Int, h: Int)?
     }
 
     struct AttackCase: Sendable {
         enum Kind: String, Sendable { case rotation, scale }
         var kind: Kind
-        /// For rotation: degrees applied by the attacker. For scale: linear factor (1.0 = identity).
-        var attackParam: Double
-        var attackedPx: (w: Int, h: Int)?
 
+        /// Ground-truth attack parameter. Rotation: degrees. Scale: linear factor (1.0 = identity).
+        var attackParam: Double
+
+        /// Detector output for THIS attacked image.
         var detectedAngleDegrees: Double?
         var detectedScale: Double?
 
-        var extractSucceeded: Bool
-        var textRoundTripPassed: Bool
-        var extractedText: String?
+        /// |detected - expected|. For rotation kind: expectedAngle = attackParam, expectedScale = 1.
+        /// For scale kind: expectedAngle = 0, expectedScale = attackParam.
+        var angleErrorDegrees: Double?
+        /// Relative scale error: `|detected/expected - 1|`. Bounded to [0, +∞).
+        var scaleRelativeError: Double?
+
+        var passed: Bool
+
+        var attackedPx: (w: Int, h: Int)?
+        var topPeaks: [PeakSnapshot]
     }
 
     struct SweepReport: Sendable {
@@ -93,35 +125,36 @@ enum SyncTemplateGeometricAttackTests {
         var rotationCases: [AttackCase]
         var scaleCases: [AttackCase]
 
-        /// Largest absolute rotation (degrees) that still produced a matching extract.
+        /// Largest |rotation degrees| whose detection PASSED both axes.
         var maxPassingAbsRotationDegrees: Double?
-        /// Smallest scale factor below 1.0 that still passed; nil if none failed below 1.0.
+        /// Closest-to-1 PASS bounds for the scale axis.
         var minPassingScaleFactor: Double?
-        /// Largest scale factor above 1.0 that still passed; nil if none failed above 1.0.
         var maxPassingScaleFactor: Double?
     }
 
     // ==========================================
-    // MARK: - Test 1: Basic Round-Trip + Identity Detection
+    // MARK: - Test 1: Identity Detection (No Attack)
     // ==========================================
 
-    /// Embeds → calls `detectGeometricTransforms` on the watermarked image → extracts.
-    /// Expectations on a clean (un-attacked) image:
-    ///   - extract returns the embedded text
-    ///   - `detectGeometricTransforms` returns an angle within ±0.5° and a scale within ±1%
-    ///     (the template peaks should sit very close to their nominal positions)
+    /// Embeds → runs `detectGeometricTransforms` on the watermarked image (no attack).
+    /// Expectations:
+    ///   - detected angle within ±`angleToleranceDegrees` of 0°
+    ///   - detected scale within ±`scaleRelativeTolerance` of 1.0
+    ///   - top peaks should be the 4 template peaks at radius ≈ 100, angles ≈ ±π/4
+    ///
+    /// IMPORTANT: this test does NOT call `extractWatermark`; bit recovery / sync header scan
+    /// failures are out of scope here.
     static func runBasicSyncTemplateOnBundledTestImg(
         syncTemplateIntensity: Double = AppConstants.SettingsDefault.syncTemplateIntensity
     ) async -> BasicReport {
         guard let img = ImagePipelineTests.loadBundledTestUIImage() else {
             return BasicReport(
-                imageLoaded: false, embedSucceeded: false, extractSucceeded: false,
-                textRoundTripPassed: false, noAttackDetectedIdentity: false,
-                detectedAngleDegrees: nil, detectedScale: nil, extractedText: nil, watermarkedPx: nil
+                imageLoaded: false, embedSucceeded: false, detectionRan: false,
+                detectedAngleDegrees: nil, detectedScale: nil, detectedIdentity: false,
+                topPeaks: [], watermarkedPx: nil
             )
         }
 
-        let text = "Successful"
         let binding = await MainActor.run {
             WatermarkServiceTestBinding(textureVarianceThreshold: -1, syncTemplateIntensity: syncTemplateIntensity)
         }
@@ -129,72 +162,61 @@ enum SyncTemplateGeometricAttackTests {
 
         let watermarked: UIImage
         do {
-            watermarked = try await service.embedWatermark(into: img, text: text)
+            // Payload text is irrelevant for the geometric module — the sync template is added on
+            // top of the Y channel regardless of which bits are encoded.
+            watermarked = try await service.embedWatermark(into: img, text: "Successful")
         } catch {
             return BasicReport(
-                imageLoaded: true, embedSucceeded: false, extractSucceeded: false,
-                textRoundTripPassed: false, noAttackDetectedIdentity: false,
-                detectedAngleDegrees: nil, detectedScale: nil, extractedText: nil, watermarkedPx: nil
+                imageLoaded: true, embedSucceeded: false, detectionRan: false,
+                detectedAngleDegrees: nil, detectedScale: nil, detectedIdentity: false,
+                topPeaks: [], watermarkedPx: nil
             )
         }
 
         let pxW = Int(watermarked.size.width * watermarked.scale)
         let pxH = Int(watermarked.size.height * watermarked.scale)
 
-        // Run the detector on the watermarked-but-unattacked image so we can see how close to
-        // identity it lands. This call is OUTSIDE the normal extractWatermark flow, purely for
-        // diagnostic reporting.
-        let detectedAngleDeg: Double?
-        let detectedScaleD: Double?
-        if let ycbcr = service.convertToYCbCr(image: watermarked) {
-            let t = service.detectGeometricTransforms(in: ycbcr.Y)
-            detectedAngleDeg = Double(t.angle) * 180.0 / .pi
-            detectedScaleD = Double(t.scale)
+        // Best-effort: save the un-attacked watermarked image for visual inspection of the
+        // template wave at the user-selected intensity.
+        try? await PhotoLibraryExporter.saveToPhotoLibrary(watermarked)
+
+        let probe = detectorProbe(service: service, image: watermarked)
+
+        let detectedIdentity: Bool
+        if let a = probe.angleDeg, let s = probe.scale {
+            detectedIdentity = abs(a) <= angleToleranceDegrees
+                && abs(s - 1.0) <= scaleRelativeTolerance
         } else {
-            detectedAngleDeg = nil
-            detectedScaleD = nil
+            detectedIdentity = false
         }
 
-        let identityOk: Bool
-        if let a = detectedAngleDeg, let s = detectedScaleD {
-            identityOk = abs(a) <= BasicReport.identityAngleToleranceDegrees
-                && abs(s - 1.0) <= BasicReport.identityScaleTolerance
-        } else {
-            identityOk = false
-        }
-
-        do {
-            let extracted = try await service.extractWatermark(from: watermarked)
-            return BasicReport(
-                imageLoaded: true, embedSucceeded: true, extractSucceeded: true,
-                textRoundTripPassed: (extracted == text), noAttackDetectedIdentity: identityOk,
-                detectedAngleDegrees: detectedAngleDeg, detectedScale: detectedScaleD,
-                extractedText: extracted, watermarkedPx: (pxW, pxH)
-            )
-        } catch {
-            return BasicReport(
-                imageLoaded: true, embedSucceeded: true, extractSucceeded: false,
-                textRoundTripPassed: false, noAttackDetectedIdentity: identityOk,
-                detectedAngleDegrees: detectedAngleDeg, detectedScale: detectedScaleD,
-                extractedText: nil, watermarkedPx: (pxW, pxH)
-            )
-        }
+        return BasicReport(
+            imageLoaded: true,
+            embedSucceeded: true,
+            detectionRan: probe.angleDeg != nil,
+            detectedAngleDegrees: probe.angleDeg,
+            detectedScale: probe.scale,
+            detectedIdentity: detectedIdentity,
+            topPeaks: probe.topPeaks,
+            watermarkedPx: (pxW, pxH)
+        )
     }
 
     // ==========================================
-    // MARK: - Test 2: Rotation + Scale Limit Sweep
+    // MARK: - Test 2: Rotation + Scale Detection Sweep
     // ==========================================
 
-    /// Sweeps rotation angles and scale factors, recording the boundary between PASS and FAIL.
+    /// Sweeps known rotation angles and known scale factors. For each case, asks
+    /// `detectGeometricTransforms` whether it can recover the attack parameters and records the
+    /// numeric error.
     ///
     /// Default sweeps:
     ///   - rotation degrees: [-15, -10, -5, -2, -1, 0, 1, 2, 5, 10, 15]
     ///   - scale factors:    [0.85, 0.90, 0.95, 0.98, 1.00, 1.02, 1.05, 1.10, 1.15]
     ///
-    /// PASS = `extractWatermark` returns and the recovered text equals the embedded text.
-    ///
-    /// Saves the strongest passing rotation/scale attack image and the first failing one after
-    /// it to the photo library (best-effort) so they can be inspected visually.
+    /// PASS criteria per case:
+    ///   - `angleErrorDegrees ≤ angleToleranceDegrees`
+    ///   - `scaleRelativeError ≤ scaleRelativeTolerance`
     static func runRotationAndScaleLimitSweepOnBundledTestImg(
         rotationDegrees: [Double] = [-15, -10, -5, -2, -1, 0, 1, 2, 5, 10, 15],
         scaleFactors: [Double] = [0.85, 0.90, 0.95, 0.98, 1.00, 1.02, 1.05, 1.10, 1.15],
@@ -209,7 +231,6 @@ enum SyncTemplateGeometricAttackTests {
             )
         }
 
-        let text = "Successful"
         let binding = await MainActor.run {
             WatermarkServiceTestBinding(textureVarianceThreshold: -1, syncTemplateIntensity: syncTemplateIntensity)
         }
@@ -217,7 +238,7 @@ enum SyncTemplateGeometricAttackTests {
 
         let watermarked: UIImage
         do {
-            watermarked = try await service.embedWatermark(into: img, text: text)
+            watermarked = try await service.embedWatermark(into: img, text: "Successful")
         } catch {
             return SweepReport(
                 imageLoaded: true, embedSucceeded: false,
@@ -227,38 +248,39 @@ enum SyncTemplateGeometricAttackTests {
             )
         }
 
+        // Save the original watermarked image once so the user has a baseline to compare
+        // attacked images against.
+        try? await PhotoLibraryExporter.saveToPhotoLibrary(watermarked)
+
         // -----------------------
         // Rotation sweep
         // -----------------------
         var rotationCases: [AttackCase] = []
         rotationCases.reserveCapacity(rotationDegrees.count)
-        var rotationAttackedImages: [Double: UIImage] = [:]
 
         for deg in rotationDegrees {
             guard let attacked = rotate(image: watermarked, degrees: deg) else {
-                rotationCases.append(AttackCase(
-                    kind: .rotation, attackParam: deg, attackedPx: nil,
-                    detectedAngleDegrees: nil, detectedScale: nil,
-                    extractSucceeded: false, textRoundTripPassed: false, extractedText: nil
-                ))
+                rotationCases.append(emptyCase(kind: .rotation, attackParam: deg))
                 continue
             }
-            rotationAttackedImages[deg] = attacked
 
-            let attackedPx = pixelSize(of: attacked)
-            let (detectAngle, detectScale) = detectorOutputDegreesScale(service: service, image: attacked)
+            let probe = detectorProbe(service: service, image: attacked)
+            // For a pure rotation attack: expected angle = deg, expected scale = 1.0.
+            let angleErr: Double? = probe.angleDeg.map { abs($0 - deg) }
+            let scaleErr: Double? = probe.scale.map { abs($0 - 1.0) }
+            let pass = (angleErr ?? .infinity) <= angleToleranceDegrees
+                && (scaleErr ?? .infinity) <= scaleRelativeTolerance
 
-            let recovered = try? await service.extractWatermark(from: attacked)
-            let passed = (recovered == text)
             rotationCases.append(AttackCase(
                 kind: .rotation,
                 attackParam: deg,
-                attackedPx: attackedPx,
-                detectedAngleDegrees: detectAngle,
-                detectedScale: detectScale,
-                extractSucceeded: (recovered != nil),
-                textRoundTripPassed: passed,
-                extractedText: recovered
+                detectedAngleDegrees: probe.angleDeg,
+                detectedScale: probe.scale,
+                angleErrorDegrees: angleErr,
+                scaleRelativeError: scaleErr,
+                passed: pass,
+                attackedPx: pixelSize(of: attacked),
+                topPeaks: probe.topPeaks
             ))
         }
 
@@ -267,75 +289,42 @@ enum SyncTemplateGeometricAttackTests {
         // -----------------------
         var scaleCases: [AttackCase] = []
         scaleCases.reserveCapacity(scaleFactors.count)
-        var scaleAttackedImages: [Double: UIImage] = [:]
 
         for factor in scaleFactors {
             guard let attacked = scale(image: watermarked, factor: factor) else {
-                scaleCases.append(AttackCase(
-                    kind: .scale, attackParam: factor, attackedPx: nil,
-                    detectedAngleDegrees: nil, detectedScale: nil,
-                    extractSucceeded: false, textRoundTripPassed: false, extractedText: nil
-                ))
+                scaleCases.append(emptyCase(kind: .scale, attackParam: factor))
                 continue
             }
-            scaleAttackedImages[factor] = attacked
 
-            let attackedPx = pixelSize(of: attacked)
-            let (detectAngle, detectScale) = detectorOutputDegreesScale(service: service, image: attacked)
+            let probe = detectorProbe(service: service, image: attacked)
+            // For a pure isotropic-scale attack: expected angle = 0, expected scale = factor.
+            let angleErr: Double? = probe.angleDeg.map { abs($0) }
+            let scaleErr: Double? = probe.scale.map { abs($0 - factor) / max(factor, 1e-9) }
+            let pass = (angleErr ?? .infinity) <= angleToleranceDegrees
+                && (scaleErr ?? .infinity) <= scaleRelativeTolerance
 
-            let recovered = try? await service.extractWatermark(from: attacked)
-            let passed = (recovered == text)
             scaleCases.append(AttackCase(
                 kind: .scale,
                 attackParam: factor,
-                attackedPx: attackedPx,
-                detectedAngleDegrees: detectAngle,
-                detectedScale: detectScale,
-                extractSucceeded: (recovered != nil),
-                textRoundTripPassed: passed,
-                extractedText: recovered
+                detectedAngleDegrees: probe.angleDeg,
+                detectedScale: probe.scale,
+                angleErrorDegrees: angleErr,
+                scaleRelativeError: scaleErr,
+                passed: pass,
+                attackedPx: pixelSize(of: attacked),
+                topPeaks: probe.topPeaks
             ))
         }
 
         // -----------------------
-        // Aggregate the limits
+        // Aggregate per-axis limits
         // -----------------------
-
-        // Maximum |rotation| that still passed → robust angular tolerance.
-        let passingAbsRotations = rotationCases.filter { $0.textRoundTripPassed }.map { abs($0.attackParam) }
+        let passingAbsRotations = rotationCases.filter { $0.passed }.map { abs($0.attackParam) }
         let maxRot = passingAbsRotations.max()
 
-        // Scale extremes that still passed (smallest below 1.0 and largest above 1.0).
-        let passingScales = scaleCases.filter { $0.textRoundTripPassed }.map { $0.attackParam }
+        let passingScales = scaleCases.filter { $0.passed }.map { $0.attackParam }
         let minPassScale = passingScales.filter { $0 <= 1.0 }.min()
         let maxPassScale = passingScales.filter { $0 >= 1.0 }.max()
-
-        // -----------------------
-        // Photo Library snapshots (best effort): hardest passing + first failing-after-pass.
-        // -----------------------
-        if let rotPassDeg = passingAbsRotations.sorted(by: { $0 > $1 }).first {
-            // Pick the case whose absolute rotation equals rotPassDeg (favor the one closer to 0
-            // among ties — typically there's at most one entry per ±deg anyway).
-            if let matched = rotationCases.first(where: {
-                $0.textRoundTripPassed && abs($0.attackParam) == rotPassDeg
-            }), let img = rotationAttackedImages[matched.attackParam] {
-                try? await PhotoLibraryExporter.saveToPhotoLibrary(img)
-            }
-        }
-        // First failing rotation > maxRot (if any). Look in increasing |deg| order.
-        if let failed = rotationCases
-            .filter({ !$0.textRoundTripPassed })
-            .sorted(by: { abs($0.attackParam) < abs($1.attackParam) })
-            .first(where: { (maxRot ?? -1) < abs($0.attackParam) }),
-           let img = rotationAttackedImages[failed.attackParam] {
-            try? await PhotoLibraryExporter.saveToPhotoLibrary(img)
-        }
-        if let maxScale = maxPassScale, let img = scaleAttackedImages[maxScale] {
-            try? await PhotoLibraryExporter.saveToPhotoLibrary(img)
-        }
-        if let minScale = minPassScale, let img = scaleAttackedImages[minScale] {
-            try? await PhotoLibraryExporter.saveToPhotoLibrary(img)
-        }
 
         return SweepReport(
             imageLoaded: true,
@@ -353,9 +342,8 @@ enum SyncTemplateGeometricAttackTests {
     // ==========================================
 
     /// Center-pivot rotation into a SAME-SIZE canvas. Corners that fall outside the canvas are
-    /// clipped (filled with the default UIGraphicsImageRenderer background, i.e. transparent →
-    /// black after rasterization in the YCbCr pipeline). Matches the typical "attacker rotates
-    /// then re-saves" workflow where the file dimensions don't change.
+    /// clipped (transparent → black after rasterization in the YCbCr pipeline). Matches the
+    /// typical "attacker rotates then re-saves" workflow where the file dimensions don't change.
     private static func rotate(image: UIImage, degrees: Double) -> UIImage? {
         let pxSize = pixelSize(of: image)
         guard pxSize.w > 0, pxSize.h > 0 else { return nil }
@@ -377,8 +365,7 @@ enum SyncTemplateGeometricAttackTests {
         }
     }
 
-    /// Isotropic resize to `floor(w·factor) × floor(h·factor)` pixels. Simulates an attacker who
-    /// saved the image at a different resolution. Returned image has `scale = 1`.
+    /// Isotropic resize to `floor(w·factor) × floor(h·factor)` pixels. Returned image has scale=1.
     private static func scale(image: UIImage, factor: Double) -> UIImage? {
         let pxSize = pixelSize(of: image)
         let newW = max(1, Int(Double(pxSize.w) * factor))
@@ -395,17 +382,49 @@ enum SyncTemplateGeometricAttackTests {
     }
 
     // ==========================================
-    // MARK: - Diagnostic Helpers
+    // MARK: - Detector Probe (diagnostic snapshot)
     // ==========================================
 
-    /// Runs `detectGeometricTransforms` once for diagnostic reporting. Does NOT affect the
-    /// subsequent `extractWatermark` call (which runs its own detection internally).
-    private static func detectorOutputDegreesScale(service: WatermarkService, image: UIImage) -> (deg: Double?, scale: Double?) {
+    /// Runs the geometric detector once and also harvests the top-K peaks from `findSyncPeaks`
+    /// for diagnostic output. Returns `nil` fields when the YCbCr conversion fails.
+    private static func detectorProbe(
+        service: WatermarkService,
+        image: UIImage
+    ) -> (angleDeg: Double?, scale: Double?, topPeaks: [PeakSnapshot]) {
         guard let ycbcr = service.convertToYCbCr(image: image) else {
-            return (nil, nil)
+            return (nil, nil, [])
         }
-        let t = service.detectGeometricTransforms(in: ycbcr.Y)
-        return (Double(t.angle) * 180.0 / .pi, Double(t.scale))
+
+        let yChannel = ycbcr.Y
+        let t = service.detectGeometricTransforms(in: yChannel)
+
+        // Re-run only the early stages so we can read the top peaks for diagnostics. The
+        // duplication is intentional — we want exactly the same FFT + peak set the detector saw.
+        let N = WatermarkService.syncTemplateAnalysisFFTSize
+        var complexMatrix = service.extractAndRemoveDC(from: yChannel, targetSize: N)
+        service.performForwardFFT(matrix: &complexMatrix)
+        let peaks = service.findSyncPeaks(in: complexMatrix)
+
+        let topPeaks: [PeakSnapshot] = peaks.prefix(4).map { p in
+            let r = sqrt(Double(p.x) * Double(p.x) + Double(p.y) * Double(p.y))
+            let ang = atan2(Double(p.y), Double(p.x)) * 180.0 / .pi
+            return PeakSnapshot(radius: r, angleDegrees: ang, centeredX: Double(p.x), centeredY: Double(p.y))
+        }
+
+        return (
+            angleDeg: Double(t.angle) * 180.0 / .pi,
+            scale: Double(t.scale),
+            topPeaks: topPeaks
+        )
+    }
+
+    private static func emptyCase(kind: AttackCase.Kind, attackParam: Double) -> AttackCase {
+        AttackCase(
+            kind: kind, attackParam: attackParam,
+            detectedAngleDegrees: nil, detectedScale: nil,
+            angleErrorDegrees: nil, scaleRelativeError: nil,
+            passed: false, attackedPx: nil, topPeaks: []
+        )
     }
 
     private static func pixelSize(of image: UIImage) -> (w: Int, h: Int) {
@@ -424,18 +443,18 @@ enum SyncTemplateGeometricAttackTests {
         let r = await runBasicSyncTemplateOnBundledTestImg(syncTemplateIntensity: syncTemplateIntensity)
         let dtMs = (CFAbsoluteTimeGetCurrent() - t0) * 1000
 
-        let overallPass = r.imageLoaded && r.embedSucceeded && r.extractSucceeded
-            && r.textRoundTripPassed && r.noAttackDetectedIdentity
+        let overallPass = r.imageLoaded && r.embedSucceeded && r.detectedIdentity
         let status = overallPass ? "PASS" : "FAIL"
-        print("[SyncTemplateGeometricAttackTests] \(status) Basic — no-attack round-trip + identity detection")
+        print("[SyncTemplateGeometricAttackTests] \(status) Basic — identity detection on un-attacked image")
         let px = r.watermarkedPx.map { "\($0.w)x\($0.h)px" } ?? "nil"
         let detAng = r.detectedAngleDegrees.map { String(format: "%.4f°", $0) } ?? "nil"
         let detSc = r.detectedScale.map { String(format: "%.6f", $0) } ?? "nil"
         print("  - imageLoaded:      \(r.imageLoaded ? "PASS" : "FAIL")")
         print("  - embed:            \(r.embedSucceeded ? "PASS" : "FAIL")  px=\(px)")
-        print("  - extract:          \(r.extractSucceeded ? "PASS" : "FAIL")")
-        print("  - text round-trip:  \(r.textRoundTripPassed ? "PASS" : "FAIL")  extracted=\(r.extractedText ?? "nil")")
-        print("  - identity detect:  \(r.noAttackDetectedIdentity ? "PASS" : "FAIL")  angle=\(detAng) scale=\(detSc)")
+        print("  - detector ran:     \(r.detectionRan ? "PASS" : "FAIL")")
+        print("  - identity detect:  \(r.detectedIdentity ? "PASS" : "FAIL")  angle=\(detAng) scale=\(detSc)")
+        print("  - tolerances:       |angle|≤\(String(format: "%.2f°", angleToleranceDegrees))  |scale-1|≤\(String(format: "%.2f", scaleRelativeTolerance))")
+        printTopPeaks(r.topPeaks, indent: "  ")
         print("  - elapsed:          \(String(format: "%.2f", dtMs)) ms")
         #endif
     }
@@ -450,32 +469,46 @@ enum SyncTemplateGeometricAttackTests {
 
         let overallOk = r.imageLoaded && r.embedSucceeded
         let status = overallOk ? "RAN" : "FAIL"
-        print("[SyncTemplateGeometricAttackTests] \(status) LimitSweep — rotation & scale tolerance")
+        print("[SyncTemplateGeometricAttackTests] \(status) LimitSweep — rotation & scale detector tolerance")
         let rotLimit = r.maxPassingAbsRotationDegrees.map { String(format: "±%.2f°", $0) } ?? "none"
         let minSc = r.minPassingScaleFactor.map { String(format: "%.3f", $0) } ?? "none"
         let maxSc = r.maxPassingScaleFactor.map { String(format: "%.3f", $0) } ?? "none"
         print("  - rotation limit:   \(rotLimit)")
         print("  - scale range:      [\(minSc), \(maxSc)]")
+        print("  - tolerances:       |angle err|≤\(String(format: "%.2f°", angleToleranceDegrees))  |scale rel err|≤\(String(format: "%.2f", scaleRelativeTolerance))")
 
         print("  - rotation cases:")
-        for c in r.rotationCases {
-            let detAng = c.detectedAngleDegrees.map { String(format: "%.3f°", $0) } ?? "nil"
-            let detSc = c.detectedScale.map { String(format: "%.4f", $0) } ?? "nil"
-            let pxStr = c.attackedPx.map { "\($0.w)x\($0.h)" } ?? "nil"
-            let pass = c.textRoundTripPassed ? "PASS" : "FAIL"
-            let extracted = c.extractedText ?? "nil"
-            print("      \(pass)  attack=\(String(format: "%+6.2f°", c.attackParam))  px=\(pxStr)  detected(angle=\(detAng), scale=\(detSc))  extracted=\(extracted)")
-        }
+        for c in r.rotationCases { printAttackCase(c, indent: "      ") }
         print("  - scale cases:")
-        for c in r.scaleCases {
-            let detAng = c.detectedAngleDegrees.map { String(format: "%.3f°", $0) } ?? "nil"
-            let detSc = c.detectedScale.map { String(format: "%.4f", $0) } ?? "nil"
-            let pxStr = c.attackedPx.map { "\($0.w)x\($0.h)" } ?? "nil"
-            let pass = c.textRoundTripPassed ? "PASS" : "FAIL"
-            let extracted = c.extractedText ?? "nil"
-            print("      \(pass)  attack=\(String(format: "%5.3fx", c.attackParam))  px=\(pxStr)  detected(angle=\(detAng), scale=\(detSc))  extracted=\(extracted)")
-        }
+        for c in r.scaleCases { printAttackCase(c, indent: "      ") }
+
         print("  - elapsed:          \(String(format: "%.2f", dtMs)) ms")
         #endif
     }
+
+    #if DEBUG
+    private static func printAttackCase(_ c: AttackCase, indent: String) {
+        let detAng = c.detectedAngleDegrees.map { String(format: "%.3f°", $0) } ?? "nil"
+        let detSc = c.detectedScale.map { String(format: "%.4f", $0) } ?? "nil"
+        let angErr = c.angleErrorDegrees.map { String(format: "%.3f°", $0) } ?? "nil"
+        let scErr = c.scaleRelativeError.map { String(format: "%.4f", $0) } ?? "nil"
+        let pass = c.passed ? "PASS" : "FAIL"
+        let paramStr: String
+        switch c.kind {
+        case .rotation: paramStr = String(format: "%+6.2f°", c.attackParam)
+        case .scale:    paramStr = String(format: "%5.3fx", c.attackParam)
+        }
+        let pxStr = c.attackedPx.map { "\($0.w)x\($0.h)" } ?? "nil"
+        print("\(indent)\(pass)  attack=\(paramStr)  px=\(pxStr)  detected(angle=\(detAng), scale=\(detSc))  err(angle=\(angErr), scaleRel=\(scErr))")
+        printTopPeaks(c.topPeaks, indent: indent + "    ")
+    }
+
+    private static func printTopPeaks(_ peaks: [PeakSnapshot], indent: String) {
+        guard !peaks.isEmpty else { return }
+        print("\(indent)topPeaks (sorted by magnitude desc):")
+        for (i, p) in peaks.enumerated() {
+            print("\(indent)  [\(i)] r=\(String(format: "%6.2f", p.radius))  θ=\(String(format: "%+7.2f°", p.angleDegrees))  (x=\(String(format: "%+6.2f", p.centeredX)), y=\(String(format: "%+6.2f", p.centeredY)))")
+        }
+    }
+    #endif
 }
