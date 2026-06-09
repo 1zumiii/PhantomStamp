@@ -203,24 +203,17 @@ enum SyncTemplateGeometricAttackTests {
     }
 
     // ==========================================
-    // MARK: - Test 2: Rotation + Scale Detection Sweep
+    // MARK: - Test 2: Smart Boundary Scan (Rotation + Scale)
     // ==========================================
 
-    /// Sweeps known rotation angles and known scale factors. For each case, asks
-    /// `detectGeometricTransforms` whether it can recover the attack parameters and records the
-    /// numeric error.
+    /// Executes a smart, directional boundary scan to find the exact failure limits.
     ///
-    /// Default sweeps (intentionally include values BEYOND the detector's expected operating
-    /// envelope so the sweep can find the true PASS/FAIL boundary on both axes):
-    ///   - rotation degrees: [-45, -30, -20, -15, -10, -5, -2, -1, 0, 1, 2, 5, 10, 15, 20, 30, 45]
-    ///   - scale factors:    [0.60, 0.70, 0.80, 0.85, 0.90, 0.95, 0.98, 1.00, 1.02, 1.05, 1.10, 1.15, 1.20, 1.30, 1.50]
-    ///
-    /// PASS criteria per case:
-    ///   - `angleErrorDegrees ≤ angleToleranceDegrees`
-    ///   - `scaleRelativeError ≤ scaleRelativeTolerance`
+    /// It sweeps outward from the identity (0° or 1.0x). To bypass the "Bilinear Death Valley"
+    /// (where small deformations temporarily fail due to interpolation blur), it requires
+    /// TWO consecutive failures before it aborts the coarse sweep.
+    /// Once aborted, it performs a fine-grained sweep starting from the highest passed value
+    /// to locate the exact breakdown boundary.
     static func runRotationAndScaleLimitSweepOnBundledTestImg(
-        rotationDegrees: [Double] = [-45, -30, -20, -15, -10, -5, -2, -1, 0, 1, 2, 5, 10, 15, 20, 30, 45],
-        scaleFactors: [Double] = [0.60, 0.70, 0.80, 0.85, 0.90, 0.95, 0.98, 1.00, 1.02, 1.05, 1.10, 1.15, 1.20, 1.30, 1.50],
         syncTemplateIntensity: Double = AppConstants.SettingsDefault.syncTemplateIntensity
     ) async -> SweepReport {
         guard let img = ImagePipelineTests.loadBundledTestUIImage() else {
@@ -249,89 +242,139 @@ enum SyncTemplateGeometricAttackTests {
             )
         }
 
-        // Save the original watermarked image once so the user has a baseline to compare
-        // attacked images against.
         try? await PhotoLibraryExporter.saveToPhotoLibrary(watermarked)
 
-        // -----------------------
-        // Rotation sweep
-        // -----------------------
-        var rotationCases: [AttackCase] = []
-        rotationCases.reserveCapacity(rotationDegrees.count)
+        // --- Core Evaluation Helper ---
+        func evaluate(kind: AttackCase.Kind, param: Double) -> AttackCase {
+            let attacked: UIImage?
+            let expectedAngle: Double
+            let expectedScale: Double
 
-        for deg in rotationDegrees {
-            guard let attacked = rotate(image: watermarked, degrees: deg) else {
-                rotationCases.append(emptyCase(kind: .rotation, attackParam: deg))
-                continue
+            switch kind {
+            case .rotation:
+                attacked = rotate(image: watermarked, degrees: param)
+                expectedAngle = param
+                expectedScale = 1.0
+            case .scale:
+                attacked = scale(image: watermarked, factor: param)
+                expectedAngle = 0.0
+                expectedScale = param
             }
 
-            let probe = detectorProbe(service: service, image: attacked)
-            // For a pure rotation attack: expected angle = deg, expected scale = 1.0.
-            let angleErr: Double? = probe.angleDeg.map { abs($0 - deg) }
-            let scaleErr: Double? = probe.scale.map { abs($0 - 1.0) }
+            guard let attackedImg = attacked else {
+                return emptyCase(kind: kind, attackParam: param)
+            }
+
+            let probe = detectorProbe(service: service, image: attackedImg)
+            
+            let angleErr: Double? = probe.angleDeg.map {
+                kind == .rotation ? abs($0 - param) : abs($0)
+            }
+            let scaleErr: Double? = probe.scale.map {
+                kind == .scale ? abs($0 - param) / max(param, 1e-9) : abs($0 - 1.0)
+            }
+            
             let pass = (angleErr ?? .infinity) <= angleToleranceDegrees
                 && (scaleErr ?? .infinity) <= scaleRelativeTolerance
 
-            rotationCases.append(AttackCase(
-                kind: .rotation,
-                attackParam: deg,
+            return AttackCase(
+                kind: kind,
+                attackParam: param,
                 detectedAngleDegrees: probe.angleDeg,
                 detectedScale: probe.scale,
                 angleErrorDegrees: angleErr,
                 scaleRelativeError: scaleErr,
                 passed: pass,
-                attackedPx: pixelSize(of: attacked),
+                attackedPx: pixelSize(of: attackedImg),
                 topPeaks: probe.topPeaks
-            ))
+            )
         }
 
-        // -----------------------
-        // Scale sweep
-        // -----------------------
-        var scaleCases: [AttackCase] = []
-        scaleCases.reserveCapacity(scaleFactors.count)
+        // --- Smart Directional Sweep Engine ---
+        func sweepDirection(kind: AttackCase.Kind, coarseSteps: [Double], fineStep: Double) -> [AttackCase] {
+            var results: [AttackCase] = []
+            var consecutiveFails = 0
+            var highestPassIndex = -1
 
-        for factor in scaleFactors {
-            guard let attacked = scale(image: watermarked, factor: factor) else {
-                scaleCases.append(emptyCase(kind: .scale, attackParam: factor))
-                continue
+            // 1. Coarse Sweep (Fast tracking)
+            for (i, param) in coarseSteps.enumerated() {
+                let res = evaluate(kind: kind, param: param)
+                results.append(res)
+
+                if res.passed {
+                    consecutiveFails = 0
+                    highestPassIndex = i
+                } else {
+                    consecutiveFails += 1
+                    // Tolerate 1 death valley failure, stop at 2 consecutive failures
+                    if consecutiveFails >= 2 { break }
+                }
             }
 
-            let probe = detectorProbe(service: service, image: attacked)
-            // For a pure isotropic-scale attack: expected angle = 0, expected scale = factor.
-            let angleErr: Double? = probe.angleDeg.map { abs($0) }
-            let scaleErr: Double? = probe.scale.map { abs($0 - factor) / max(factor, 1e-9) }
-            let pass = (angleErr ?? .infinity) <= angleToleranceDegrees
-                && (scaleErr ?? .infinity) <= scaleRelativeTolerance
+            // 2. Fine Sweep (Drill down into the limit)
+            if highestPassIndex >= 0 {
+                let lastPassVal = coarseSteps[highestPassIndex]
+                let direction = (coarseSteps.last! > coarseSteps.first!) ? 1.0 : -1.0
+                
+                var currentFine = lastPassVal + (fineStep * direction)
+                var fineFails = 0
 
-            scaleCases.append(AttackCase(
-                kind: .scale,
-                attackParam: factor,
-                detectedAngleDegrees: probe.angleDeg,
-                detectedScale: probe.scale,
-                angleErrorDegrees: angleErr,
-                scaleRelativeError: scaleErr,
-                passed: pass,
-                attackedPx: pixelSize(of: attacked),
-                topPeaks: probe.topPeaks
-            ))
+                while fineFails < 2 {
+                    // Safety break to prevent infinite loops
+                    if results.count > 100 { break }
+
+                    // Check if we already evaluated this exact step in the coarse run
+                    if let existing = results.first(where: { abs($0.attackParam - currentFine) < 1e-4 }) {
+                        if existing.passed { fineFails = 0 } else { fineFails += 1 }
+                    } else {
+                        // Evaluate new fine-grained step
+                        let res = evaluate(kind: kind, param: currentFine)
+                        results.append(res)
+                        if res.passed { fineFails = 0 } else { fineFails += 1 }
+                    }
+                    currentFine += (fineStep * direction)
+                }
+            }
+            return results
         }
 
         // -----------------------
-        // Aggregate per-axis limits
+        // Execute Directional Sweeps
         // -----------------------
-        let passingAbsRotations = rotationCases.filter { $0.passed }.map { abs($0.attackParam) }
+        // We define sequences pointing OUTWARD from the identity (0° or 1.0x).
+        
+        let rotPosCoarse = [0.0, 1.0, 2.0, 5.0, 10.0, 15.0, 20.0, 30.0, 45.0, 60.0]
+        let rotNegCoarse = [-1.0, -2.0, -5.0, -10.0, -15.0, -20.0, -30.0, -45.0, -60.0]
+        let scaleUpCoarse = [1.0, 1.02, 1.05, 1.10, 1.15, 1.20, 1.30, 1.50, 1.80, 2.00, 2.50, 3.00, 3.50]
+        let scaleDownCoarse = [0.98, 0.95, 0.90, 0.85, 0.80, 0.70, 0.60, 0.50]
+
+        var allRotCases: [AttackCase] = []
+        allRotCases.append(contentsOf: sweepDirection(kind: .rotation, coarseSteps: rotPosCoarse, fineStep: 1.0))
+        allRotCases.append(contentsOf: sweepDirection(kind: .rotation, coarseSteps: rotNegCoarse, fineStep: 1.0))
+        
+        var allScaleCases: [AttackCase] = []
+        allScaleCases.append(contentsOf: sweepDirection(kind: .scale, coarseSteps: scaleUpCoarse, fineStep: 0.01))
+        allScaleCases.append(contentsOf: sweepDirection(kind: .scale, coarseSteps: scaleDownCoarse, fineStep: 0.01))
+
+        // Sort results cleanly for the final printout
+        allRotCases.sort { $0.attackParam < $1.attackParam }
+        allScaleCases.sort { $0.attackParam < $1.attackParam }
+
+        // -----------------------
+        // Aggregate Limits
+        // -----------------------
+        let passingAbsRotations = allRotCases.filter { $0.passed }.map { abs($0.attackParam) }
         let maxRot = passingAbsRotations.max()
 
-        let passingScales = scaleCases.filter { $0.passed }.map { $0.attackParam }
+        let passingScales = allScaleCases.filter { $0.passed }.map { $0.attackParam }
         let minPassScale = passingScales.filter { $0 <= 1.0 }.min()
         let maxPassScale = passingScales.filter { $0 >= 1.0 }.max()
 
         return SweepReport(
             imageLoaded: true,
             embedSucceeded: true,
-            rotationCases: rotationCases,
-            scaleCases: scaleCases,
+            rotationCases: allRotCases,
+            scaleCases: allScaleCases,
             maxPassingAbsRotationDegrees: maxRot,
             minPassingScaleFactor: minPassScale,
             maxPassingScaleFactor: maxPassScale
