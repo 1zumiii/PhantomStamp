@@ -27,31 +27,34 @@ extension WatermarkService {
         let height = yChannel.height
         let tWidth = template.width
         let tHeight = template.height
-        
+
         precondition(tWidth > 0 && tHeight > 0, "Template dimensions must be positive")
-        
-        // Use unsafe buffer for maximum performance during full-image iteration
-        yChannel.data.withUnsafeMutableBufferPointer { yPtr in
-            for y in 0..<height {
-                let templateY = y % tHeight
-                let rowOffset = y * width
-                
-                for x in 0..<width {
-                    let templateX = x % tWidth
-                    
-                    // 1. Read original pixel and convert to Float
-                    let pixelIndex = rowOffset + x
-                    let originalPixel = Float(yPtr[pixelIndex])
-                    
-                    // 2. Get template value
-                    let tValue = template[templateY, templateX]
-                    
-                    // 3. Add template wave with intensity
-                    let newPixel = originalPixel + (tValue * intensity)
-                    
-                    // 4. Clamp and write back as UInt8
-                    let clamped = min(max(newPixel, 0.0), 255.0)
-                    yPtr[pixelIndex] = UInt8(clamped)
+        precondition(yChannel.data.count == width * height, "Y channel data size does not match width * height")
+
+        // Bind both buffers to raw pointers so the inner loop avoids per-pixel
+        // subscript bound-checks and copy-on-write probing on the [Float] storage.
+        template.values.withUnsafeBufferPointer { tPtr in
+            yChannel.data.withUnsafeMutableBufferPointer { yPtr in
+                for y in 0..<height {
+                    let templateY = y % tHeight
+                    let templateRowBase = templateY * tWidth
+                    let rowOffset = y * width
+
+                    for x in 0..<width {
+                        let templateX = x % tWidth
+                        let pixelIndex = rowOffset + x
+
+                        let originalPixel = Float(yPtr[pixelIndex])
+                        let tValue = tPtr[templateRowBase + templateX]
+
+                        let newPixel = originalPixel + tValue * intensity
+
+                        // Round-to-nearest (instead of truncating) keeps the ±ripple energy symmetric.
+                        // Plain `UInt8(Float)` truncates toward zero and would suppress the positive half
+                        // of the template wave, destroying the FFT peak symmetry the extractor relies on.
+                        let clamped = min(max(newPixel, 0.0), 255.0)
+                        yPtr[pixelIndex] = UInt8(clamping: Int(clamped.rounded()))
+                    }
                 }
             }
         }
@@ -62,42 +65,39 @@ extension WatermarkService {
     // ==========================================
     
     /// Loads the pre-computed 512x512 spatial domain synchronization template from the bundle.
-    ///
-    /// IMPLEMENTATION GUIDE:
-    /// 1. Locate the "sync_template_512.json" file in the app bundle.
-    /// 2. Decode the JSON array into a flat `[Float]` array.
-    /// 3. Wrap the array in a `FloatMatrix` with width=512, height=512.
-    ///
-    /// WARNING (Gotchas):
-    /// - Heavy I/O operation! This should be called ONCE per app lifecycle.
-    ///   Cache the result in a static or singleton property.
     func loadSpatialSyncTemplate() -> FFTFloatMatrix {
         return WatermarkService.cachedSyncTemplate
     }
     
     /// Maps global image coordinates to local 512x512 template coordinates.
     ///
-    /// IMPLEMENTATION GUIDE:
-    /// 1. Return `template[globalY % template.height][globalX % template.width]`.
+    /// Uses Euclidean modulo so callers can safely pass negative coordinates
+    /// (e.g. when probing pixels around a deskew anchor point).
+    @inline(__always)
     func getTemplateValue(from template: FFTFloatMatrix, globalX: Int, globalY: Int) -> Float {
-        // TODO: Implement modulo mapping.
-        return 0.0
+        let tWidth = template.width
+        let tHeight = template.height
+        precondition(tWidth > 0 && tHeight > 0, "Template dimensions must be positive")
+
+        // Swift's `%` keeps the sign of the dividend, so wrap into [0, t-1] explicitly.
+        let tx = ((globalX % tWidth) + tWidth) % tWidth
+        let ty = ((globalY % tHeight) + tHeight) % tHeight
+        return template[ty, tx]
     }
-    
+
     /// Ensures the pixel value safely stays within valid grayscale bounds [0.0, 255.0].
     ///
     /// WARNING (Gotchas):
     /// - DO NOT use standard integer casting without checking, as floats > 255 or < 0 will crash Swift.
     @inline(__always)
     func clampToUInt8Range(_ value: Float) -> Float {
-        // TODO: Implement min(max(value, 0.0), 255.0).
-        return value
+        return min(max(value, 0.0), 255.0)
     }
     
     
-    // ==========================================
-    // MARK: - Pre-computed Sync Template Cache
-    // ==========================================
+    // =================================================
+    // MARK: - Pre-computed 512x512 Sync Template Cache
+    // =================================================
     
     private static let cachedSyncTemplate: FFTFloatMatrix = {
         let fileName = "sync_template_512"
