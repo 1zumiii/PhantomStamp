@@ -48,7 +48,11 @@ extension AppConstants {
         /// Recommended default: subtle protection without killing redundancy.
         static let textureVarianceThreshold: Double = 0.0
 
-        /// Mirrors the original hardcoded value (`2.5`). Range typically used: 0.5...10.0.
-        static let syncTemplateIntensity: Double = 2.5
+        /// `5.0` is the empirically-determined value at which the DFT geometric detector recovers
+        /// rotation up to ±15° and scale across [0.85×, 1.15×] on natural photos with strong
+        /// frequency content (e.g. `TestImg`). Lower values (e.g. 2.5) keep the template wave
+        /// barely visible but the geometric detection becomes flaky on textured images. Tunable
+        /// per-image via the slider on `RobustnessTestingView`.
+        static let syncTemplateIntensity: Double = 5.0
     }
 }

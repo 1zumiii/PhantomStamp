@@ -250,7 +250,7 @@ struct RobustnessTestingView: View {
 
                 testRow(
                     title: "Rotation + scale detector sweep",
-                    subtitle: "For each known attack (rotation ±15°, scale 0.85×–1.15×), PASS iff the detector recovers the same parameters within ±0.5° / ±2%. Top FFT peaks printed for each case.",
+                    subtitle: "Sweeps rotation ±45° and scale 0.60×–1.50× (deliberately beyond the expected operating envelope to find the PASS/FAIL boundary). PASS iff detector recovers params within ±0.5° / ±2%. Top FFT peak printed per case.",
                     runTitle: "Run",
                     style: .normal
                 ) {

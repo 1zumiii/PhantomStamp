@@ -32,8 +32,20 @@ extension WatermarkService {
     // ==========================================
 
     /// Frequency-space radius (in FFT cells, centered around DC) of every peak baked into
-    /// `sync_template_512.bin`. MUST stay in sync with the Python generator (`radius = 100`).
-    static let syncTemplateOriginalRadius: Float = 100.0
+    /// `sync_template_512.bin`.
+    ///
+    /// IMPORTANT — this is NOT `100.0` even though the Python generator's `radius` variable is.
+    /// The generator does `dx = int(radius * cos(π/4))` ⇒ `int(70.71)` ⇒ `70`, then the peak is
+    /// placed at integer cell `(±70, ±70)`. The TRUE post-truncation radius is therefore
+    /// `sqrt(70² + 70²) = 98.99494937…`, not 100. Using 100 here would inject a systematic
+    /// `100 / 98.995 ≈ 1.0102` multiplicative bias into every `scale` recovery.
+    static let syncTemplateOriginalRadius: Float = {
+        // Compute from integer cell positions used by the generator, so any future tweak to dx/dy
+        // ripples through automatically rather than diverging silently.
+        let dx: Double = 70
+        let dy: Double = 70
+        return Float((dx * dx + dy * dy).squareRoot())
+    }()
 
     /// Reference angle of one template peak in `atan2(y, x)` convention.
     /// The full peak set sits at `originalAngle + k·π/2 (k = 0..3)`; 4-fold disambiguation in

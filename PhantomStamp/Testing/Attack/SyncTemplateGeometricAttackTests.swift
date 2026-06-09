@@ -210,16 +210,17 @@ enum SyncTemplateGeometricAttackTests {
     /// `detectGeometricTransforms` whether it can recover the attack parameters and records the
     /// numeric error.
     ///
-    /// Default sweeps:
-    ///   - rotation degrees: [-15, -10, -5, -2, -1, 0, 1, 2, 5, 10, 15]
-    ///   - scale factors:    [0.85, 0.90, 0.95, 0.98, 1.00, 1.02, 1.05, 1.10, 1.15]
+    /// Default sweeps (intentionally include values BEYOND the detector's expected operating
+    /// envelope so the sweep can find the true PASS/FAIL boundary on both axes):
+    ///   - rotation degrees: [-45, -30, -20, -15, -10, -5, -2, -1, 0, 1, 2, 5, 10, 15, 20, 30, 45]
+    ///   - scale factors:    [0.60, 0.70, 0.80, 0.85, 0.90, 0.95, 0.98, 1.00, 1.02, 1.05, 1.10, 1.15, 1.20, 1.30, 1.50]
     ///
     /// PASS criteria per case:
     ///   - `angleErrorDegrees ≤ angleToleranceDegrees`
     ///   - `scaleRelativeError ≤ scaleRelativeTolerance`
     static func runRotationAndScaleLimitSweepOnBundledTestImg(
-        rotationDegrees: [Double] = [-15, -10, -5, -2, -1, 0, 1, 2, 5, 10, 15],
-        scaleFactors: [Double] = [0.85, 0.90, 0.95, 0.98, 1.00, 1.02, 1.05, 1.10, 1.15],
+        rotationDegrees: [Double] = [-45, -30, -20, -15, -10, -5, -2, -1, 0, 1, 2, 5, 10, 15, 20, 30, 45],
+        scaleFactors: [Double] = [0.60, 0.70, 0.80, 0.85, 0.90, 0.95, 0.98, 1.00, 1.02, 1.05, 1.10, 1.15, 1.20, 1.30, 1.50],
         syncTemplateIntensity: Double = AppConstants.SettingsDefault.syncTemplateIntensity
     ) async -> SweepReport {
         guard let img = ImagePipelineTests.loadBundledTestUIImage() else {
