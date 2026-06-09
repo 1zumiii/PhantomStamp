@@ -137,6 +137,9 @@ class WatermarkService: WatermarkServiceProtocol {
         let thresholdSnapshot: Double = await MainActor.run {
             settingsStore?.textureVarianceThreshold ?? AppConstants.SettingsDefault.textureVarianceThreshold
         }
+        let syncIntensitySnapshot: Double = await MainActor.run {
+            settingsStore?.syncTemplateIntensity ?? AppConstants.SettingsDefault.syncTemplateIntensity
+        }
 
         do {
             // ==========================================
@@ -235,6 +238,19 @@ class WatermarkService: WatermarkServiceProtocol {
             reassembleStrips(imageStrips, into: &ycbcrImage.Y)
             reportProgress(step: .reassembling, percentage: stripsEnd + (1 - stripsEnd) * 0.52)
             
+
+            // ==========================================
+            // New Feature: Upgrade to Hybrid Architecture
+            // Add DFT Frequency-Domain Sync Template to protect Geometric Attacks
+            // ==========================================
+            // Intensity is user-configurable via `UserSettingsStore.syncTemplateIntensity` so the
+            // robustness-vs-visibility trade-off can be tuned without rebuilding. Snapshot was
+            // taken at the top of this method to avoid mid-pipeline races.
+            let syncTemplate = loadSpatialSyncTemplate()
+            let templateIntensity = Float(syncIntensitySnapshot)
+            applySpatialTiling(to: &ycbcrImage.Y, template: syncTemplate, intensity: templateIntensity)
+
+
             // Final color conversion back to UIImage.
             reportProgress(step: .rgbRebuild, percentage: stripsEnd + (1 - stripsEnd) * 0.72)
 
@@ -351,8 +367,28 @@ class WatermarkService: WatermarkServiceProtocol {
                 let yChannel = ycbcrImage.Y
                 await reportProgress(step: .extractConvertToYCbCr, percentage: 0.12)
 
+
+                // ==========================================
+                // New Feature: Upgrade to Hybrid Architecture
+                // Added correction for geometric attacks such as scaling and rotation
+                // ==========================================
+
+
+                // ==========================================
+                // [New Feature] Extract Region + DFT Global Star Seeking
+                // ==========================================
+                let transformParams = await self.detectGeometricTransforms(in: yChannel)
+                await reportProgress(step: .extractDetectTransforms, percentage: 0.20)
+
+                // ==========================================
+                // [New Feature] Spatial Domain Inverse Interpolation Correction (Deskewing)
+                // ==========================================
+                let deskewedYChannel = await self.deskewImage(yChannel, angle: transformParams.angle, scale: transformParams.scale)
+                await reportProgress(step: .extractDeskew, percentage: 0.28)
+
+
                 // 2. physical and logical alignment
-                let gridScan = await self.findGridOffsetAndSyncMarker(in: yChannel, onOffsetProgress: { t in
+                let gridScan = await self.findGridOffsetAndSyncMarker(in: deskewedYChannel, onOffsetProgress: { t in
                     // Map alignment scan into [0.12, 0.55].
                     let pct = 0.12 + (0.55 - 0.12) * min(max(t, 0), 1)
                     reportProgress(step: .extractOffsetScan, percentage: pct)
@@ -373,7 +409,10 @@ class WatermarkService: WatermarkServiceProtocol {
                 }
 
                 // 3. data extraction
-                let rawExtractedBits = await self.extractBitsWithOffset(yChannel, offset: gridOffset)
+                // IMPORTANT: must read from the deskewed Y channel — the offset was found on the
+                // geometrically-corrected image, so applying it to the raw (still rotated/scaled)
+                // yChannel would dis-align every macroblock and yield garbage bits.
+                let rawExtractedBits = await self.extractBitsWithOffset(deskewedYChannel, offset: gridOffset)
                 await reportProgress(step: .extractBitGrid, percentage: 0.72)
 
                 // 4. data recovery and decoding
@@ -387,7 +426,7 @@ class WatermarkService: WatermarkServiceProtocol {
                 print("[WatermarkService] DEBUG extract: gridOffset=(\(Int(gridOffset.x)),\(Int(gridOffset.y))) rawBits=\(rows)x\(cols) votedBits=\(votedBits.count)")
                 #endif
 
-                let syncCount = getSyncMarkerBits().count
+                let syncCount = await getSyncMarkerBits().count
                 let payload = votedBits.count >= syncCount ? Array(votedBits.dropFirst(syncCount)) : []
                 let maj = voting.diagnostics
                 return ExtractMatrixWorkResult(

@@ -13,11 +13,11 @@ extension WatermarkService {
     ///
     /// - Note: This uses population variance (divide by N=64), which is what we typically want
     ///   for block activity/energy heuristics in DSP pipelines.
-    nonisolated func calculateVariance(_ block: Matrix8x8) -> Float {
+    nonisolated func calculateVariance(_ block: DCTMatrix8x8) -> Float {
         // Population variance: Var(X) = E[X^2] - (E[X])^2
         var mean: Float = 0
         var meanSquare: Float = 0
-        let length = vDSP_Length(Matrix8x8.elementCount)
+        let length = vDSP_Length(DCTMatrix8x8.elementCount)
 
         block.values.withUnsafeBufferPointer { ptr in
             guard let base = ptr.baseAddress else { return }
@@ -41,10 +41,10 @@ extension WatermarkService {
     ///   \]
     ///
     ///   All multiplications are done via `vDSP_mmul` (vectorized / Accelerate-optimized).
-    nonisolated func performDCT(_ block: Matrix8x8) -> Matrix8x8 {
+    nonisolated func performDCT(_ block: DCTMatrix8x8) -> DCTMatrix8x8 {
         var buf = block.values
         DCT8x8vDSP.apply2DDCTInPlace(&buf)
-        return Matrix8x8(values: buf)
+        return DCTMatrix8x8(values: buf)
     }
 
     /// Performs an 8×8 2D IDCT using Accelerate/vDSP.
@@ -54,17 +54,17 @@ extension WatermarkService {
     /// \[
     ///   X = C^T \cdot F \cdot C
     /// \]
-    nonisolated func performIDCT(_ freqBlock: Matrix8x8) -> Matrix8x8 {
+    nonisolated func performIDCT(_ freqBlock: DCTMatrix8x8) -> DCTMatrix8x8 {
         var buf = freqBlock.values
         DCT8x8vDSP.apply2DIDCTInPlace(&buf)
-        return Matrix8x8(values: buf)
+        return DCTMatrix8x8(values: buf)
     }
 }
 
 // MARK: - vDSP-based 8×8 DCT/IDCT
 
 private enum DCT8x8vDSP {
-    private static let n = Matrix8x8.side
+    private static let n = DCTMatrix8x8.side
     private static let lengthN = vDSP_Length(n)
 
     /// Orthonormal 8×8 DCT-II basis matrix in row-major order.
@@ -97,14 +97,14 @@ private enum DCT8x8vDSP {
     }()
 
     static func apply2DDCTInPlace(_ matrix: inout [Float]) {
-        precondition(matrix.count == Matrix8x8.elementCount)
+        precondition(matrix.count == DCTMatrix8x8.elementCount)
         // F = C * X * C^T
         //
         // Implementation detail:
         // We use `withUnsafeTemporaryAllocation` for the 64-float temporaries so each 8×8 transform
         // doesn't allocate on the heap (important when processing many blocks/strips).
-        withUnsafeTemporaryAllocation(of: Float.self, capacity: Matrix8x8.elementCount) { tempBuf in
-            withUnsafeTemporaryAllocation(of: Float.self, capacity: Matrix8x8.elementCount) { outBuf in
+        withUnsafeTemporaryAllocation(of: Float.self, capacity: DCTMatrix8x8.elementCount) { tempBuf in
+            withUnsafeTemporaryAllocation(of: Float.self, capacity: DCTMatrix8x8.elementCount) { outBuf in
                 let tempPtr = tempBuf.baseAddress!
                 let outPtr = outBuf.baseAddress!
 
@@ -129,17 +129,17 @@ private enum DCT8x8vDSP {
                 }
 
                 matrix.withUnsafeMutableBufferPointer { dst in
-                    dst.baseAddress!.update(from: outPtr, count: Matrix8x8.elementCount)
+                    dst.baseAddress!.update(from: outPtr, count: DCTMatrix8x8.elementCount)
                 }
             }
         }
     }
 
     static func apply2DIDCTInPlace(_ matrix: inout [Float]) {
-        precondition(matrix.count == Matrix8x8.elementCount)
+        precondition(matrix.count == DCTMatrix8x8.elementCount)
         // X = C^T * F * C   (since C is orthonormal)
-        withUnsafeTemporaryAllocation(of: Float.self, capacity: Matrix8x8.elementCount) { tempBuf in
-            withUnsafeTemporaryAllocation(of: Float.self, capacity: Matrix8x8.elementCount) { outBuf in
+        withUnsafeTemporaryAllocation(of: Float.self, capacity: DCTMatrix8x8.elementCount) { tempBuf in
+            withUnsafeTemporaryAllocation(of: Float.self, capacity: DCTMatrix8x8.elementCount) { outBuf in
                 let tempPtr = tempBuf.baseAddress!
                 let outPtr = outBuf.baseAddress!
 
@@ -164,7 +164,7 @@ private enum DCT8x8vDSP {
                 }
 
                 matrix.withUnsafeMutableBufferPointer { dst in
-                    dst.baseAddress!.update(from: outPtr, count: Matrix8x8.elementCount)
+                    dst.baseAddress!.update(from: outPtr, count: DCTMatrix8x8.elementCount)
                 }
             }
         }

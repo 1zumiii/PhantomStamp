@@ -37,8 +37,8 @@ extension WatermarkService {
                 // let thresholdSmooth: Float = 20.0
                 let imageX = blockX + strip.globalXOffset
                 let imageY = blockY + strip.globalYOffset
-                let mx = imageX / Matrix8x8.side
-                let my = imageY / Matrix8x8.side
+                let mx = imageX / DCTMatrix8x8.side
+                let my = imageY / DCTMatrix8x8.side
                 let ix = (macroblock.bitsWide > 0) ? (mx % macroblock.bitsWide) : 0
                 let iy = (macroblock.bitsHigh > 0) ? (my % macroblock.bitsHigh) : 0
                 let tileIndex = iy * max(1, macroblock.bitsWide) + ix
@@ -78,7 +78,7 @@ extension WatermarkService {
     }
 
     /// Embeds one payload bit into the mid-frequency band of an 8×8 DCT block.
-    nonisolated func embedBitIntoFrequencies(_ freqBlock: inout Matrix8x8, bit: Int, strength: Float = 1.45) {
+    nonisolated func embedBitIntoFrequencies(_ freqBlock: inout DCTMatrix8x8, bit: Int, strength: Float = 1.45) {
         let p1 = (u: 3, v: 4)
         let p2 = (u: 4, v: 3)
 
@@ -116,7 +116,7 @@ extension WatermarkService {
     }
 
     /// Extracts one payload bit from the mid-frequency band of an 8×8 DCT block.
-    nonisolated func extractBitFromFrequencies(_ freqBlock: Matrix8x8) -> Int {
+    nonisolated func extractBitFromFrequencies(_ freqBlock: DCTMatrix8x8) -> Int {
         let p1 = (u: 3, v: 4)
         let p2 = (u: 4, v: 3)
         let absA = abs(freqBlock[p1.u, p1.v])
@@ -124,10 +124,10 @@ extension WatermarkService {
         return absA >= absB ? 1 : 0
     }
 
-    nonisolated private func adaptiveQuantizationStep(for freqBlock: Matrix8x8) -> Float {
+    nonisolated private func adaptiveQuantizationStep(for freqBlock: DCTMatrix8x8) -> Float {
         var sumAbs: Float = 0
-        for u in 0..<Matrix8x8.side {
-            for v in 0..<Matrix8x8.side {
+        for u in 0..<DCTMatrix8x8.side {
+            for v in 0..<DCTMatrix8x8.side {
                 if u == 0 && v == 0 { continue }
                 sumAbs += abs(freqBlock[u, v])
             }

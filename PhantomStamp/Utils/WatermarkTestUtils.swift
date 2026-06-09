@@ -48,8 +48,8 @@ enum WatermarkTestUtils {
     static func makeDeterministicBlock(seed: UInt64) -> [Float] {
         var rng = SplitMix64(state: seed)
         var out = [Float]()
-        out.reserveCapacity(Matrix8x8.elementCount)
-        for _ in 0..<Matrix8x8.elementCount {
+        out.reserveCapacity(DCTMatrix8x8.elementCount)
+        for _ in 0..<DCTMatrix8x8.elementCount {
             out.append(rng.nextUnitFloat() * 255.0)
         }
         return out

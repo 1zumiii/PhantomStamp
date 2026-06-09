@@ -44,17 +44,17 @@ extension WatermarkService {
         var bestDetails: (offsetX: Int, offsetY: Int, bx: Int, by: Int, w: Int) = (0, 0, 0, 0, 0)
         #endif
 
-        for offsetY in 0..<Matrix8x8.side {
-            for offsetX in 0..<Matrix8x8.side {
+        for offsetY in 0..<DCTMatrix8x8.side {
+            for offsetX in 0..<DCTMatrix8x8.side {
                 if let onOffsetProgress {
-                    let idx = offsetY * Matrix8x8.side + offsetX
+                    let idx = offsetY * DCTMatrix8x8.side + offsetX
                     // Throttle: 64 offsets are enough; ~16 ticks feels smooth without flooding UI.
                     if idx % 4 == 0 || idx == 63 {
                         onOffsetProgress(Double(idx) / 63.0)
                     }
                 }
-                let maxRows = min(searchBlockLimit, (matrix.height - offsetY) / Matrix8x8.side)
-                let maxCols = min(searchBlockLimit, (matrix.width - offsetX) / Matrix8x8.side)
+                let maxRows = min(searchBlockLimit, (matrix.height - offsetY) / DCTMatrix8x8.side)
+                let maxCols = min(searchBlockLimit, (matrix.width - offsetX) / DCTMatrix8x8.side)
                 if maxRows < 4 || maxCols < 8 { continue }
 
                 // Pre-extract all bits under this (offsetX, offsetY) once, then run sliding windows purely in memory.
@@ -62,7 +62,7 @@ extension WatermarkService {
                 var bitGrid = [[Int]](repeating: [Int](repeating: 0, count: maxCols), count: maxRows)
                 for r in 0..<maxRows {
                     for c in 0..<maxCols {
-                        let block = extractSpatialBlock(from: matrix, x: offsetX + c * Matrix8x8.side, y: offsetY + r * Matrix8x8.side)
+                        let block = extractSpatialBlock(from: matrix, x: offsetX + c * DCTMatrix8x8.side, y: offsetY + r * DCTMatrix8x8.side)
                         let freqBlock = performDCT(block)
                         bitGrid[r][c] = extractBitFromFrequencies(freqBlock)
                     }
@@ -128,14 +128,14 @@ extension WatermarkService {
     /// - Note:
     ///   Kept `internal` (not `private`) because multiple extension files need this primitive:
     ///   alignment scan, extraction grid building, and tests.
-    func extractSpatialBlock(from matrix: Matrix, x: Int, y: Int) -> Matrix8x8 {
-        var block = Matrix8x8()
+    func extractSpatialBlock(from matrix: Matrix, x: Int, y: Int) -> DCTMatrix8x8 {
+        var block = DCTMatrix8x8()
         matrix.data.withUnsafeBufferPointer { ptr in
             block.values.withUnsafeMutableBufferPointer { blockPtr in
-                for row in 0..<Matrix8x8.side {
+                for row in 0..<DCTMatrix8x8.side {
                     let srcStart = (y + row) * matrix.width + x
-                    let dstStart = row * Matrix8x8.side
-                    for col in 0..<Matrix8x8.side {
+                    let dstStart = row * DCTMatrix8x8.side
+                    for col in 0..<DCTMatrix8x8.side {
                         blockPtr[dstStart + col] = Float(ptr[srcStart + col])
                     }
                 }

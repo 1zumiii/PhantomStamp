@@ -124,9 +124,9 @@ enum ExtractionAndVotingTests {
         return out
     }
 
-    private static func makeSpatialBlockForEmbeddedBit(service: WatermarkService, bit: Int, seed: UInt64) -> Matrix8x8 {
+    private static func makeSpatialBlockForEmbeddedBit(service: WatermarkService, bit: Int, seed: UInt64) -> DCTMatrix8x8 {
         var rng = WatermarkTestUtils.SplitMix64(state: seed)
-        var spatial = Matrix8x8(values: [Float](repeating: 0, count: Matrix8x8.elementCount))
+        var spatial = DCTMatrix8x8(values: [Float](repeating: 0, count: DCTMatrix8x8.elementCount))
         for i in 0..<spatial.values.count {
             spatial.values[i] = rng.nextUnitFloat() * 160.0 + 40.0
         }
@@ -135,9 +135,9 @@ enum ExtractionAndVotingTests {
         return service.performIDCT(freq)
     }
 
-    private static func writeSpatialBlock(_ matrix: inout Matrix, _ block: Matrix8x8, x: Int, y: Int) {
-        for row in 0..<Matrix8x8.side {
-            for col in 0..<Matrix8x8.side {
+    private static func writeSpatialBlock(_ matrix: inout Matrix, _ block: DCTMatrix8x8, x: Int, y: Int) {
+        for row in 0..<DCTMatrix8x8.side {
+            for col in 0..<DCTMatrix8x8.side {
                 matrix.data[(y + row) * matrix.width + (x + col)] = UInt8(clamping: Int(block[row, col].rounded()))
             }
         }

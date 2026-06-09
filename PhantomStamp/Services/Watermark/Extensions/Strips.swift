@@ -13,12 +13,12 @@ extension WatermarkService {
     func sliceImage(_ channel: Matrix, heightPerStrip: Int) -> [ImageStrip] {
         // We only process full 8×8 blocks. Any remainder (1..7 pixels) on right/bottom is left untouched
         // in the original matrix and never enters the watermark pipeline.
-        let validWidth = (channel.width / Matrix8x8.side) * Matrix8x8.side
-        let validHeight = (channel.height / Matrix8x8.side) * Matrix8x8.side
+        let validWidth = (channel.width / DCTMatrix8x8.side) * DCTMatrix8x8.side
+        let validHeight = (channel.height / DCTMatrix8x8.side) * DCTMatrix8x8.side
         guard validWidth >= 8, validHeight >= 8 else { return [] }
 
         // Strip height must also be 8-aligned to keep block iteration simple.
-        let safeStripHeight = (heightPerStrip / Matrix8x8.side) * Matrix8x8.side
+        let safeStripHeight = (heightPerStrip / DCTMatrix8x8.side) * DCTMatrix8x8.side
         guard safeStripHeight >= 8 else { return [] }
 
         var strips: [ImageStrip] = []

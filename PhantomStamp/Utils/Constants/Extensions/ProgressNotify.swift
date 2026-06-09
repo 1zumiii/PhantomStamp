@@ -50,6 +50,9 @@ extension AppConstants {
         case extractBitGrid = "Extract Bits"
         case extractMajorityVoting = "Apply Majority Voting"
         case extractDecodeFEC = "Decode FEC"
+
+        case extractDetectTransforms = "Detect Geometric Transforms"
+        case extractDeskew = "Deskew Image"
     }
 }
 

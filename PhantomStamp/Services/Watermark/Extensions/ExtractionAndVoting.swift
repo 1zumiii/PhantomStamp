@@ -28,8 +28,8 @@ extension WatermarkService {
         let startY = Int(offset.y)
 
         // Under this physical offset, how many complete 8×8 blocks fit?
-        let maxRows = (matrix.height - startY) / Matrix8x8.side
-        let maxCols = (matrix.width - startX) / Matrix8x8.side
+        let maxRows = (matrix.height - startY) / DCTMatrix8x8.side
+        let maxCols = (matrix.width - startX) / DCTMatrix8x8.side
         guard maxRows > 0, maxCols > 0 else { return [] }
 
         // Write into a flat buffer so concurrent rows can write without reallocations.
@@ -39,7 +39,7 @@ extension WatermarkService {
             // This can still be CPU-heavy; callers should not run this on the main thread.
             DispatchQueue.concurrentPerform(iterations: maxRows) { r in
                 for c in 0..<maxCols {
-                    let block = extractSpatialBlock(from: matrix, x: startX + c * Matrix8x8.side, y: startY + r * Matrix8x8.side)
+                    let block = extractSpatialBlock(from: matrix, x: startX + c * DCTMatrix8x8.side, y: startY + r * DCTMatrix8x8.side)
                     let freqBlock = performDCT(block)
                     bitPtr[r * maxCols + c] = extractBitFromFrequencies(freqBlock)
                 }

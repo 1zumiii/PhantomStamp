@@ -55,7 +55,7 @@ struct WatermarkExtractUI: View {
 
     private var header: some View {
         VStack(alignment: .leading, spacing: 8) {
-            Text("Demo mode")
+            Text("Extract Flow")
                 .font(.caption.weight(.semibold))
                 .foregroundStyle(.secondary)
                 .padding(.horizontal, 10)
