@@ -59,6 +59,11 @@ The extraction algorithm operates entirely blindly (requires no original image):
 ## 5. Performance & Limit Testing
 
 PhantomStamp employs a rigorous, automated **Smart Step Boundary Scan** to evaluate the hybrid architecture's absolute physical limits under severe geometric attacks. By differentiating between algorithmic failures and theoretical DSP boundaries, the system is calibrated to the Pareto-Optimal point.
+<p align="center">
+  <img src="PhantomStamp/Testing/phantomstamp_boundary_scan_v3.png" alt="Hybrid Architecture Boundary Scan" width="70%">
+  <br>
+  <em>Figure 1: Boundary scan results revealing the 1/f² compensation and the Bilinear Death Valley.</em>
+</p>
 
 ### 5.1 Geometric Resilience (Intensity = 4.0 - 5.0)
 - **Static Precision:** Utilizing a Sub-pixel Parabolic Fitting combined with a Matched Gaussian Prior Filter, the extraction drift is practically eliminated (Angle Error $\le 0.002^\circ$, Scale Relative Error $\le 0.0003$).
@@ -68,7 +73,7 @@ PhantomStamp employs a rigorous, automated **Smart Step Boundary Scan** to evalu
 ### 5.2 Conquering the DSP "Death Valley"
 Through high-granularity fuzzing, we identified and mitigated two critical DSP phenomena:
 1. **Bilinear Death Valley:** Minimal deformations (e.g., $\pm 2^\circ$ or $0.98x$) force nearly 100% of the image pixels into non-integer coordinates, triggering global low-pass filtering via bilinear interpolation.
-2. **Phase Cancellation (Swiss Cheese Effect):** Specific fractional scaling ratios (e.g., $1.07x$) occasionally cause destructive interference between the resampling grid and the host's natural textures.
+2. **Phase Cancellation (Non-contiguous Failure Distribution):** Specific fractional scaling ratios (e.g., $1.07x$) occasionally cause destructive interference between the resampling grid and the host's natural textures.
 
 **Solution:** By exposing the `Intensity` parameter (defaulting to the 4.0 - 5.0 tier for the "Balanced/Paranoid" modes), PhantomStamp injects just enough energetic armor into the mid-frequency spectrum to bridge these interpolation valleys, maintaining seamless extraction without triggering the Human Visual System (HVS) threshold.
 
