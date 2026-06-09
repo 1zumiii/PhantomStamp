@@ -137,6 +137,9 @@ class WatermarkService: WatermarkServiceProtocol {
         let thresholdSnapshot: Double = await MainActor.run {
             settingsStore?.textureVarianceThreshold ?? AppConstants.SettingsDefault.textureVarianceThreshold
         }
+        let syncIntensitySnapshot: Double = await MainActor.run {
+            settingsStore?.syncTemplateIntensity ?? AppConstants.SettingsDefault.syncTemplateIntensity
+        }
 
         do {
             // ==========================================
@@ -240,8 +243,11 @@ class WatermarkService: WatermarkServiceProtocol {
             // New Feature: Upgrade to Hybrid Architecture
             // Add DFT Frequency-Domain Sync Template to protect Geometric Attacks
             // ==========================================
+            // Intensity is user-configurable via `UserSettingsStore.syncTemplateIntensity` so the
+            // robustness-vs-visibility trade-off can be tuned without rebuilding. Snapshot was
+            // taken at the top of this method to avoid mid-pipeline races.
             let syncTemplate = loadSpatialSyncTemplate()
-            let templateIntensity: Float = 2.5 // control the intensity of the template ripple
+            let templateIntensity = Float(syncIntensitySnapshot)
             applySpatialTiling(to: &ycbcrImage.Y, template: syncTemplate, intensity: templateIntensity)
 
 
@@ -403,7 +409,10 @@ class WatermarkService: WatermarkServiceProtocol {
                 }
 
                 // 3. data extraction
-                let rawExtractedBits = await self.extractBitsWithOffset(yChannel, offset: gridOffset)
+                // IMPORTANT: must read from the deskewed Y channel — the offset was found on the
+                // geometrically-corrected image, so applying it to the raw (still rotated/scaled)
+                // yChannel would dis-align every macroblock and yield garbage bits.
+                let rawExtractedBits = await self.extractBitsWithOffset(deskewedYChannel, offset: gridOffset)
                 await reportProgress(step: .extractBitGrid, percentage: 0.72)
 
                 // 4. data recovery and decoding

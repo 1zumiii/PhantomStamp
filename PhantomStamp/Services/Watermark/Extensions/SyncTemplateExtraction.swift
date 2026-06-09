@@ -4,127 +4,431 @@
 //
 //  Created by Orion on 8/6/2026.
 //
+//  Companion to `SyncTemplateEmbedding.swift`.
+//
+//  The embed pipeline tiles a deterministic 512×512 spatial wave on top of the host Y-channel.
+//  By construction (see Python generator inside `DSP_Assets/sync_template_512.bin`), the DFT of
+//  that wave has exactly 4 sharp peaks sitting at radius=100, angles ±π/4 around DC. Those peaks
+//  are the geometric "lighthouses" the extractor uses to undo any rotation / scale attack the
+//  attacker may have performed before saving the image back to disk.
+//
+//  Extraction pipeline (high level):
+//      Matrix(Y) → 512×512 zero-mean center crop → 2D FFT → 4 amplitude peaks
+//                → (angle, scale) → inverse warp → corrected Matrix(Y)
+//
+//  Notation:
+//   - All coordinates use the image convention (origin top-left, +y points DOWN).
+//   - Angles are reported in radians using `atan2(y, x)`, so a positive angle = clockwise
+//     visual rotation (because flipping y flips the sign of the math-convention angle).
+//
 
 import Foundation
 import Accelerate
 
 extension WatermarkService {
-    
+
+    // ==========================================
+    // MARK: - Sync Template Geometric Constants
+    // ==========================================
+
+    /// Frequency-space radius (in FFT cells, centered around DC) of every peak baked into
+    /// `sync_template_512.bin`. MUST stay in sync with the Python generator (`radius = 100`).
+    static let syncTemplateOriginalRadius: Float = 100.0
+
+    /// Reference angle of one template peak in `atan2(y, x)` convention.
+    /// The full peak set sits at `originalAngle + k·π/2 (k = 0..3)`; 4-fold disambiguation in
+    /// `calculateAffineParams` resolves the ambiguity into the smallest-magnitude rotation.
+    static let syncTemplateOriginalAngleRadians: Float = .pi / 4
+
+    /// FFT side length used for global geometric analysis. The bundled spatial template is also
+    /// exactly this size, so one full period of the template fits inside the analysis crop.
+    static let syncTemplateAnalysisFFTSize: Int = 512
+
 // ==========================================
     // MARK: - Core Function 2: Detect Geometric Transforms
     // ==========================================
-    
-    /// Detects geometric attacks (rotation and scaling) by analyzing the global DFT amplitude spectrum.
+
+    /// Detects rotation + isotropic scaling by analyzing the DFT amplitude spectrum of a 512×512
+    /// center crop of the host Y-channel.
     ///
-    /// IMPLEMENTATION GUIDE:
-    /// 1. Call `extractAndRemoveDC()` which now directly takes the UInt8 Matrix.
-    /// 2. (The rest remains the same: FFT -> findSyncPeaks -> calculateAffineParams)
+    /// On a clean (un-attacked) image the 4 template peaks land at `(±100·cos(π/4), ±100·sin(π/4))`.
+    /// After a rotation `θ` and uniform scale `s` by the attacker the peaks rotate by `θ` and
+    /// shrink by `1/s` (spatial scaling by `s` ⇔ frequency scaling by `1/s`). We invert that
+    /// relationship by reading the polar coordinates of the strongest off-DC peak.
+    ///
+    /// Returns `(angle: 0, scale: 1)` (identity) whenever the spectrum analysis fails — leaving
+    /// the rest of the extraction pipeline as-if the hybrid feature were disabled.
     func detectGeometricTransforms(in yChannel: Matrix) -> (angle: Float, scale: Float) {
-        // TODO: Orchestrate the helpers...
-        return (angle: 0.0, scale: 1.0)
+        let N = WatermarkService.syncTemplateAnalysisFFTSize
+        var complexMatrix = extractAndRemoveDC(from: yChannel, targetSize: N)
+        performForwardFFT(matrix: &complexMatrix)
+        let peaks = findSyncPeaks(in: complexMatrix)
+        guard !peaks.isEmpty else {
+            return (angle: 0.0, scale: 1.0)
+        }
+        return calculateAffineParams(
+            from: peaks,
+            originalRadius: WatermarkService.syncTemplateOriginalRadius,
+            originalAngle: WatermarkService.syncTemplateOriginalAngleRadians
+        )
     }
-    
+
     // ==========================================
     // MARK: - Core Function 3: Deskewing (Inverse Mapping)
     // ==========================================
-    
-    /// Reconstructs a corrected image matrix by reversing the detected rotation and scaling.
+
+    /// Reconstructs a corrected Y-channel by reversing the detected rotation and scaling around
+    /// the image center, using bilinear interpolation for sub-pixel sampling.
     ///
-    /// IMPLEMENTATION GUIDE:
-    /// 1. Create a new `Matrix` (UInt8) with the same dimensions as `yChannel`.
-    /// 2. Loop through every (x, y) in the NEW matrix.
-    /// 3. Call `calculateInverseCoordinate()` to get the old floating-point coordinate.
-    /// 4. Call `bilinearInterpolate()` to get the sub-pixel Float color.
-    /// 5. Clamp the Float color to 0...255, cast to UInt8, and assign to the NEW matrix.
+    /// The output canvas size is identical to the input — pixels that would map outside the
+    /// source frame stay 0 (black). This keeps the 8×8 macroblock grid period intact for the
+    /// downstream grid scan, while the visible corners simply turn black after a rotation.
+    ///
+    /// Short-circuits when the detected transform is effectively the identity to avoid the
+    /// faint resampling blur a no-op bilinear pass would otherwise introduce.
     func deskewImage(_ yChannel: Matrix, angle: Float, scale: Float) -> Matrix {
-        // TODO: Implement inverse mapping...
-        return yChannel // returning a UInt8 Matrix!
+        let w = yChannel.width
+        let h = yChannel.height
+
+        // Identity short-circuit thresholds: ~5e-3 rad ≈ 0.3°, scale within 0.05%.
+        // Below these levels the bilinear pass would lose more SNR than the residual transform
+        // would cost, so we keep the source pixels untouched.
+        if abs(angle) < 5e-3 && abs(scale - 1.0) < 5e-4 {
+            return yChannel
+        }
+
+        let cx = Float(w) / 2.0
+        let cy = Float(h) / 2.0
+
+        var outData = [UInt8](repeating: 0, count: w * h)
+        outData.withUnsafeMutableBufferPointer { outPtr in
+            for y in 0..<h {
+                let rowBase = y * w
+                for x in 0..<w {
+                    // Map destination pixel → source coordinate the attacker pulled it from.
+                    let inv = calculateInverseCoordinate(
+                        targetX: x, targetY: y,
+                        centerX: cx, centerY: cy,
+                        angle: angle, scale: scale
+                    )
+                    let v = bilinearInterpolate(matrix: yChannel, x: inv.x, y: inv.y)
+                    // Clamp BEFORE rounding so `UInt8(clamping:)` never sees 256.0.
+                    let clamped = min(max(v, 0.0), 255.0)
+                    outPtr[rowBase + x] = UInt8(clamping: Int(clamped.rounded()))
+                }
+            }
+        }
+
+        return Matrix(width: w, height: h, data: outData)
     }
-    
+
     // ==========================================
     // MARK: - Helper Functions
     // ==========================================
-    
-    /// Crops a 512x512 center block from the UInt8 image, converts to Float, removes DC,
-    /// and packs it directly into the ComplexMatrix for FFT.
+
+    /// Crops a 512×512 center block from the UInt8 image, converts to Float, removes DC, and
+    /// packs it directly into the ComplexMatrix that the FFT will operate on in place.
     ///
-    /// IMPLEMENTATION GUIDE:
-    /// 1. Calculate `startX` and `startY` to perfectly center the 512x512 crop in `yChannel`.
-    /// 2. Pass 1: Iterate the 512x512 area in `yChannel`. Read the UInt8 pixel, convert to `Float`,
-    ///    accumulate the sum, and calculate the `mean`.
-    /// 3. Create an `FFTComplexMatrix(width: targetSize, height: targetSize)`.
-    /// 4. Pass 2: Iterate the 512x512 area again. Calculate `(Float(pixel) - mean)` and store
-    ///    it directly into the `real` array of the complex matrix.
-    ///
-    /// WARNING (Gotchas):
-    /// - If `yChannel` is smaller than 512x512, simply treat out-of-bounds pixels as `0.0`
-    ///   when reading, which naturally handles the zero-padding requirement for FFT.
+    /// IMPLEMENTATION NOTES:
+    ///  1. `startX/startY` may be negative when the source image is smaller than `targetSize`,
+    ///     in which case the explicit bounds-check below treats out-of-bounds samples as 0.0.
+    ///  2. The mean used for DC removal is computed over **only the in-bounds** samples so the
+    ///     zero-padded border doesn't bias it toward 0 (which would leave a residual DC bump in
+    ///     the FFT, surrounded by a sinc-shaped boundary artifact).
+    ///  3. The `imag` array is already zeroed by `FFTComplexMatrix.init` — we only need to fill
+    ///     the real part, the input signal is purely real.
     func extractAndRemoveDC(from yChannel: Matrix, targetSize: Int = 512) -> FFTComplexMatrix {
-        // TODO: Implement direct UInt8 -> Float extraction and DC removal.
-        fatalError("Not implemented")
+        let w = yChannel.width
+        let h = yChannel.height
+        let N = targetSize
+        precondition(N > 0 && (N & (N - 1)) == 0, "targetSize must be a power of two")
+        precondition(yChannel.data.count == w * h, "Y channel data size does not match width * height")
+
+        // Center the N×N analysis window. Negative origin = zero-padding to the top/left.
+        let startX = (w - N) / 2
+        let startY = (h - N) / 2
+
+        // PASS 1: accumulate the mean over actual in-bounds pixels only.
+        var sum: Float = 0
+        var count: Int = 0
+        yChannel.data.withUnsafeBufferPointer { src in
+            for j in 0..<N {
+                let sy = startY + j
+                if sy < 0 || sy >= h { continue }
+                let srcRowBase = sy * w
+                for i in 0..<N {
+                    let sx = startX + i
+                    if sx < 0 || sx >= w { continue }
+                    sum += Float(src[srcRowBase + sx])
+                    count += 1
+                }
+            }
+        }
+        let mean: Float = count > 0 ? sum / Float(count) : 0
+
+        // PASS 2: write (pixel - mean) into the real part; OOB stays at the default 0.
+        var matrix = FFTComplexMatrix(width: N, height: N)
+        matrix.real.withUnsafeMutableBufferPointer { real in
+            yChannel.data.withUnsafeBufferPointer { src in
+                for j in 0..<N {
+                    let sy = startY + j
+                    if sy < 0 || sy >= h { continue }
+                    let dstRowBase = j * N
+                    let srcRowBase = sy * w
+                    for i in 0..<N {
+                        let sx = startX + i
+                        if sx < 0 || sx >= w { continue }
+                        real[dstRowBase + i] = Float(src[srcRowBase + sx]) - mean
+                    }
+                }
+            }
+        }
+        return matrix
     }
-    
-    /// Executes a 2D Fast Fourier Transform using Apple's Accelerate (vDSP) framework.
+
+    /// Executes a 2D forward FFT in place using Apple's Accelerate / vDSP framework.
     ///
-    /// IMPLEMENTATION GUIDE:
-    /// 1. Create a `vDSP_setup` object using `vDSP_create_fftsetup`.
-    /// 2. Use `matrix.withDSPSplitComplex` to bridge Swift arrays to C-pointers.
-    /// 3. Call `vDSP_fft2d_zrip` (Forward FFT).
-    /// 4. Destroy the setup object to prevent memory leaks.
+    /// WHY `vDSP_fft2d_zip` AND NOT `vDSP_fft2d_zrip`:
+    ///  - `FFTComplexMatrix` stores full-size `real` and `imag` arrays (N×N each).
+    ///  - `_zrip` is the real-to-complex variant that packs results into Nyquist-packed format
+    ///    (DC and Nyquist real parts crammed into one slot, etc.) — convenient for memory but
+    ///    painful to traverse for a magnitude-spectrum peak search.
+    ///  - `_zip` (complex-to-complex with `imag = 0`) uses ~2× the memory of `_zrip` but lets us
+    ///    treat the output as a plain N×N grid where `magnitudeAt(row, col)` Just Works.
     ///
-    /// WARNING (Gotchas):
-    /// - vDSP uses base-2 logarithms for dimensions (e.g., 512 -> log2(512) = 9).
-    /// - The output is in Nyquist packed format. You must unpack it or read it carefully according to Apple's docs.
+    /// WARNINGS:
+    ///  - vDSP scales the forward FFT result by N (total samples). Absolute magnitudes are
+    ///    inflated, but RELATIVE rankings (which the peak search uses) are unaffected.
+    ///  - `vDSP_create_fftsetup` allocates twiddle factors; we always destroy it via `defer` so
+    ///    repeated calls don't leak.
     func performForwardFFT(matrix: inout FFTComplexMatrix) {
-        // TODO: Implement vDSP FFT wrapping.
+        let N = matrix.width
+        precondition(matrix.width == matrix.height, "Only square matrices supported by this helper")
+        precondition(N > 0 && (N & (N - 1)) == 0, "FFT size must be a power of two")
+
+        let log2N: vDSP_Length = vDSP_Length(log2(Float(N)).rounded())
+        guard let setup = vDSP_create_fftsetup(log2N, FFTRadix(kFFTRadix2)) else {
+            #if DEBUG
+            print("[SyncTemplateExtraction] vDSP_create_fftsetup returned nil — spectrum left unchanged")
+            #endif
+            return
+        }
+        defer { vDSP_destroy_fftsetup(setup) }
+
+        matrix.withDSPSplitComplex { split in
+            // IC0=1 → stride-1 within rows; IC1=0 → defaults to 2^log2N (= row length) between rows.
+            // Square FFT so both `__Log2N0` and `__Log2N1` are equal. Direction = -1 (forward).
+            vDSP_fft2d_zip(setup, &split, 1, 0, log2N, log2N, FFTDirection(FFT_FORWARD))
+        }
     }
-    
-    /// Scans the frequency magnitude matrix to find the coordinates of the 4 sync peaks.
+
+    /// Scans the magnitude spectrum and returns the strongest off-DC peak in each of the four
+    /// "centered" quadrants, sorted by magnitude descending.
     ///
-    /// IMPLEMENTATION GUIDE:
-    /// 1. Iterate through the `ComplexMatrix` and compute `magnitudeAt(row:col:)`.
-    /// 2. Skip the DC area (e.g., radius < 20 from the center) to avoid residual low-frequency noise.
-    /// 3. Find the local maxima in the 4 quadrants.
+    /// Returned coordinates use the image convention: `(x = col - centerCol, y = row - centerRow)`,
+    /// so positive `y` points DOWN, matching `bilinearInterpolate` and `calculateInverseCoordinate`.
     ///
-    /// WARNING (Gotchas):
-    /// - Sub-pixel fitting: For ultimate precision, once you find the integer pixel peak (max magnitude),
-    ///   use a 3x3 neighborhood around it to perform 2D quadratic interpolation to find the decimal coordinates.
+    /// Sub-pixel position is refined via a 1-D parabolic fit (separable in row and col) on the
+    /// 3×3 magnitude neighborhood. The fit is clamped to ±0.5 to keep noisy peaks from running
+    /// away from the integer maximum.
     func findSyncPeaks(in freqMatrix: FFTComplexMatrix) -> [(x: Float, y: Float)] {
-        // TODO: Implement peak search and sub-pixel fitting.
-        return []
+        let N = freqMatrix.width
+        precondition(freqMatrix.width == freqMatrix.height, "Expected square FFT matrix")
+        let halfN = N / 2
+
+        // Search ring: keep only candidate cells whose centered radius lies in
+        // [dcKeepOutRadius, maxSearchRadius].
+        //   - Inner: 30. Template peaks live at r=100; below 30 we'd still see strong residual
+        //     low-frequency image energy (sky gradients, defocus blur) that survives mean removal.
+        //   - Outer: 230. Template's r=100 stretched by an attacker scale up to ~2.3× would still
+        //     land inside the ring. Caps spurious high-frequency hits (sharp edges, sensor noise).
+        let dcKeepOutRadius: Int = 30
+        let maxSearchRadius: Int = 230
+        let dcKeepOutSq = dcKeepOutRadius * dcKeepOutRadius
+        let maxSearchSq = maxSearchRadius * maxSearchRadius
+
+        // Track the strongest peak per centered quadrant.
+        // q index: 0=(x>=0, y>=0), 1=(x>=0, y<0), 2=(x<0, y>=0), 3=(x<0, y<0).
+        var bestMag: [Float] = [Float](repeating: -1, count: 4)
+        var bestRow: [Int] = [Int](repeating: -1, count: 4)
+        var bestCol: [Int] = [Int](repeating: -1, count: 4)
+
+        for row in 0..<N {
+            let dy = row < halfN ? row : (row - N)        // centered: y > 0 → row > halfN flipped
+            for col in 0..<N {
+                let dx = col < halfN ? col : (col - N)    // centered: x > 0 → right of DC
+
+                let rSq = dx * dx + dy * dy
+                if rSq < dcKeepOutSq || rSq > maxSearchSq { continue }
+
+                let m = freqMatrix.magnitudeAt(row: row, col: col)
+
+                let q: Int
+                if dx >= 0 && dy >= 0 { q = 0 }
+                else if dx >= 0 && dy <  0 { q = 1 }
+                else if dx <  0 && dy >= 0 { q = 2 }
+                else { q = 3 }
+
+                if m > bestMag[q] {
+                    bestMag[q] = m
+                    bestRow[q] = row
+                    bestCol[q] = col
+                }
+            }
+        }
+
+        // Refine each integer-pixel peak to sub-pixel precision and convert to centered coords.
+        var peaks: [(mag: Float, x: Float, y: Float)] = []
+        for q in 0..<4 {
+            guard bestRow[q] >= 0 else { continue }
+            let row = bestRow[q]
+            let col = bestCol[q]
+            let refined = refinePeakSubPixel(in: freqMatrix, row: row, col: col)
+
+            // Recenter using the fractional refined row/col. The "side" of DC is determined by
+            // the integer row/col, which is stable as long as the integer peak is off-DC (we
+            // already enforced that with the keep-out mask).
+            let dy: Float = (row < halfN) ? refined.row : (refined.row - Float(N))
+            let dx: Float = (col < halfN) ? refined.col : (refined.col - Float(N))
+            peaks.append((mag: bestMag[q], x: dx, y: dy))
+        }
+
+        peaks.sort { $0.mag > $1.mag }
+        return peaks.map { (x: $0.x, y: $0.y) }
     }
-    
-    /// Calculates rotation angle and scale factor based on the detected peak coordinates.
+
+    /// 1-D parabolic peak interpolation along rows and columns separately, with FFT wrap-around
+    /// indexing so peaks near the spectrum borders still get a clean neighborhood.
     ///
-    /// IMPLEMENTATION GUIDE:
-    /// 1. Calculate the Euclidean distance of the peaks from the center. `Scale = DetectedDistance / OriginalRadius`.
-    /// 2. Calculate the angle of the peaks using `atan2(y - centerY, x - centerX)`.
-    /// 3. `AngleOffset = DetectedAngle - OriginalAngle`.
+    /// Reference formula: for samples `(left, center, right)` around the integer peak,
+    /// `offset = 0.5 * (left - right) / (left - 2·center + right)`.
+    private func refinePeakSubPixel(in freqMatrix: FFTComplexMatrix, row: Int, col: Int) -> (row: Float, col: Float) {
+        let N = freqMatrix.width
+        let rm1 = (row - 1 + N) % N
+        let rp1 = (row + 1) % N
+        let cm1 = (col - 1 + N) % N
+        let cp1 = (col + 1) % N
+
+        let mC = freqMatrix.magnitudeAt(row: row, col: col)
+        let mU = freqMatrix.magnitudeAt(row: rm1, col: col)
+        let mD = freqMatrix.magnitudeAt(row: rp1, col: col)
+        let mL = freqMatrix.magnitudeAt(row: row, col: cm1)
+        let mR = freqMatrix.magnitudeAt(row: row, col: cp1)
+
+        let denomCol = mL - 2 * mC + mR
+        let denomRow = mU - 2 * mC + mD
+        let dCol: Float = abs(denomCol) > 1e-12 ? 0.5 * (mL - mR) / denomCol : 0
+        let dRow: Float = abs(denomRow) > 1e-12 ? 0.5 * (mU - mD) / denomRow : 0
+
+        // Clamp to a half cell — beyond that the parabolic model breaks down (e.g. a strong
+        // sidelobe contaminating the neighborhood), so it's safer to under-correct.
+        let drClamped = min(max(dRow, -0.5), 0.5)
+        let dcClamped = min(max(dCol, -0.5), 0.5)
+
+        return (row: Float(row) + drClamped, col: Float(col) + dcClamped)
+    }
+
+    /// Recovers `(rotation, scale)` from the peak coordinates returned by `findSyncPeaks`.
+    ///
+    /// MATH:
+    ///  - Spatial up-scaling by `s` ⇒ frequency shrink by `1/s`, so
+    ///    `scale = originalRadius / detectedRadius`.
+    ///  - Rotation maps directly between domains, so `rotation = detectedAngle - originalAngle`.
+    ///
+    /// 4-FOLD AMBIGUITY: The template has 4 peaks at `originalAngle + k·π/2 (k = 0..3)`. We try
+    /// every `k`, wrap the candidate rotation to `(-π, π]`, and pick the one with the smallest
+    /// magnitude — equivalent to assuming the true attack rotation lives in `(-π/4, +π/4]`.
+    /// Larger rotations would also flip the macroblock layout in ways the existing grid scan
+    /// can't recover from anyway.
     func calculateAffineParams(from peaks: [(x: Float, y: Float)], originalRadius: Float, originalAngle: Float) -> (angle: Float, scale: Float) {
-        // TODO: Implement geometry math.
-        return (0.0, 1.0)
+        guard let peak = peaks.first else { return (0.0, 1.0) }
+
+        let r = sqrt(peak.x * peak.x + peak.y * peak.y)
+        let detectedAngle = atan2(peak.y, peak.x)
+
+        // Guard against zero radius (would only happen if the DC mask failed).
+        let safeRadius = max(r, 1e-3)
+        let scale = originalRadius / safeRadius
+
+        // 4-fold disambiguation: try every k ∈ {0, 1, 2, 3} and keep the rotation closest to 0.
+        var bestRotation: Float = .infinity
+        for k in 0..<4 {
+            let candidate = detectedAngle - (originalAngle + Float(k) * (.pi / 2))
+            // Wrap to (-π, π] using atan2(sin, cos) — cheap and branch-free.
+            let wrapped = atan2(sin(candidate), cos(candidate))
+            if abs(wrapped) < abs(bestRotation) {
+                bestRotation = wrapped
+            }
+        }
+
+        return (angle: bestRotation, scale: scale)
     }
-    
-    /// Applies an inverse rotation and scaling matrix to a target coordinate.
+
+    /// Maps a destination pixel `(targetX, targetY)` back to its source pixel in the attacked
+    /// image, using the inverse of `attack = rotate(angle) ∘ scale(scale)` around the center.
     ///
-    /// IMPLEMENTATION GUIDE:
-    /// 1. Translate `targetX, targetY` so the image center becomes (0,0).
-    /// 2. Multiply by `1.0 / scale`.
-    /// 3. Apply the 2D rotation matrix using `-angle`.
-    /// 4. Translate back to the top-left coordinate system.
+    /// Rotation and uniform scaling both commute when applied around the same point, so the
+    /// inverse is `rotate(-angle) ∘ scale(1/scale)` regardless of the original ordering.
+    ///
+    /// IMAGE-Y CONVENTION: rotation is computed with `cos/sin` of the raw angle, but applied to
+    /// y-down coordinates. A positive `angle` therefore describes a clockwise visual rotation,
+    /// matching `atan2(peak.y, peak.x)` in `findSyncPeaks`.
     func calculateInverseCoordinate(targetX: Int, targetY: Int, centerX: Float, centerY: Float, angle: Float, scale: Float) -> (x: Float, y: Float) {
-        // TODO: Implement inverse affine matrix multiplication.
-        return (0.0, 0.0)
+        let tx = Float(targetX) - centerX
+        let ty = Float(targetY) - centerY
+
+        // Inverse rotation by -angle:
+        //   [x']   [ cos(-θ)  -sin(-θ) ] [x]   [ cos θ   sin θ ] [x]
+        //   [y'] = [ sin(-θ)   cos(-θ) ] [y] = [-sin θ   cos θ ] [y]
+        let cosA = cos(angle)
+        let sinA = sin(angle)
+        let xRot = tx * cosA + ty * sinA
+        let yRot = -tx * sinA + ty * cosA
+
+        // Inverse scaling: divide by scale (with a guard against pathological zero).
+        let invS: Float = scale != 0 ? 1.0 / scale : 1.0
+        let xInv = xRot * invS
+        let yInv = yRot * invS
+
+        return (x: xInv + centerX, y: yInv + centerY)
     }
-    
-    /// Performs bilinear interpolation directly from the UInt8 matrix.
+
+    /// Bilinear sample from a UInt8 matrix with zero-fill outside the source frame.
     ///
-    /// IMPLEMENTATION GUIDE:
-    /// 1. Read the 4 bounding integer pixels from `yChannel.data` as UInt8.
-    /// 2. Immediately convert those 4 values to `Float`.
-    /// 3. Perform the fractional weighting and return the final `Float` sub-pixel value.
+    /// Returns a `Float` so the caller can clamp + round itself — matches the rest of the
+    /// pipeline (e.g. `applySpatialTiling`) where UInt8 conversion is done explicitly.
+    ///
+    /// NOTE: We use a strict OOB check `> Float(w - 1)` rather than `>= Float(w)` so the sample
+    /// at the very last valid row/column still works (its `x1`/`y1` neighbor would otherwise be
+    /// out of bounds; we clamp it back to the last valid index to keep the 4-tap formula sane).
     func bilinearInterpolate(matrix: Matrix, x: Float, y: Float) -> Float {
-        // TODO: Implement bilinear interpolation using UInt8 -> Float casting.
-        return 0.0
+        let w = matrix.width
+        let h = matrix.height
+        guard w > 0, h > 0 else { return 0 }
+
+        // True out-of-bounds → zero (visual black corner after a rotation).
+        if x < 0 || y < 0 || x > Float(w - 1) || y > Float(h - 1) {
+            return 0
+        }
+
+        let x0 = Int(floor(x))
+        let y0 = Int(floor(y))
+        let x1 = min(x0 + 1, w - 1)
+        let y1 = min(y0 + 1, h - 1)
+
+        let fx = x - Float(x0)
+        let fy = y - Float(y0)
+
+        return matrix.data.withUnsafeBufferPointer { src -> Float in
+            let p00 = Float(src[y0 * w + x0])
+            let p01 = Float(src[y0 * w + x1])
+            let p10 = Float(src[y1 * w + x0])
+            let p11 = Float(src[y1 * w + x1])
+
+            // Mix columns first, then rows (separable bilinear).
+            let top = p00 * (1 - fx) + p01 * fx
+            let bot = p10 * (1 - fx) + p11 * fx
+            return top * (1 - fy) + bot * fy
+        }
     }
 }

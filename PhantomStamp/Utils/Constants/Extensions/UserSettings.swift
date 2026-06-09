@@ -28,6 +28,10 @@ extension AppConstants {
 
         /// Adaptive texture protection: skip modifying low-variance 8×8 blocks (zero-energy embed).
         static let textureVarianceThreshold = "phantomstamp.settings.textureVarianceThreshold"
+
+        /// DFT sync template ripple intensity (peak ± LSB per pixel) used by `applySpatialTiling`.
+        /// Higher values strengthen geometric attack resistance at the cost of more visible texture.
+        static let syncTemplateIntensity = "phantomstamp.settings.syncTemplateIntensity"
     }
 
     enum SettingsDefault {
@@ -43,5 +47,8 @@ extension AppConstants {
 
         /// Recommended default: subtle protection without killing redundancy.
         static let textureVarianceThreshold: Double = 0.0
+
+        /// Mirrors the original hardcoded value (`2.5`). Range typically used: 0.5...10.0.
+        static let syncTemplateIntensity: Double = 2.5
     }
 }

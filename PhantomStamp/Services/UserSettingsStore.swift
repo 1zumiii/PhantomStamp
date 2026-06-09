@@ -79,6 +79,9 @@ final class UserSettingsStore {
     @ObservationIgnored
     private var _textureVarianceThreshold: AppUserDefault<Double>
 
+    @ObservationIgnored
+    private var _syncTemplateIntensity: AppUserDefault<Double>
+
     var defaultWatermarkText: String {
         get {
             access(keyPath: \.defaultWatermarkText)
@@ -141,6 +144,21 @@ final class UserSettingsStore {
         }
     }
 
+    /// Peak amplitude (in ±LSB per pixel) used by `applySpatialTiling` when stamping the DFT sync
+    /// template onto the Y-channel. Higher values give stronger FFT peaks → more robust geometric
+    /// attack detection, at the cost of more visible texture on flat areas.
+    var syncTemplateIntensity: Double {
+        get {
+            access(keyPath: \.syncTemplateIntensity)
+            return _syncTemplateIntensity.wrappedValue
+        }
+        set {
+            withMutation(keyPath: \.syncTemplateIntensity) {
+                _syncTemplateIntensity.wrappedValue = newValue
+            }
+        }
+    }
+
     // MARK: - Init
 
     init(defaults: UserDefaults = .standard) {
@@ -186,6 +204,12 @@ final class UserSettingsStore {
         _textureVarianceThreshold = AppUserDefault(
             key: AppConstants.UserDefaultsKey.textureVarianceThreshold,
             defaultValue: AppConstants.SettingsDefault.textureVarianceThreshold,
+            defaults: defaults
+        )
+
+        _syncTemplateIntensity = AppUserDefault(
+            key: AppConstants.UserDefaultsKey.syncTemplateIntensity,
+            defaultValue: AppConstants.SettingsDefault.syncTemplateIntensity,
             defaults: defaults
         )
     }

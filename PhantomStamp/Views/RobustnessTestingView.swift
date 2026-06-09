@@ -10,12 +10,19 @@ import UIKit
 
 struct RobustnessTestingView: View {
     let watermarkService: any WatermarkServiceProtocol
-    var settingsStore: UserSettingsStore
+    @Bindable var settingsStore: UserSettingsStore
 
     @State private var isLoading = false
     @State private var alertMessage = ""
     @State private var showAlert = false
     @State private var multiFileCount: Int = 5
+
+    // Geometric (DFT sync template) test parameter.
+    // Bound to `settingsStore.syncTemplateIntensity` via the slider in `geometricCard`, which also
+    // updates the production embed pipeline (`WatermarkService.embedWatermark` reads the same
+    // setting). The robustness tests pass this exact value into their private test binding so the
+    // displayed slider value is what actually gets tested.
+    private var currentSyncTemplateIntensity: Double { settingsStore.syncTemplateIntensity }
 
     var body: some View {
         ScrollView {
@@ -25,6 +32,7 @@ struct RobustnessTestingView: View {
                 batchCard
                 attacksCard
                 compressionCard
+                geometricCard
                 Spacer(minLength: 18)
             }
             .padding(.horizontal, 18)
@@ -209,6 +217,73 @@ struct RobustnessTestingView: View {
                     Task { await runCompressionLimitSweepOnBundledImage() }
                 }
             }
+        }
+    }
+
+    // ==========================================
+    // MARK: - Geometric (DFT Sync Template) Card
+    // ==========================================
+    //
+    // Card surfaces the two `SyncTemplateGeometricAttackTests` entry points and a slider that
+    // controls the spatial-template ripple intensity (`settingsStore.syncTemplateIntensity`).
+    // Higher intensity = stronger FFT peaks (more robust geometric attack detection) but more
+    // visible texture on flat areas. The slider value is also what `WatermarkService.embedWatermark`
+    // reads in production, so changes here persist across launches.
+
+    private var geometricCard: some View {
+        card(title: "Geometric attacks (DFT sync template)", systemImage: "rotate.3d") {
+            VStack(alignment: .leading, spacing: 12) {
+                syncTemplateIntensityRow
+
+                Divider().opacity(0.25)
+
+                testRow(
+                    title: "Basic round-trip + identity detect",
+                    subtitle: "Embed → extract on TestImg, plus `detectGeometricTransforms` on the un-attacked image (expects angle≈0, scale≈1).",
+                    runTitle: "Run",
+                    style: .prominent
+                ) {
+                    Task { await runSyncTemplateBasicTest() }
+                }
+
+                Divider().opacity(0.25)
+
+                testRow(
+                    title: "Rotation + scale limit sweep",
+                    subtitle: "Sweeps rotation ±15° and scale 0.85×–1.15×. Reports the largest still-passing attack and saves boundary images.",
+                    runTitle: "Run",
+                    style: .normal
+                ) {
+                    Task { await runSyncTemplateLimitSweep() }
+                }
+            }
+        }
+    }
+
+    private var syncTemplateIntensityRow: some View {
+        VStack(alignment: .leading, spacing: 8) {
+            HStack(alignment: .firstTextBaseline) {
+                Text("Template intensity")
+                    .font(.callout.weight(.semibold))
+                    .foregroundStyle(.primary)
+                Spacer()
+                // Live read from settingsStore so the label always matches the slider.
+                Text(String(format: "±%.1f LSB", settingsStore.syncTemplateIntensity))
+                    .font(.caption.monospacedDigit())
+                    .foregroundStyle(.secondary)
+            }
+            Text("Peak amplitude (LSB per pixel) used by `applySpatialTiling`. Higher = stronger FFT peaks but more visible texture.")
+                .font(.caption)
+                .foregroundStyle(.secondary)
+                .fixedSize(horizontal: false, vertical: true)
+            // Bound directly to settingsStore — persisted via AppUserDefault<Double>.
+            Slider(
+                value: $settingsStore.syncTemplateIntensity,
+                in: 0.5...10.0,
+                step: 0.5
+            )
+            .disabled(isLoading)
+            .accessibilityValue(String(format: "%.1f", settingsStore.syncTemplateIntensity))
         }
     }
 
@@ -475,6 +550,98 @@ struct RobustnessTestingView: View {
 
         if !ok {
             present("Compression sweep failed. lowestPass=\(lowest)")
+        }
+    }
+
+    // MARK: - Geometric (DFT sync template) tests
+
+    /// Basic functional check: embed → extract → confirm `detectGeometricTransforms` returns
+    /// (≈0°, ≈1×) on the un-attacked watermarked image.
+    private func runSyncTemplateBasicTest() async {
+        isLoading = true
+        defer { isLoading = false }
+
+        // Snapshot the slider value at the point of execution so a mid-run slider change can't
+        // produce a misleading report.
+        let intensity = currentSyncTemplateIntensity
+
+        NotificationCenter.default.post(name: AppConstants.Notifications.watermarkProgressOverlayDidStart, object: nil)
+        NotificationCenter.default.post(
+            name: AppConstants.Notifications.watermarkProgress,
+            object: nil,
+            userInfo: ["payload": ProgressPayload(step: .preparation, percentage: 0.05)]
+        )
+
+        let r = await SyncTemplateGeometricAttackTests.runBasicSyncTemplateOnBundledTestImg(
+            syncTemplateIntensity: intensity
+        )
+        let ok = r.imageLoaded && r.embedSucceeded && r.extractSucceeded
+            && r.textRoundTripPassed && r.noAttackDetectedIdentity
+        let status = ok ? "PASS" : "FAIL"
+        let detAng = r.detectedAngleDegrees.map { String(format: "%.4f°", $0) } ?? "nil"
+        let detSc = r.detectedScale.map { String(format: "%.6f", $0) } ?? "nil"
+        let px = r.watermarkedPx.map { "\($0.w)x\($0.h)px" } ?? "nil"
+        print("[TestPage] SyncTemplateBasic \(status) intensity=\(String(format: "%.2f", intensity)) px=\(px) detected(angle=\(detAng), scale=\(detSc)) extracted=\(r.extractedText ?? "nil") identity=\(r.noAttackDetectedIdentity ? "PASS" : "FAIL")")
+
+        NotificationCenter.default.post(
+            name: AppConstants.Notifications.watermarkProgress,
+            object: nil,
+            userInfo: ["payload": ProgressPayload(step: .reassembling, percentage: 1)]
+        )
+        NotificationCenter.default.post(name: AppConstants.Notifications.watermarkProgressOverlayDidEnd, object: nil)
+
+        if !ok {
+            present("Sync template basic test failed. extracted=\(r.extractedText ?? "nil") detected(angle=\(detAng), scale=\(detSc))")
+        }
+    }
+
+    /// Rotation + isotropic-scale sweep. Reports the largest still-passing attack on both axes
+    /// and saves the boundary images to the photo library (via the test helper).
+    private func runSyncTemplateLimitSweep() async {
+        isLoading = true
+        defer { isLoading = false }
+
+        let intensity = currentSyncTemplateIntensity
+
+        NotificationCenter.default.post(name: AppConstants.Notifications.watermarkProgressOverlayDidStart, object: nil)
+        NotificationCenter.default.post(
+            name: AppConstants.Notifications.watermarkProgress,
+            object: nil,
+            userInfo: ["payload": ProgressPayload(step: .preparation, percentage: 0.05)]
+        )
+
+        let r = await SyncTemplateGeometricAttackTests.runRotationAndScaleLimitSweepOnBundledTestImg(
+            syncTemplateIntensity: intensity
+        )
+        let ok = r.imageLoaded && r.embedSucceeded
+        let status = ok ? "RAN" : "FAIL"
+        let rotLimit = r.maxPassingAbsRotationDegrees.map { String(format: "±%.2f°", $0) } ?? "none"
+        let minSc = r.minPassingScaleFactor.map { String(format: "%.3f", $0) } ?? "none"
+        let maxSc = r.maxPassingScaleFactor.map { String(format: "%.3f", $0) } ?? "none"
+        print("[TestPage] SyncTemplateSweep \(status) intensity=\(String(format: "%.2f", intensity)) rotationLimit=\(rotLimit) scaleRange=[\(minSc), \(maxSc)] rotCases=\(r.rotationCases.count) scaleCases=\(r.scaleCases.count)")
+        // Per-case detail to make tuning iterations easier from the console.
+        for c in r.rotationCases {
+            let detAng = c.detectedAngleDegrees.map { String(format: "%.3f°", $0) } ?? "nil"
+            let detSc = c.detectedScale.map { String(format: "%.4f", $0) } ?? "nil"
+            let pass = c.textRoundTripPassed ? "PASS" : "FAIL"
+            print("  - rotation \(String(format: "%+6.2f°", c.attackParam)) \(pass) detected(angle=\(detAng), scale=\(detSc)) extracted=\(c.extractedText ?? "nil")")
+        }
+        for c in r.scaleCases {
+            let detAng = c.detectedAngleDegrees.map { String(format: "%.3f°", $0) } ?? "nil"
+            let detSc = c.detectedScale.map { String(format: "%.4f", $0) } ?? "nil"
+            let pass = c.textRoundTripPassed ? "PASS" : "FAIL"
+            print("  - scale    \(String(format: "%5.3fx", c.attackParam)) \(pass) detected(angle=\(detAng), scale=\(detSc)) extracted=\(c.extractedText ?? "nil")")
+        }
+
+        NotificationCenter.default.post(
+            name: AppConstants.Notifications.watermarkProgress,
+            object: nil,
+            userInfo: ["payload": ProgressPayload(step: .reassembling, percentage: 1)]
+        )
+        NotificationCenter.default.post(name: AppConstants.Notifications.watermarkProgressOverlayDidEnd, object: nil)
+
+        if !ok {
+            present("Sync template limit sweep failed to run (embed or image load failure).")
         }
     }
 }
