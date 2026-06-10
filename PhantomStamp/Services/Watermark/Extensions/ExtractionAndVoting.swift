@@ -23,7 +23,16 @@ struct MajorityVotingDiagnostics: Sendable {
 }
 
 extension WatermarkService {
+    /// Convenience overload for 8-bit planes (tests / non-deskewed paths): promotes to Float once,
+    /// then runs the precision-preserving extraction below.
     func extractBitsWithOffset(_ matrix: Matrix, offset: CGPoint) -> [[Int]] {
+        extractBitsWithOffset(FloatMatrix(promoting: matrix), offset: offset)
+    }
+
+    /// Extracts one bit per aligned 8×8 block from a `Float` Y-plane (output of `deskewImage`).
+    /// Keeping the samples in `Float` end-to-end is what lets the mid-frequency AC coefficients
+    /// retain the sub-intensity payload energy after geometric correction.
+    func extractBitsWithOffset(_ matrix: FloatMatrix, offset: CGPoint) -> [[Int]] {
         let startX = Int(offset.x)
         let startY = Int(offset.y)
 
@@ -43,27 +52,25 @@ extension WatermarkService {
                 for c in 0..<maxCols {
                     let block = extractSpatialBlock(from: matrix, x: startX + c * DCTMatrix8x8.side, y: startY + r * DCTMatrix8x8.side)
                     
-                    // --- 物理隔离毒选票 (边缘高反差侦测) ---
                     var isPolluted = false
-                    var minVal: Float = 255.0
-                    var maxVal: Float = 0.0
                     for r in 0..<DCTMatrix8x8.side {
                         for c in 0..<DCTMatrix8x8.side {
-                            let v = block[r, c]
-                            if v < minVal { minVal = v }
-                            if v > maxVal { maxVal = v }
+                            // 只要这个 8x8 块里沾到哪怕一滴越界毒药 (或者插值带进来的毒药残余)
+                            if block[r, c] < -500.0 {
+                                isPolluted = true
+                                break
+                            }
                         }
-                    }
-                    
-                    // 如果一个块里既有接近黑边的像素(<3.0)，
-                    // 又有正常图像的亮度(>30.0)，这绝对是 deskew 产生的人造悬崖！
-                    if minVal <= 3.0 && maxVal > 30.0 {
-                        isPolluted = true
+                        if isPolluted { break }
                     }
                     
                     if !isPolluted {
                         let freqBlock = performDCT(block)
-                        bitPtr[r * maxCols + c] = extractBitFromFrequencies(freqBlock)
+                        // 算出这是第几个处理的 block (仅作调试参考)
+                        let linearIndex = r * maxCols + c
+                        // 如果是前 40 个，开启调试打印
+                        let enableDebug = (linearIndex < 40)
+                        bitPtr[linearIndex] = extractBitFromFrequencies(freqBlock, isDebug: enableDebug)
                     }
                     // if it is polluted, it remains -1 in flatBits, representing a vote of no confidence
                 }

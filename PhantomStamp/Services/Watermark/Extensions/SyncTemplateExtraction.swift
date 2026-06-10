@@ -120,23 +120,28 @@ extension WatermarkService {
     /// source frame stay 0 (black). This keeps the 8×8 macroblock grid period intact for the
     /// downstream grid scan, while the visible corners simply turn black after a rotation.
     ///
+    /// PRECISION: returns a ``FloatMatrix`` carrying the RAW bilinear samples. Rounding back to
+    /// `UInt8` here would quantize away the sub-intensity AC variations (< 1.0 gray level) that
+    /// encode the payload bits, zeroing the mid-frequency DCT coefficients downstream. The whole
+    /// extraction path (`extractSpatialBlock` → `performDCT`) consumes this Float plane directly.
+    ///
     /// Short-circuits when the detected transform is effectively the identity to avoid the
     /// faint resampling blur a no-op bilinear pass would otherwise introduce.
-    func deskewImage(_ yChannel: Matrix, angle: Float, scale: Float) -> Matrix {
+    func deskewImage(_ yChannel: Matrix, angle: Float, scale: Float) -> FloatMatrix {
         let w = yChannel.width
         let h = yChannel.height
 
         // Identity short-circuit thresholds: ~5e-3 rad ≈ 0.3°, scale within 0.05%.
         // Below these levels the bilinear pass would lose more SNR than the residual transform
-        // would cost, so we keep the source pixels untouched.
+        // would cost, so we keep the source pixels untouched (lossless UInt8 → Float promotion).
         if abs(angle) < 5e-3 && abs(scale - 1.0) < 5e-4 {
-            return yChannel
+            return FloatMatrix(promoting: yChannel)
         }
 
         let cx = Float(w) / 2.0
         let cy = Float(h) / 2.0
 
-        var outData = [UInt8](repeating: 0, count: w * h)
+        var outData = [Float](repeating: 0, count: w * h)
         outData.withUnsafeMutableBufferPointer { outPtr in
             for y in 0..<h {
                 let rowBase = y * w
@@ -147,15 +152,13 @@ extension WatermarkService {
                         centerX: cx, centerY: cy,
                         angle: angle, scale: scale
                     )
-                    let v = bilinearInterpolate(matrix: yChannel, x: inv.x, y: inv.y)
-                    // Clamp BEFORE rounding so `UInt8(clamping:)` never sees 256.0.
-                    let clamped = min(max(v, 0.0), 255.0)
-                    outPtr[rowBase + x] = UInt8(clamping: Int(clamped.rounded()))
+                    // Store the raw interpolated value — no clamp/round/UInt8 quantization.
+                    outPtr[rowBase + x] = bilinearInterpolate(matrix: yChannel, x: inv.x, y: inv.y)
                 }
             }
         }
 
-        return Matrix(width: w, height: h, data: outData)
+        return FloatMatrix(width: w, height: h, data: outData)
     }
 
     // ==========================================
@@ -424,30 +427,27 @@ extension WatermarkService {
     }
 
     /// Maps a destination pixel `(targetX, targetY)` back to its source pixel in the attacked
-    /// image, using the inverse of `attack = rotate(angle) ∘ scale(scale)` around the center.
+    /// image.
     ///
-    /// Rotation and uniform scaling both commute when applied around the same point, so the
-    /// inverse is `rotate(-angle) ∘ scale(1/scale)` regardless of the original ordering.
-    ///
-    /// IMAGE-Y CONVENTION: rotation is computed with `cos/sin` of the raw angle, but applied to
-    /// y-down coordinates. A positive `angle` therefore describes a clockwise visual rotation,
-    /// matching `atan2(peak.y, peak.x)` in `findSyncPeaks`.
+    /// CRITICAL FIX: In inverse mapping (Destination -> Source), because Source = Attacked and
+    /// Destination = Original, the mapping function MUST be the attacker's FORWARD transform.
     func calculateInverseCoordinate(targetX: Int, targetY: Int, centerX: Float, centerY: Float, angle: Float, scale: Float) -> (x: Float, y: Float) {
         let tx = Float(targetX) - centerX
         let ty = Float(targetY) - centerY
 
-        // Inverse rotation by -angle:
-        //   [x']   [ cos(-θ)  -sin(-θ) ] [x]   [ cos θ   sin θ ] [x]
-        //   [y'] = [ sin(-θ)   cos(-θ) ] [y] = [-sin θ   cos θ ] [y]
+        // FORWARD rotation by +angle:
+        // The attacker rotated the image by +angle. To find where a pixel in the original
+        // image ended up in the attacked image, we must apply that same +angle rotation.
         let cosA = cos(angle)
         let sinA = sin(angle)
-        let xRot = tx * cosA + ty * sinA
-        let yRot = -tx * sinA + ty * cosA
+        let xRot = tx * cosA - ty * sinA
+        let yRot = tx * sinA + ty * cosA
 
-        // Inverse scaling: divide by scale (with a guard against pathological zero).
-        let invS: Float = scale != 0 ? 1.0 / scale : 1.0
-        let xInv = xRot * invS
-        let yInv = yRot * invS
+        // FORWARD scaling:
+        // The attacker scaled the image by `scale`. A coordinate in the original image
+        // is stretched by `scale` in the attacked image.
+        let xInv = xRot * scale
+        let yInv = yRot * scale
 
         return (x: xInv + centerX, y: yInv + centerY)
     }
@@ -467,7 +467,7 @@ extension WatermarkService {
 
         // True out-of-bounds → zero (visual black corner after a rotation).
         if x < 0 || y < 0 || x > Float(w - 1) || y > Float(h - 1) {
-            return 0
+            return -1000.0
         }
 
         let x0 = Int(floor(x))

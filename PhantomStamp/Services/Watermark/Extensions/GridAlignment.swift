@@ -20,10 +20,19 @@ struct GridOffsetScanResult: Sendable {
 }
 
 extension WatermarkService {
+    /// Convenience overload for 8-bit planes (tests / non-deskewed paths): promotes to Float once,
+    /// then runs the precision-preserving scan below.
+    func findGridOffsetAndSyncMarker(in matrix: Matrix, onOffsetProgress: ((Double) -> Void)? = nil) -> GridOffsetScanResult {
+        findGridOffsetAndSyncMarker(in: FloatMatrix(promoting: matrix), onOffsetProgress: onOffsetProgress)
+    }
+
     /// Find the physical 8×8 grid offset by scanning 64 pixel offsets and locating the sync marker
     /// via a sliding window over the extracted bit grid.
+    ///
+    /// Operates on the `Float` plane produced by `deskewImage` so sub-intensity AC variations
+    /// survive into the DCT (see `FloatMatrix` docs for why UInt8 quantization is fatal here).
     /// - Parameter onOffsetProgress: Called occasionally during the 64-offset scan; value is 0...1.
-    func findGridOffsetAndSyncMarker(in matrix: Matrix, onOffsetProgress: ((Double) -> Void)? = nil) -> GridOffsetScanResult {
+    func findGridOffsetAndSyncMarker(in matrix: FloatMatrix, onOffsetProgress: ((Double) -> Void)? = nil) -> GridOffsetScanResult {
         let syncMarker = getSyncMarkerBits()
         let tolerance = 4
 
@@ -137,6 +146,24 @@ extension WatermarkService {
                     let dstStart = row * DCTMatrix8x8.side
                     for col in 0..<DCTMatrix8x8.side {
                         blockPtr[dstStart + col] = Float(ptr[srcStart + col])
+                    }
+                }
+            }
+        }
+        return block
+    }
+
+    /// Float-plane overload: copies the un-truncated `Float` samples straight into the DCT buffer,
+    /// preserving the sub-pixel energy carried over from `deskewImage`'s bilinear interpolation.
+    func extractSpatialBlock(from matrix: FloatMatrix, x: Int, y: Int) -> DCTMatrix8x8 {
+        var block = DCTMatrix8x8()
+        matrix.data.withUnsafeBufferPointer { ptr in
+            block.values.withUnsafeMutableBufferPointer { blockPtr in
+                for row in 0..<DCTMatrix8x8.side {
+                    let srcStart = (y + row) * matrix.width + x
+                    let dstStart = row * DCTMatrix8x8.side
+                    for col in 0..<DCTMatrix8x8.side {
+                        blockPtr[dstStart + col] = ptr[srcStart + col]
                     }
                 }
             }

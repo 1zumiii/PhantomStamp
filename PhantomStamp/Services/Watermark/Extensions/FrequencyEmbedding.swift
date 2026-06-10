@@ -66,11 +66,11 @@ extension WatermarkService {
                 // Make the sync + length header cells significantly stronger than the rest.
                 let strength: Float
                 if tileIndex < syncBitCount {
-                    strength = 2.25
+                    strength = 2.50
                 } else if tileIndex < headerBitCount {
-                    strength = 2.00
+                    strength = 2.25
                 } else {
-                    strength = 1.45
+                    strength = 2.00
                 }
 
                 embedBitIntoFrequencies(
@@ -94,8 +94,8 @@ extension WatermarkService {
         strength: Float = 1.45,
         globalMultiplier: Float = 1.0
     ) {
-        let p1 = (u: 3, v: 4)
-        let p2 = (u: 4, v: 3)
+        let p1 = (u: 1, v: 2)
+        let p2 = (u: 2, v: 1)
 
         let a = freqBlock[p1.u, p1.v]
         let b = freqBlock[p2.u, p2.v]
@@ -131,11 +131,20 @@ extension WatermarkService {
     }
 
     /// Extracts one payload bit from the mid-frequency band of an 8×8 DCT block.
-    nonisolated func extractBitFromFrequencies(_ freqBlock: DCTMatrix8x8) -> Int {
-        let p1 = (u: 3, v: 4)
-        let p2 = (u: 4, v: 3)
-        let absA = abs(freqBlock[p1.u, p1.v])
-        let absB = abs(freqBlock[p2.u, p2.v])
+    nonisolated func extractBitFromFrequencies(_ freqBlock: DCTMatrix8x8, isDebug: Bool = false) -> Int {
+        let p1 = (u: 1, v: 2)
+        let p2 = (u: 2, v: 1)
+        let a = freqBlock[p1.u, p1.v]
+        let b = freqBlock[p2.u, p2.v]
+        let absA = abs(a)
+        let absB = abs(b)
+        
+        #if DEBUG
+        if isDebug {
+            print("[DCT_Probe] absA=\(String(format: "%6.1f", absA)), absB=\(String(format: "%6.1f", absB)) | Diff=\(String(format: "%+6.1f", absA - absB)) -> Bit:\(absA >= absB ? 1 : 0)")
+        }
+        #endif
+        
         return absA >= absB ? 1 : 0
     }
 
