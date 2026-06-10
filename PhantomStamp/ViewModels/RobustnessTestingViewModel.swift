@@ -28,6 +28,7 @@ final class RobustnessTestingViewModel {
     }
 
     let settingsStore: UserSettingsStore
+    let watermarkService: WatermarkService
 
     var isLoading = false
     var alertTitle = "Test Failed"
@@ -48,8 +49,12 @@ final class RobustnessTestingViewModel {
 
     var currentSyncTemplateIntensity: Double { settingsStore.syncTemplateIntensity }
 
-    init(settingsStore: UserSettingsStore) {
+    init(settingsStore: UserSettingsStore, watermarkService: any WatermarkServiceProtocol) {
         self.settingsStore = settingsStore
+        guard let svc = watermarkService as? WatermarkService else {
+            fatalError("RobustnessTestingViewModel requires WatermarkService")
+        }
+        self.watermarkService = svc
     }
 
     var manipResizePreviewSize: (w: Int, h: Int)? {
@@ -159,13 +164,16 @@ final class RobustnessTestingViewModel {
     func runCompressionLimitSweep() async {
         await runTest(kind: .compressionLimit) {
             RobustnessTestProgress.post(.compressionLimit, phase: "Embedding reference image…", percentage: 0.08)
-            let r = await WatermarkCompressionAttackTests.runJpegQualityLimitSweepOnBundledTestImg()
+            let r = await WatermarkCompressionAttackTests.runJpegQualityLimitSweepOnBundledTestImg(
+                service: watermarkService,
+                settingsStore: settingsStore
+            )
             RobustnessTestProgress.post(.compressionLimit, phase: "Analyzing sweep results…", percentage: 0.92)
 
-            let ok = r.imageLoaded && r.embedSucceeded && (r.lowestPassingQuality != nil)
+            let ok = r.imageLoaded && r.embedSucceeded && r.identityExtractPassed && (r.lowestPassingQuality != nil)
             let lowest = r.lowestPassingQuality.map { String(format: "%.2f", $0) } ?? "none"
             let firstFail = r.firstFailingQuality.map { String(format: "%.2f", $0) } ?? "none"
-            print("[TestPage] CompressionSweep \(ok ? "PASS" : "FAIL") lowestPass=\(lowest) firstFail=\(firstFail) cases=\(r.cases.count)")
+            print("[TestPage] CompressionSweep \(ok ? "PASS" : "FAIL") identity=\(r.identityExtractPassed ? "PASS" : "FAIL") lowestPass=\(lowest) firstFail=\(firstFail) cases=\(r.cases.count)")
             for c in r.cases {
                 let mark = c.passed ? "PASS" : "FAIL"
                 print("  - q=\(String(format: "%.2f", c.quality)) \(mark) extracted=\(c.extractedText ?? "nil") bytes=\(c.jpegBytes)")
@@ -184,13 +192,17 @@ final class RobustnessTestingViewModel {
     func runCropLimitSweep() async {
         await runTest(kind: .cropLimit) {
             RobustnessTestProgress.post(.cropLimit, phase: "Embedding reference image…", percentage: 0.08)
-            let r = await WatermarkCropAttackTests.runCropPercentLimitSweepOnBundledTestImg(kind: selectedCropKind)
+            let r = await WatermarkCropAttackTests.runCropPercentLimitSweepOnBundledTestImg(
+                service: watermarkService,
+                settingsStore: settingsStore,
+                kind: selectedCropKind
+            )
             RobustnessTestProgress.post(.cropLimit, phase: "Analyzing \(selectedCropKind.displayName) edge…", percentage: 0.92)
 
-            let ok = r.imageLoaded && r.embedSucceeded
+            let ok = r.imageLoaded && r.embedSucceeded && r.identityExtractPassed
             let maxPass = r.maxPassingCropPercent.map { String(format: "%.1f%%", $0 * 100) } ?? "none"
             let firstFail = r.firstFailingCropPercent.map { String(format: "%.1f%%", $0 * 100) } ?? "none"
-            print("[TestPage] CropSweep \(ok ? "RAN" : "FAIL") kind=\(r.kind.displayName) maxPass=\(maxPass) firstFail=\(firstFail) cases=\(r.cases.count)")
+            print("[TestPage] CropSweep \(ok ? "PASS" : "FAIL") identity=\(r.identityExtractPassed ? "PASS" : "FAIL") kind=\(r.kind.displayName) maxPass=\(maxPass) firstFail=\(firstFail) cases=\(r.cases.count)")
             for c in r.cases {
                 let mark = c.passed ? "PASS" : "FAIL"
                 let px = c.cropPx.map { "\($0.w)x\($0.h)" } ?? "nil"

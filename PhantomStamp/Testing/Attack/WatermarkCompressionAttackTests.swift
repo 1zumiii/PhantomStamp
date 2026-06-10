@@ -3,41 +3,13 @@
 //  PhantomStamp
 //
 //  Manual / DEBUG validation focused on JPEG recompression resistance.
-//  Geometric detection, sync header scan, and FEC are exercised end-to-end via
-//  `extractWatermarkSilently` — only the compression attack varies.
-//
-//  Other modules are held at maximum robustness:
-//    - `textureVarianceThreshold = -1` (embed every 8×8 tile)
-//    - `syncTemplateIntensity` / `embeddingStrength` left at app defaults
+//  Uses the app's live `WatermarkService` + `UserSettingsStore` (see harness).
 //
 
 import Foundation
 import UIKit
 
 enum WatermarkCompressionAttackTests {
-
-    // ==========================================
-    // MARK: - Test Binding
-    // ==========================================
-
-    /// Keeps `UserSettingsStore` alive while `WatermarkService.settingsStore` is `weak`.
-    @MainActor
-    private final class WatermarkServiceTestBinding {
-        let settingsStore: UserSettingsStore
-        let service: WatermarkService
-
-        init(textureVarianceThreshold: Double) {
-            let suite = UserDefaults(suiteName: "phantomstamp.testing.compression.\(UUID().uuidString)")!
-            settingsStore = UserSettingsStore(defaults: suite)
-            settingsStore.textureVarianceThreshold = textureVarianceThreshold
-            service = WatermarkService()
-            service.settingsStore = settingsStore
-        }
-    }
-
-    // ==========================================
-    // MARK: - Report Types
-    // ==========================================
 
     struct BasicReport: Sendable {
         var imageLoaded: Bool
@@ -66,18 +38,19 @@ enum WatermarkCompressionAttackTests {
     struct SweepReport: Sendable {
         var imageLoaded: Bool
         var embedSucceeded: Bool
+        var identityExtractPassed: Bool
         var cases: [AttackCase]
-        /// Lowest JPEG quality that still passes (worst compression still recoverable).
         var lowestPassingQuality: Double?
-        /// Highest quality that fails among cases below `lowestPassingQuality` (if any).
         var firstFailingQuality: Double?
     }
 
-    // ==========================================
-    // MARK: - Test 1: Single-Point Compression (default q=0.90)
-    // ==========================================
+  // MARK: - Test 1: Single-Point Compression
 
-    static func runBasicJpegCompressionOnBundledTestImg(quality: Double = 0.90) async -> BasicReport {
+    static func runBasicJpegCompressionOnBundledTestImg(
+        service: WatermarkService,
+        settingsStore: UserSettingsStore,
+        quality: Double = 0.90
+    ) async -> BasicReport {
         guard let img = ImagePipelineTests.loadBundledTestUIImage() else {
             return BasicReport(
                 imageLoaded: false, embedSucceeded: false, recompressSucceeded: false,
@@ -87,14 +60,12 @@ enum WatermarkCompressionAttackTests {
         }
 
         let expectedText = "Successful"
-        let binding = await MainActor.run {
-            WatermarkServiceTestBinding(textureVarianceThreshold: -1)
-        }
-        let service = binding.service
 
         let watermarked: UIImage
         do {
-            watermarked = try await service.embedWatermarkSilently(into: img, text: expectedText)
+            watermarked = try await WatermarkAttackTestHarness.embedForAttackTest(
+                service: service, settingsStore: settingsStore, image: img, text: expectedText
+            )
         } catch {
             return BasicReport(
                 imageLoaded: true, embedSucceeded: false, recompressSucceeded: false,
@@ -113,7 +84,7 @@ enum WatermarkCompressionAttackTests {
         }
 
         let attacked = recompressed.image
-        let px = pixelSize(of: attacked)
+        let px = WatermarkAttackTestHarness.pixelSize(of: attacked)
 
         do {
             let extracted = try await service.extractWatermarkSilently(from: attacked)
@@ -133,45 +104,52 @@ enum WatermarkCompressionAttackTests {
         }
     }
 
-    /// Backward-compatible alias.
-    static func runMediumJpegCompressionOnBundledTestImg(quality: Double = 0.60) async -> BasicReport {
-        await runBasicJpegCompressionOnBundledTestImg(quality: quality)
+    static func runMediumJpegCompressionOnBundledTestImg(
+        service: WatermarkService,
+        settingsStore: UserSettingsStore,
+        quality: Double = 0.60
+    ) async -> BasicReport {
+        await runBasicJpegCompressionOnBundledTestImg(
+            service: service, settingsStore: settingsStore, quality: quality
+        )
     }
 
-    // ==========================================
-    // MARK: - Test 2: Smart Boundary Scan (JPEG Quality)
-    // ==========================================
+  // MARK: - Test 2: Smart Boundary Sweep
 
-    /// Sweeps JPEG quality from near-lossless → heavy compression. Tolerates one consecutive
-    /// failure in the coarse phase, then fine-drills past the last pass to locate the breakdown.
     static func runJpegQualityLimitSweepOnBundledTestImg(
-        coarseQualities: [Double] = [1.0, 0.95, 0.90, 0.85, 0.80, 0.70, 0.60, 0.50, 0.40, 0.35, 0.30, 0.25, 0.20, 0.15, 0.10, 0.05],
+        service: WatermarkService,
+        settingsStore: UserSettingsStore,
+        coarseQualities: [Double] = [0.95, 0.90, 0.85, 0.80, 0.70, 0.60, 0.50, 0.40, 0.35, 0.30, 0.25, 0.20, 0.15, 0.10, 0.05],
         fineStep: Double = 0.01
     ) async -> SweepReport {
         guard let img = ImagePipelineTests.loadBundledTestUIImage() else {
             return SweepReport(
-                imageLoaded: false, embedSucceeded: false,
+                imageLoaded: false, embedSucceeded: false, identityExtractPassed: false,
                 cases: [], lowestPassingQuality: nil, firstFailingQuality: nil
             )
         }
 
         let expectedText = "Successful"
-        let binding = await MainActor.run {
-            WatermarkServiceTestBinding(textureVarianceThreshold: -1)
-        }
-        let service = binding.service
 
         let watermarked: UIImage
         do {
-            watermarked = try await service.embedWatermarkSilently(into: img, text: expectedText)
+            watermarked = try await WatermarkAttackTestHarness.embedForAttackTest(
+                service: service, settingsStore: settingsStore, image: img, text: expectedText
+            )
         } catch {
             return SweepReport(
-                imageLoaded: true, embedSucceeded: false,
+                imageLoaded: true, embedSucceeded: false, identityExtractPassed: false,
                 cases: [], lowestPassingQuality: nil, firstFailingQuality: nil
             )
         }
 
         try? await PhotoLibraryExporter.saveToPhotoLibrary(watermarked)
+
+        let identityExtracted = try? await service.extractWatermarkSilently(from: watermarked)
+        let identityPassed = (identityExtracted == expectedText)
+        #if DEBUG
+        print("[WatermarkCompressionAttackTests] identity extract \(identityPassed ? "PASS" : "FAIL") text=\(identityExtracted ?? "nil")")
+        #endif
 
         func evaluate(quality q0: Double) async -> AttackCase {
             let q = ImageCompressionUtils.clampQuality(q0)
@@ -188,7 +166,7 @@ enum WatermarkCompressionAttackTests {
             return AttackCase(
                 quality: q,
                 jpegBytes: recompressed.jpegBytes,
-                attackedPx: pixelSize(of: attacked),
+                attackedPx: WatermarkAttackTestHarness.pixelSize(of: attacked),
                 extractSucceeded: (extracted != nil),
                 textRoundTripPassed: ok,
                 extractedText: extracted,
@@ -263,64 +241,46 @@ enum WatermarkCompressionAttackTests {
         return SweepReport(
             imageLoaded: true,
             embedSucceeded: true,
+            identityExtractPassed: identityPassed,
             cases: sortedCases,
             lowestPassingQuality: lowestPassQ,
             firstFailingQuality: firstFailQ
         )
     }
 
-    // ==========================================
-    // MARK: - Helpers
-    // ==========================================
+  // MARK: - DEBUG print
 
-    private static func pixelSize(of image: UIImage) -> (w: Int, h: Int) {
-        (Int(image.size.width * image.scale), Int(image.size.height * image.scale))
-    }
-
-    // ==========================================
-    // MARK: - DEBUG print entry points
-    // ==========================================
-
-    static func runBasicAndPrint(quality: Double = 0.90) async {
+    static func runBasicAndPrint(
+        service: WatermarkService,
+        settingsStore: UserSettingsStore,
+        quality: Double = 0.90
+    ) async {
         #if DEBUG
         let t0 = CFAbsoluteTimeGetCurrent()
-        let r = await runBasicJpegCompressionOnBundledTestImg(quality: quality)
+        let r = await runBasicJpegCompressionOnBundledTestImg(
+            service: service, settingsStore: settingsStore, quality: quality
+        )
         let dtMs = (CFAbsoluteTimeGetCurrent() - t0) * 1000
 
         let overallPass = r.imageLoaded && r.embedSucceeded && r.recompressSucceeded
             && r.extractSucceeded && r.textRoundTripPassed
-        let status = overallPass ? "PASS" : "FAIL"
-        print("[WatermarkCompressionAttackTests] \(status) Basic — JPEG q=\(String(format: "%.2f", r.quality))")
-        let px = r.attackedPx.map { "\($0.w)x\($0.h)px" } ?? "nil"
-        print("  - imageLoaded:      \(r.imageLoaded ? "PASS" : "FAIL")")
-        print("  - embed:            \(r.embedSucceeded ? "PASS" : "FAIL")")
-        print("  - recompress:       \(r.recompressSucceeded ? "PASS" : "FAIL")  px=\(px) bytes=\(r.jpegBytes.map(String.init) ?? "nil")")
-        print("  - extract:          \(r.extractSucceeded ? "PASS" : "FAIL")  text=\(r.extractedText ?? "nil")")
-        print("  - round-trip:       \(r.textRoundTripPassed ? "PASS" : "FAIL")")
-        print("  - elapsed:          \(String(format: "%.2f", dtMs)) ms")
+        print("[WatermarkCompressionAttackTests] \(overallPass ? "PASS" : "FAIL") Basic q=\(String(format: "%.2f", r.quality)) text=\(r.extractedText ?? "nil") (\(String(format: "%.2f", dtMs)) ms)")
         #endif
     }
 
-    static func runLimitSweepAndPrint() async {
+    static func runLimitSweepAndPrint(
+        service: WatermarkService,
+        settingsStore: UserSettingsStore
+    ) async {
         #if DEBUG
-        let t0 = CFAbsoluteTimeGetCurrent()
-        let r = await runJpegQualityLimitSweepOnBundledTestImg()
-        let dtMs = (CFAbsoluteTimeGetCurrent() - t0) * 1000
-
-        let overallOk = r.imageLoaded && r.embedSucceeded
-        let status = overallOk ? "RAN" : "FAIL"
+        let r = await runJpegQualityLimitSweepOnBundledTestImg(
+            service: service, settingsStore: settingsStore
+        )
         let lowest = r.lowestPassingQuality.map { String(format: "%.2f", $0) } ?? "none"
-        let firstFail = r.firstFailingQuality.map { String(format: "%.2f", $0) } ?? "none"
-        print("[WatermarkCompressionAttackTests] \(status) LimitSweep — JPEG quality tolerance")
-        print("  - lowest pass q:    \(lowest)")
-        print("  - first fail q:     \(firstFail)")
-        print("  - cases:")
+        print("[WatermarkCompressionAttackTests] LimitSweep identity=\(r.identityExtractPassed ? "PASS" : "FAIL") lowestPass=\(lowest) cases=\(r.cases.count)")
         for c in r.cases {
-            let mark = c.passed ? "PASS" : "FAIL"
-            let px = c.attackedPx.map { "\($0.w)x\($0.h)" } ?? "nil"
-            print("      \(mark)  q=\(String(format: "%.2f", c.quality))  px=\(px)  bytes=\(c.jpegBytes)  extracted=\(c.extractedText ?? "nil")")
+            print("  - q=\(String(format: "%.2f", c.quality)) \(c.passed ? "PASS" : "FAIL") extracted=\(c.extractedText ?? "nil")")
         }
-        print("  - elapsed:          \(String(format: "%.2f", dtMs)) ms")
         #endif
     }
 }

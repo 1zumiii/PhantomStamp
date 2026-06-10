@@ -10,12 +10,17 @@ import SwiftUI
 import UIKit
 
 struct RobustnessTestingView: View {
+    let watermarkService: any WatermarkServiceProtocol
     @Bindable var settingsStore: UserSettingsStore
     @State private var vm: RobustnessTestingViewModel
 
-    init(settingsStore: UserSettingsStore) {
+    init(settingsStore: UserSettingsStore, watermarkService: any WatermarkServiceProtocol) {
+        self.watermarkService = watermarkService
         self.settingsStore = settingsStore
-        _vm = State(initialValue: RobustnessTestingViewModel(settingsStore: settingsStore))
+        _vm = State(initialValue: RobustnessTestingViewModel(
+            settingsStore: settingsStore,
+            watermarkService: watermarkService
+        ))
     }
 
     var body: some View {
@@ -570,6 +575,6 @@ private struct ManipResultSheet: View {
 
 #Preview {
     NavigationStack {
-        RobustnessTestingView(settingsStore: UserSettingsStore())
+        RobustnessTestingView(settingsStore: UserSettingsStore(), watermarkService: WatermarkService())
     }
 }
