@@ -12,7 +12,12 @@ extension WatermarkService {
     // ==========================================
     // Strip embedding
     // ==========================================
-    nonisolated func processSingleStripForEmbedding(strip: ImageStrip, macroblock: Macroblock2D, thresholdSmooth: Float) -> (strip: ImageStrip, visited8x8Blocks: Int, smoothSkipped8x8Blocks: Int) {
+    nonisolated func processSingleStripForEmbedding(
+        strip: ImageStrip,
+        macroblock: Macroblock2D,
+        thresholdSmooth: Float,
+        embeddingStrengthMultiplier: Float = 1.0
+    ) -> (strip: ImageStrip, visited8x8Blocks: Int, smoothSkipped8x8Blocks: Int) {
         var resultStrip = strip
         var visited8x8Blocks = 0
         var smoothSkipped8x8Blocks = 0
@@ -61,14 +66,19 @@ extension WatermarkService {
                 // Make the sync + length header cells significantly stronger than the rest.
                 let strength: Float
                 if tileIndex < syncBitCount {
-                    strength = 2.25
+                    strength = 2.50
                 } else if tileIndex < headerBitCount {
-                    strength = 2.00
+                    strength = 2.25
                 } else {
-                    strength = 1.45
+                    strength = 2.00
                 }
 
-                embedBitIntoFrequencies(&freqBlock, bit: targetBit, strength: strength)
+                embedBitIntoFrequencies(
+                    &freqBlock,
+                    bit: targetBit,
+                    strength: strength,
+                    globalMultiplier: embeddingStrengthMultiplier
+                )
                 pixelBlock = performIDCT(freqBlock)
                 resultStrip.write8x8Block(pixelBlock, x: blockX, y: blockY)
             }
@@ -78,14 +88,19 @@ extension WatermarkService {
     }
 
     /// Embeds one payload bit into the mid-frequency band of an 8×8 DCT block.
-    nonisolated func embedBitIntoFrequencies(_ freqBlock: inout DCTMatrix8x8, bit: Int, strength: Float = 1.45) {
-        let p1 = (u: 3, v: 4)
-        let p2 = (u: 4, v: 3)
+    nonisolated func embedBitIntoFrequencies(
+        _ freqBlock: inout DCTMatrix8x8,
+        bit: Int,
+        strength: Float = 1.45,
+        globalMultiplier: Float = 1.0
+    ) {
+        let p1 = (u: 1, v: 2)
+        let p2 = (u: 2, v: 1)
 
         let a = freqBlock[p1.u, p1.v]
         let b = freqBlock[p2.u, p2.v]
 
-        let qa = adaptiveQuantizationStep(for: freqBlock)
+        let qa = adaptiveQuantizationStep(for: freqBlock, globalMultiplier: globalMultiplier)
         // Increase the target separation between (3,4) and (4,3) so the decision survives
         // IDCT/quantization round-trips, and optionally boost header bits for compression robustness.
         let s = max(1.0, strength)
@@ -115,16 +130,36 @@ extension WatermarkService {
         }
     }
 
-    /// Extracts one payload bit from the mid-frequency band of an 8×8 DCT block.
-    nonisolated func extractBitFromFrequencies(_ freqBlock: DCTMatrix8x8) -> Int {
-        let p1 = (u: 3, v: 4)
-        let p2 = (u: 4, v: 3)
+    /// Signed soft-decision score for one 8×8 DCT block: `abs(C(1,2)) − abs(C(2,1))`.
+    ///
+    /// Sign encodes the bit (`>= 0` ⇒ 1), magnitude encodes decision confidence. The soft
+    /// voting fold uses the magnitude so that strongly-embedded blocks outweigh blocks that
+    /// were smooth-skipped at embed time or attenuated to a near-zero coin flip by
+    /// interpolation/JPEG.
+    nonisolated func extractBitConfidence(_ freqBlock: DCTMatrix8x8, isDebug: Bool = false) -> Float {
+        let p1 = (u: 1, v: 2)
+        let p2 = (u: 2, v: 1)
         let absA = abs(freqBlock[p1.u, p1.v])
         let absB = abs(freqBlock[p2.u, p2.v])
-        return absA >= absB ? 1 : 0
+
+        #if DEBUG
+        if isDebug {
+            print("[DCT_Probe] absA=\(String(format: "%6.1f", absA)), absB=\(String(format: "%6.1f", absB)) | Diff=\(String(format: "%+6.1f", absA - absB)) -> Bit:\(absA >= absB ? 1 : 0)")
+        }
+        #endif
+
+        return absA - absB
     }
 
-    nonisolated private func adaptiveQuantizationStep(for freqBlock: DCTMatrix8x8) -> Float {
+    /// Extracts one payload bit from the mid-frequency band of an 8×8 DCT block (hard decision).
+    nonisolated func extractBitFromFrequencies(_ freqBlock: DCTMatrix8x8, isDebug: Bool = false) -> Int {
+        extractBitConfidence(freqBlock, isDebug: isDebug) >= 0 ? 1 : 0
+    }
+
+    nonisolated private func adaptiveQuantizationStep(
+        for freqBlock: DCTMatrix8x8,
+        globalMultiplier: Float = 1.0
+    ) -> Float {
         var sumAbs: Float = 0
         for u in 0..<DCTMatrix8x8.side {
             for v in 0..<DCTMatrix8x8.side {
@@ -134,8 +169,9 @@ extension WatermarkService {
         }
         let acMean = sumAbs / 63.0
         // Stronger baseline helps sync recovery on real images (E2E).
-        let q = 9.0 + min(10.0, acMean * 0.18)
-        return max(9.0, min(18.0, q))
+        let baseQ = 9.0 + min(10.0, acMean * 0.18)
+        let clampedBaseQ = max(9.0, min(18.0, baseQ))
+        return clampedBaseQ * globalMultiplier
     }
 
     nonisolated private func applyMagnitude(_ magnitude: Float, keepingSignOf value: Float) -> Float {

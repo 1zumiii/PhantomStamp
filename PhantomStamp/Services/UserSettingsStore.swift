@@ -190,6 +190,11 @@ final class UserSettingsStore {
             defaultValue: AppConstants.SettingsDefault.embeddingStrength,
             defaults: defaults
         )
+        let rawEmbeddingStrength = _embeddingStrength.wrappedValue
+        let normalizedEmbeddingStrength = AppConstants.normalizedEmbeddingStrength(rawEmbeddingStrength)
+        if normalizedEmbeddingStrength != rawEmbeddingStrength {
+            _embeddingStrength.wrappedValue = normalizedEmbeddingStrength
+        }
         _exportQualityIndex = AppUserDefault(
             key: AppConstants.UserDefaultsKey.exportQualityIndex,
             defaultValue: AppConstants.SettingsDefault.exportQualityIndex,

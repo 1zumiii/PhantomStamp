@@ -9,8 +9,8 @@
 //  USAGE (typical SwiftUI wiring)
 //  -----------------------------
 //  1. Register `WatermarkHistoryRecord.self` in your app `Schema` and attach `.modelContainer(...)`.
-//  2. Hold `ModelContext` on the service that runs watermark work (see `WatermarkService.historyModelContext`),
-//     or pass `modelContext` from a view / view model into `insertAndSave` after operations.
+//  2. Hold `ModelContainer` on the service that runs watermark work (see `WatermarkService.modelContainer`),
+//     and insert via `container.mainContext` on the MainActor after each operation.
 //  3. After a successful or failed embed/extract, build a `WatermarkHistoryRecord` (or use the helpers below)
 //     and call `insertAndSave(_:context:)`.
 //  4. Load rows for a list: `try HistoryRecordService.fetchRecords(context: modelContext, limit: 100)`.

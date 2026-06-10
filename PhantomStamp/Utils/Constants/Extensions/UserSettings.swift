@@ -41,7 +41,8 @@ extension AppConstants {
 
         // Watermark Defaults — added for SettingsView
         static let defaultWatermarkText: String = ""
-        static let embeddingStrength: Double     = 50
+        /// Global multiplier for mid-frequency embed Q (`adaptiveQuantizationStep`).
+        static let embeddingStrength: Double     = EmbeddingStrength.default
         static let exportQualityIndex: Int       = 1   // 0 = Low, 1 = Medium, 2 = High
         static let saveToPhotos: Bool            = true
 
@@ -54,5 +55,31 @@ extension AppConstants {
         /// barely visible but the geometric detection becomes flaky on textured images. Tunable
         /// per-image via the slider on `RobustnessTestingView`.
         static let syncTemplateIntensity: Double = 5.0
+    }
+
+    /// Settings slider range for embedding strength (global Q multiplier).
+    enum EmbeddingStrength {
+        static let min: Double = 0
+        static let max: Double = 10
+        static let step: Double = 0.5
+        /// `1.0×` keeps the baseline adaptive Q unchanged.
+        static let `default`: Double = 1.0
+    }
+
+    /// Normalizes a stored embedding-strength value (handles legacy 0–100% → multiplier).
+    static func normalizedEmbeddingStrength(_ storedValue: Double) -> Double {
+        let migrated: Double
+        if storedValue > EmbeddingStrength.max {
+            // Legacy percent slider: 50% → 1.0×.
+            migrated = storedValue / 10.0
+        } else {
+            migrated = storedValue
+        }
+        return min(max(migrated, EmbeddingStrength.min), EmbeddingStrength.max)
+    }
+
+    /// Global multiplier passed to `adaptiveQuantizationStep` during embed.
+    static func embeddingStrengthMultiplier(for storedValue: Double) -> Float {
+        Float(normalizedEmbeddingStrength(storedValue))
     }
 }

@@ -20,10 +20,19 @@ struct GridOffsetScanResult: Sendable {
 }
 
 extension WatermarkService {
+    /// Convenience overload for 8-bit planes (tests / non-deskewed paths): promotes to Float once,
+    /// then runs the precision-preserving scan below.
+    func findGridOffsetAndSyncMarker(in matrix: Matrix, onOffsetProgress: ((Double) -> Void)? = nil) -> GridOffsetScanResult {
+        findGridOffsetAndSyncMarker(in: FloatMatrix(promoting: matrix), onOffsetProgress: onOffsetProgress)
+    }
+
     /// Find the physical 8×8 grid offset by scanning 64 pixel offsets and locating the sync marker
     /// via a sliding window over the extracted bit grid.
+    ///
+    /// Operates on the `Float` plane produced by `deskewImage` so sub-intensity AC variations
+    /// survive into the DCT (see `FloatMatrix` docs for why UInt8 quantization is fatal here).
     /// - Parameter onOffsetProgress: Called occasionally during the 64-offset scan; value is 0...1.
-    func findGridOffsetAndSyncMarker(in matrix: Matrix, onOffsetProgress: ((Double) -> Void)? = nil) -> GridOffsetScanResult {
+    func findGridOffsetAndSyncMarker(in matrix: FloatMatrix, onOffsetProgress: ((Double) -> Void)? = nil) -> GridOffsetScanResult {
         let syncMarker = getSyncMarkerBits()
         let tolerance = 4
 
@@ -63,6 +72,15 @@ extension WatermarkService {
                 for r in 0..<maxRows {
                     for c in 0..<maxCols {
                         let block = extractSpatialBlock(from: matrix, x: offsetX + c * DCTMatrix8x8.side, y: offsetY + r * DCTMatrix8x8.side)
+                        // Poison-skip (same rule as `extractBitsWithOffset`): a block touched by the
+                        // deskew OOB sentinel is (near-)constant, so ALL its AC coefficients are ~0 and
+                        // `extractBitFromFrequencies` would return a deterministic, fabricated `1`.
+                        // Mark it -1 instead — it can never equal a sync-marker bit, so windows
+                        // overlapping the dead frame lose score instead of gaining fake matches.
+                        if isBlockPolluted(block) {
+                            bitGrid[r][c] = -1
+                            continue
+                        }
                         let freqBlock = performDCT(block)
                         bitGrid[r][c] = extractBitFromFrequencies(freqBlock)
                     }
@@ -137,6 +155,37 @@ extension WatermarkService {
                     let dstStart = row * DCTMatrix8x8.side
                     for col in 0..<DCTMatrix8x8.side {
                         blockPtr[dstStart + col] = Float(ptr[srcStart + col])
+                    }
+                }
+            }
+        }
+        return block
+    }
+
+    /// True when any sample of the 8×8 block carries the deskew OOB poison sentinel (-1000).
+    ///
+    /// Poisoned blocks MUST NOT cast bit votes: a constant block has every AC coefficient equal
+    /// to EXACTLY 0.0, so `abs(C1) >= abs(C2)` ties and decodes as a deterministic `1`. After an
+    /// upscale attack the deskewed plane has a full dead frame around the content; letting it
+    /// vote floods the macro-tile fold with fabricated 1s (the classic `lenByte=255` symptom).
+    func isBlockPolluted(_ block: DCTMatrix8x8) -> Bool {
+        for v in block.values where v < -500.0 {
+            return true
+        }
+        return false
+    }
+
+    /// Float-plane overload: copies the un-truncated `Float` samples straight into the DCT buffer,
+    /// preserving the sub-pixel energy carried over from `deskewImage`'s bilinear interpolation.
+    func extractSpatialBlock(from matrix: FloatMatrix, x: Int, y: Int) -> DCTMatrix8x8 {
+        var block = DCTMatrix8x8()
+        matrix.data.withUnsafeBufferPointer { ptr in
+            block.values.withUnsafeMutableBufferPointer { blockPtr in
+                for row in 0..<DCTMatrix8x8.side {
+                    let srcStart = (y + row) * matrix.width + x
+                    let dstStart = row * DCTMatrix8x8.side
+                    for col in 0..<DCTMatrix8x8.side {
+                        blockPtr[dstStart + col] = ptr[srcStart + col]
                     }
                 }
             }

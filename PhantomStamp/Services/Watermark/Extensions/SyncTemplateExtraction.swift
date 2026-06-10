@@ -75,14 +75,38 @@ extension WatermarkService {
         var complexMatrix = extractAndRemoveDC(from: yChannel, targetSize: N)
         performForwardFFT(matrix: &complexMatrix)
         let peaks = findSyncPeaks(in: complexMatrix)
+        
+        #if DEBUG
+        print("========================================")
+        print("[SyncTemplate] executing frequency domain geometric detection...")
+        for (i, p) in peaks.prefix(4).enumerated() {
+            let r = sqrt(p.x * p.x + p.y * p.y)
+            let ang = atan2(p.y, p.x) * 180.0 / .pi
+            print("[SyncTemplate] Peak[\(i)] polar coordinates: r=\(String(format: "%.2f", r)), θ=\(String(format: "%+7.2f°", ang)) | Cartesian coordinates: (x=\(String(format: "%+6.2f", p.x)), y=\(String(format: "%+6.2f", p.y)))")
+        }
+        #endif
+        
         guard !peaks.isEmpty else {
+            #if DEBUG
+            print("[SyncTemplate] fatal error: no valid peaks found, returning Identity (0°, 1.0x)")
+            print("========================================")
+            #endif
             return (angle: 0.0, scale: 1.0)
         }
-        return calculateAffineParams(
+        
+        let params = calculateAffineParams(
             from: peaks,
             originalRadius: WatermarkService.syncTemplateOriginalRadius,
             originalAngle: WatermarkService.syncTemplateOriginalAngleRadians
         )
+        
+        #if DEBUG
+        let deg = params.angle * 180.0 / .pi
+        print("[SyncTemplate] geometric inference completed: rotation angle = \(String(format: "%.3f°", deg)), scale factor = \(String(format: "%.4fx", params.scale))")
+        print("========================================")
+        #endif
+        
+        return params
     }
 
     // ==========================================
@@ -93,26 +117,32 @@ extension WatermarkService {
     /// the image center, using bilinear interpolation for sub-pixel sampling.
     ///
     /// The output canvas size is identical to the input — pixels that would map outside the
-    /// source frame stay 0 (black). This keeps the 8×8 macroblock grid period intact for the
-    /// downstream grid scan, while the visible corners simply turn black after a rotation.
+    /// source frame receive the POISON sentinel `-1000.0` (via `bilinearInterpolate`), so the
+    /// downstream grid scan / bit extraction can identify and exclude the dead frame. This keeps
+    /// the 8×8 macroblock grid period intact while rotated corners / upscale borders abstain.
+    ///
+    /// PRECISION: returns a ``FloatMatrix`` carrying the RAW bilinear samples. Rounding back to
+    /// `UInt8` here would quantize away the sub-intensity AC variations (< 1.0 gray level) that
+    /// encode the payload bits, zeroing the mid-frequency DCT coefficients downstream. The whole
+    /// extraction path (`extractSpatialBlock` → `performDCT`) consumes this Float plane directly.
     ///
     /// Short-circuits when the detected transform is effectively the identity to avoid the
     /// faint resampling blur a no-op bilinear pass would otherwise introduce.
-    func deskewImage(_ yChannel: Matrix, angle: Float, scale: Float) -> Matrix {
+    func deskewImage(_ yChannel: Matrix, angle: Float, scale: Float) -> FloatMatrix {
         let w = yChannel.width
         let h = yChannel.height
 
         // Identity short-circuit thresholds: ~5e-3 rad ≈ 0.3°, scale within 0.05%.
         // Below these levels the bilinear pass would lose more SNR than the residual transform
-        // would cost, so we keep the source pixels untouched.
+        // would cost, so we keep the source pixels untouched (lossless UInt8 → Float promotion).
         if abs(angle) < 5e-3 && abs(scale - 1.0) < 5e-4 {
-            return yChannel
+            return FloatMatrix(promoting: yChannel)
         }
 
         let cx = Float(w) / 2.0
         let cy = Float(h) / 2.0
 
-        var outData = [UInt8](repeating: 0, count: w * h)
+        var outData = [Float](repeating: 0, count: w * h)
         outData.withUnsafeMutableBufferPointer { outPtr in
             for y in 0..<h {
                 let rowBase = y * w
@@ -123,15 +153,13 @@ extension WatermarkService {
                         centerX: cx, centerY: cy,
                         angle: angle, scale: scale
                     )
-                    let v = bilinearInterpolate(matrix: yChannel, x: inv.x, y: inv.y)
-                    // Clamp BEFORE rounding so `UInt8(clamping:)` never sees 256.0.
-                    let clamped = min(max(v, 0.0), 255.0)
-                    outPtr[rowBase + x] = UInt8(clamping: Int(clamped.rounded()))
+                    // Store the raw interpolated value — no clamp/round/UInt8 quantization.
+                    outPtr[rowBase + x] = bilinearInterpolate(matrix: yChannel, x: inv.x, y: inv.y)
                 }
             }
         }
 
-        return Matrix(width: w, height: h, data: outData)
+        return FloatMatrix(width: w, height: h, data: outData)
     }
 
     // ==========================================
@@ -178,7 +206,20 @@ extension WatermarkService {
         }
         let mean: Float = count > 0 ? sum / Float(count) : 0
 
-        // PASS 2: write (pixel - mean) into the real part; OOB stays at the default 0.
+        // 2D Hann window (separable, periodic/DFT-even form).
+        //
+        // WHY: with a rectangular window, a peak at a non-integer bin leaks an asymmetric |sinc|
+        // pattern into its neighbors, and sub-bin interpolation gets pulled toward the integer
+        // bin by up to ~0.3 cells. At r≈90 that is a systematic ~0.3% scale error — which
+        // accumulates to >10px of macroblock-grid drift across a 4K image and de-correlates the
+        // tile repetitions during voting. Hann shapes the main lobe so the Grandke ratio
+        // interpolation in `refinePeakSubPixel` becomes (nearly) bias-free.
+        var hann = [Float](repeating: 0, count: N)
+        for i in 0..<N {
+            hann[i] = 0.5 * (1.0 - cos(2.0 * Float.pi * Float(i) / Float(N)))
+        }
+
+        // PASS 2: write (pixel - mean) · hann[j] · hann[i] into the real part; OOB stays 0.
         var matrix = FFTComplexMatrix(width: N, height: N)
         matrix.real.withUnsafeMutableBufferPointer { real in
             yChannel.data.withUnsafeBufferPointer { src in
@@ -187,10 +228,11 @@ extension WatermarkService {
                     if sy < 0 || sy >= h { continue }
                     let dstRowBase = j * N
                     let srcRowBase = sy * w
+                    let wy = hann[j]
                     for i in 0..<N {
                         let sx = startX + i
                         if sx < 0 || sx >= w { continue }
-                        real[dstRowBase + i] = Float(src[srcRowBase + sx]) - mean
+                        real[dstRowBase + i] = (Float(src[srcRowBase + sx]) - mean) * wy * hann[i]
                     }
                 }
             }
@@ -332,11 +374,13 @@ extension WatermarkService {
         return peaks.map { (x: $0.x, y: $0.y) }
     }
 
-    /// 1-D parabolic peak interpolation along rows and columns separately, with FFT wrap-around
+    /// 1-D Grandke ratio interpolation along rows and columns separately, with FFT wrap-around
     /// indexing so peaks near the spectrum borders still get a clean neighborhood.
     ///
-    /// Reference formula: for samples `(left, center, right)` around the integer peak,
-    /// `offset = 0.5 * (left - right) / (left - 2·center + right)`.
+    /// MATCHED TO THE HANN WINDOW applied in `extractAndRemoveDC`: for a Hann-windowed sinusoid
+    /// the estimator `α = |X(k₀±1)| / |X(k₀)| (toward the larger neighbor), δ = (2α − 1)/(α + 1)`
+    /// is exact — unlike parabolic-on-magnitude over a rectangular window, whose |sinc| leakage
+    /// biased the radius by up to ~0.3 cells (≈0.3% scale error ⇒ >10px grid drift on 4K images).
     private func refinePeakSubPixel(in freqMatrix: FFTComplexMatrix, row: Int, col: Int) -> (row: Float, col: Float) {
         let N = freqMatrix.width
         let rm1 = (row - 1 + N) % N
@@ -350,17 +394,25 @@ extension WatermarkService {
         let mL = freqMatrix.magnitudeAt(row: row, col: cm1)
         let mR = freqMatrix.magnitudeAt(row: row, col: cp1)
 
-        let denomCol = mL - 2 * mC + mR
-        let denomRow = mU - 2 * mC + mD
-        let dCol: Float = abs(denomCol) > 1e-12 ? 0.5 * (mL - mR) / denomCol : 0
-        let dRow: Float = abs(denomRow) > 1e-12 ? 0.5 * (mU - mD) / denomRow : 0
+        // Clamped to ±0.5 cells — noise can push α outside the model's valid range, and it's
+        // safer to under-correct than to run away from the integer maximum.
+        func grandkeOffset(center: Float, minus: Float, plus: Float) -> Float {
+            guard center > 1e-12 else { return 0 }
+            let delta: Float
+            if plus >= minus {
+                let alpha = plus / center
+                delta = (2 * alpha - 1) / (alpha + 1)
+            } else {
+                let alpha = minus / center
+                delta = -((2 * alpha - 1) / (alpha + 1))
+            }
+            return min(max(delta, -0.5), 0.5)
+        }
 
-        // Clamp to a half cell — beyond that the parabolic model breaks down (e.g. a strong
-        // sidelobe contaminating the neighborhood), so it's safer to under-correct.
-        let drClamped = min(max(dRow, -0.5), 0.5)
-        let dcClamped = min(max(dCol, -0.5), 0.5)
-
-        return (row: Float(row) + drClamped, col: Float(col) + dcClamped)
+        return (
+            row: Float(row) + grandkeOffset(center: mC, minus: mU, plus: mD),
+            col: Float(col) + grandkeOffset(center: mC, minus: mL, plus: mR)
+        )
     }
 
     /// Recovers `(rotation, scale)` from the peak coordinates returned by `findSyncPeaks`.
@@ -376,62 +428,85 @@ extension WatermarkService {
     /// Larger rotations would also flip the macroblock layout in ways the existing grid scan
     /// can't recover from anyway.
     func calculateAffineParams(from peaks: [(x: Float, y: Float)], originalRadius: Float, originalAngle: Float) -> (angle: Float, scale: Float) {
-        guard let peak = peaks.first else { return (0.0, 1.0) }
+        // Per-peak estimate with 4-fold disambiguation: try every k ∈ {0, 1, 2, 3} and keep the
+        // rotation closest to 0 (wrap to (-π, π] via atan2(sin, cos) — cheap and branch-free).
+        func solve(_ peak: (x: Float, y: Float)) -> (angle: Float, scale: Float) {
+            let r = sqrt(peak.x * peak.x + peak.y * peak.y)
+            let detectedAngle = atan2(peak.y, peak.x)
+            // Guard against zero radius (would only happen if the DC mask failed).
+            let scale = originalRadius / max(r, 1e-3)
 
-        let r = sqrt(peak.x * peak.x + peak.y * peak.y)
-        let detectedAngle = atan2(peak.y, peak.x)
-
-        // Guard against zero radius (would only happen if the DC mask failed).
-        let safeRadius = max(r, 1e-3)
-        let scale = originalRadius / safeRadius
-
-        // 4-fold disambiguation: try every k ∈ {0, 1, 2, 3} and keep the rotation closest to 0.
-        var bestRotation: Float = .infinity
-        for k in 0..<4 {
-            let candidate = detectedAngle - (originalAngle + Float(k) * (.pi / 2))
-            // Wrap to (-π, π] using atan2(sin, cos) — cheap and branch-free.
-            let wrapped = atan2(sin(candidate), cos(candidate))
-            if abs(wrapped) < abs(bestRotation) {
-                bestRotation = wrapped
+            var bestRotation: Float = .infinity
+            for k in 0..<4 {
+                let candidate = detectedAngle - (originalAngle + Float(k) * (.pi / 2))
+                let wrapped = atan2(sin(candidate), cos(candidate))
+                if abs(wrapped) < abs(bestRotation) {
+                    bestRotation = wrapped
+                }
             }
+            return (angle: bestRotation, scale: scale)
         }
 
-        return (angle: bestRotation, scale: scale)
+        guard let strongest = peaks.first else { return (0.0, 1.0) }
+        let reference = solve(strongest)
+
+        // PRECISION: averaging the (up to) 4 template peaks roughly halves the estimator noise
+        // vs using the strongest peak alone. This matters downstream: a residual scale error of
+        // just 3e-4 (or ~0.1° of rotation) accumulates to >1px of macroblock-grid drift across a
+        // 4000+ px image, which is what de-correlates distant tile repetitions during voting.
+        //
+        // Consistency gate vs the strongest peak (±1°, ±2% scale) rejects the occasional
+        // image-content peak that survived the radius prior in a weak quadrant.
+        var angleSum: Float = 0
+        var scaleSum: Float = 0
+        var count = 0
+        for peak in peaks.prefix(4) {
+            let est = solve(peak)
+            let angleDelta = atan2(sin(est.angle - reference.angle), cos(est.angle - reference.angle))
+            guard abs(angleDelta) <= (1.0 * .pi / 180.0), abs(est.scale / reference.scale - 1.0) <= 0.02 else {
+                #if DEBUG
+                print("[SyncTemplate] peak rejected by consistency gate: angle=\(String(format: "%.3f°", est.angle * 180 / .pi)) scale=\(String(format: "%.4f", est.scale))")
+                #endif
+                continue
+            }
+            angleSum += est.angle
+            scaleSum += est.scale
+            count += 1
+        }
+
+        guard count > 0 else { return reference }
+        return (angle: angleSum / Float(count), scale: scaleSum / Float(count))
     }
 
     /// Maps a destination pixel `(targetX, targetY)` back to its source pixel in the attacked
-    /// image, using the inverse of `attack = rotate(angle) ∘ scale(scale)` around the center.
+    /// image.
     ///
-    /// Rotation and uniform scaling both commute when applied around the same point, so the
-    /// inverse is `rotate(-angle) ∘ scale(1/scale)` regardless of the original ordering.
-    ///
-    /// IMAGE-Y CONVENTION: rotation is computed with `cos/sin` of the raw angle, but applied to
-    /// y-down coordinates. A positive `angle` therefore describes a clockwise visual rotation,
-    /// matching `atan2(peak.y, peak.x)` in `findSyncPeaks`.
+    /// CRITICAL FIX: In inverse mapping (Destination -> Source), because Source = Attacked and
+    /// Destination = Original, the mapping function MUST be the attacker's FORWARD transform.
     func calculateInverseCoordinate(targetX: Int, targetY: Int, centerX: Float, centerY: Float, angle: Float, scale: Float) -> (x: Float, y: Float) {
         let tx = Float(targetX) - centerX
         let ty = Float(targetY) - centerY
 
-        // Inverse rotation by -angle:
-        //   [x']   [ cos(-θ)  -sin(-θ) ] [x]   [ cos θ   sin θ ] [x]
-        //   [y'] = [ sin(-θ)   cos(-θ) ] [y] = [-sin θ   cos θ ] [y]
+        // FORWARD rotation by +angle:
+        // The attacker rotated the image by +angle. To find where a pixel in the original
+        // image ended up in the attacked image, we must apply that same +angle rotation.
         let cosA = cos(angle)
         let sinA = sin(angle)
-        let xRot = tx * cosA + ty * sinA
-        let yRot = -tx * sinA + ty * cosA
+        let xRot = tx * cosA - ty * sinA
+        let yRot = tx * sinA + ty * cosA
 
-        // Inverse scaling: divide by scale (with a guard against pathological zero).
-        let invS: Float = scale != 0 ? 1.0 / scale : 1.0
-        let xInv = xRot * invS
-        let yInv = yRot * invS
+        // FORWARD scaling:
+        // The attacker scaled the image by `scale`. A coordinate in the original image
+        // is stretched by `scale` in the attacked image.
+        let xInv = xRot * scale
+        let yInv = yRot * scale
 
         return (x: xInv + centerX, y: yInv + centerY)
     }
 
-    /// Bilinear sample from a UInt8 matrix with zero-fill outside the source frame.
-    ///
-    /// Returns a `Float` so the caller can clamp + round itself — matches the rest of the
-    /// pipeline (e.g. `applySpatialTiling`) where UInt8 conversion is done explicitly.
+    /// Bilinear sample from a UInt8 matrix. Out-of-frame coordinates return the POISON sentinel
+    /// `-1000.0` (not 0): downstream block extraction uses `isBlockPolluted` to make dead-frame
+    /// blocks abstain from voting instead of decoding as fabricated bits.
     ///
     /// NOTE: We use a strict OOB check `> Float(w - 1)` rather than `>= Float(w)` so the sample
     /// at the very last valid row/column still works (its `x1`/`y1` neighbor would otherwise be
@@ -443,7 +518,7 @@ extension WatermarkService {
 
         // True out-of-bounds → zero (visual black corner after a rotation).
         if x < 0 || y < 0 || x > Float(w - 1) || y > Float(h - 1) {
-            return 0
+            return -1000.0
         }
 
         let x0 = Int(floor(x))

@@ -18,6 +18,41 @@ struct Matrix {
     var data: [UInt8] = []
 }
 
+/// Row-major **Float** samples (`data[y * width + x]`). Precision-preserving sibling of ``Matrix``
+/// for the *extraction* pipeline only.
+///
+/// WHY THIS EXISTS: after geometric correction (`deskewImage`), the watermark payload lives in
+/// sub-intensity AC variations (spatial deltas < 1.0 gray level). Quantizing the deskewed plane
+/// back to `UInt8` destroys that energy before the DCT can see it. This struct carries the raw
+/// bilinear-interpolated values straight into `extractSpatialBlock` → `performDCT` untouched.
+///
+/// The embedding pipeline and all image I/O keep using the 8-bit ``Matrix``.
+struct FloatMatrix {
+    var width: Int = 0
+    var height: Int = 0
+    var data: [Float] = []
+
+    init(width: Int = 0, height: Int = 0, data: [Float] = []) {
+        self.width = width
+        self.height = height
+        self.data = data
+    }
+
+    /// Lossless promotion `UInt8 → Float`, vectorized via vDSP.
+    init(promoting matrix: Matrix) {
+        self.width = matrix.width
+        self.height = matrix.height
+        let count = matrix.data.count
+        self.data = [Float](repeating: 0, count: count)
+        guard count > 0 else { return }
+        matrix.data.withUnsafeBufferPointer { src in
+            data.withUnsafeMutableBufferPointer { dst in
+                vDSP_vfltu8(src.baseAddress!, 1, dst.baseAddress!, 1, vDSP_Length(count))
+            }
+        }
+    }
+}
+
 /// One **8×8** tile of `Float` samples in **row-major** order: index `r * 8 + c` is spatial row `r`, column `c`.
 ///
 /// The same layout holds **DCT coefficients** after ``WatermarkService/performDCT(_:)``, with `(u, v)` mapped to `(row, col)`.

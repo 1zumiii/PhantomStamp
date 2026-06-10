@@ -30,6 +30,9 @@ struct PhantomStampApp: App {
     }()
 
     init() {
+        if let svc = watermarkService as? WatermarkService {
+            svc.modelContainer = sharedModelContainer
+        }
         #if DEBUG
 //        ImagePipelineTests.runAllBundledAndPrint()
 //        MatrixOperationsTests.runAllAndPrint()

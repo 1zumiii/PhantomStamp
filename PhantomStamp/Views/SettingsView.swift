@@ -77,7 +77,7 @@ struct SettingsView: View {
     // MARK: - Watermark Defaults
     // Bindings:
     //   Default text       → $settingsStore.defaultWatermarkText  (new)
-    //   Embedding strength → $settingsStore.embeddingStrength      (new, Double 0–100 step 25)
+    //   Embedding strength → $settingsStore.embeddingStrength      (multiplier 0–5×, step 0.5)
     //   Export quality     → $settingsStore.exportQualityIndex     (new, Int 0/1/2)
 
     private var watermarkDefaultsSection: some View {
@@ -144,16 +144,14 @@ struct SettingsView: View {
                 Text(AppConstants.Copy.Settings.labelEmbeddingStrength)
                     .font(.subheadline.weight(.medium))
                 Spacer()
-                // Reads live from settingsStore so the label always matches the slider
-                Text("\(Int(settingsStore.embeddingStrength))%")
+                Text(String(format: "%.1f×", settingsStore.embeddingStrength))
                     .font(.caption.monospacedDigit())
                     .foregroundStyle(.secondary)
             }
-            // Bound to settingsStore — persisted via AppUserDefault<Double>
             Slider(
                 value: $settingsStore.embeddingStrength,
-                in: 0...100,
-                step: 25
+                in: AppConstants.EmbeddingStrength.min...AppConstants.EmbeddingStrength.max,
+                step: AppConstants.EmbeddingStrength.step
             )
             .tint(accentPurple)
         }
