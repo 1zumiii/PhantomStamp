@@ -156,7 +156,11 @@ extension WatermarkService {
         // can self-certify its own alignment: only repetitions whose LOCAL sync agreement is high
         // enough get to vote. This is purely data-driven — no drift model needed — and uniformly
         // handles drift, dead frames, local JPEG damage and partial crops.
-        func computeVotedMacroblock(w: Int, bx: Int, by: Int) -> [Int] {
+        // `minSyncAgreement`: fraction of visible sync cells a repetition must match to vote.
+        // 0.75 is the default operating point; 0.90 is a strict gate used as the first attempt
+        // when the residual geometric drift is large and only a handful of repetitions remain
+        // truly aligned (marginal 75%-ers would drag the fold's BER over the FEC budget).
+        func computeVotedMacroblock(w: Int, bx: Int, by: Int, minSyncAgreement: Float = 0.75) -> [Int] {
             let originX = bx % w
             let originY = by % w
 
@@ -189,9 +193,9 @@ extension WatermarkService {
                         valid += 1
                         if hb == syncMarker[i] { matched += 1 }
                     }
-                    // Need enough visible sync cells to judge, and ≥75% agreement.
+                    // Need enough visible sync cells to judge, plus the requested agreement.
                     // Aligned repetitions sit at ~90-100% even under JPEG; drifted ones at ~50%.
-                    if valid >= 24 && Float(matched) >= 0.75 * Float(valid) {
+                    if valid >= 24 && Float(matched) >= minSyncAgreement * Float(valid) {
                         gatedReps.append(rep)
                     }
                 }
@@ -201,7 +205,7 @@ extension WatermarkService {
             // fold everything rather than nothing.
             let reps = gatedReps.count >= 3 ? gatedReps : allReps
             #if DEBUG
-            print("[WatermarkService] DEBUG voting: sync-gated fold w=\(w) bx=\(bx) by=\(by): accepted \(gatedReps.count)/\(allReps.count) repetitions\(gatedReps.count >= 3 ? "" : " (gate too sparse — folding ALL)")")
+            print("[WatermarkService] DEBUG voting: sync-gated fold w=\(w) bx=\(bx) by=\(by) gate=\(String(format: "%.2f", minSyncAgreement)): accepted \(gatedReps.count)/\(allReps.count) repetitions\(gatedReps.count >= 3 ? "" : " (gate too sparse — folding ALL)")")
             #endif
 
             var votedMacroblock = [Int](repeating: 0, count: w * w)
@@ -279,23 +283,29 @@ extension WatermarkService {
         // 2) Validate candidates by ACTUAL FEC decode, best sync match first.
         // `w*w` may include padded zeros beyond the real eccBits length, which would feed garbage
         // Hamming codewords into decodeFEC — so we truncate per guessed message length instead.
+        //
+        // Gate cascade: try the strict 0.90 fold first (only the unquestionably aligned
+        // repetitions vote — decisive when residual drift leaves few aligned tiles), then the
+        // standard 0.75 fold (more redundancy when alignment is globally good).
         for c in topCandidates {
-            let votedMacroblock = computeVotedMacroblock(w: c.w, bx: c.bx, by: c.by)
-            let payloadBits = Array(votedMacroblock.dropFirst(syncCount))
+            for gate: Float in [0.90, 0.75] {
+                let votedMacroblock = computeVotedMacroblock(w: c.w, bx: c.bx, by: c.by, minSyncAgreement: gate)
+                let payloadBits = Array(votedMacroblock.dropFirst(syncCount))
 
-            for messageLenGuess in 1...16 {
-                let eccCount = expectedEccBitCount(messageLengthBytes: messageLenGuess)
-                guard (syncCount + eccCount) <= (c.w * c.w), payloadBits.count >= eccCount else { continue }
-                if decodeFEC(bits: Array(payloadBits.prefix(eccCount))) != nil {
-                    #if DEBUG
-                    print("[WatermarkService] DEBUG voting: decode SUCCESS sync=\(c.matchCount)/32 w=\(c.w) bx=\(c.bx) by=\(c.by) guessLen=\(messageLenGuess)")
-                    #endif
-                    let diag = MajorityVotingDiagnostics(
-                        bestSyncBitsMatched: c.matchCount,
-                        macroTileWidth: c.w,
-                        votedMacroblockBitCount: votedMacroblock.count
-                    )
-                    return (votedMacroblock, diag)
+                for messageLenGuess in 1...16 {
+                    let eccCount = expectedEccBitCount(messageLengthBytes: messageLenGuess)
+                    guard (syncCount + eccCount) <= (c.w * c.w), payloadBits.count >= eccCount else { continue }
+                    if decodeFEC(bits: Array(payloadBits.prefix(eccCount))) != nil {
+                        #if DEBUG
+                        print("[WatermarkService] DEBUG voting: decode SUCCESS sync=\(c.matchCount)/32 w=\(c.w) bx=\(c.bx) by=\(c.by) gate=\(gate) guessLen=\(messageLenGuess)")
+                        #endif
+                        let diag = MajorityVotingDiagnostics(
+                            bestSyncBitsMatched: c.matchCount,
+                            macroTileWidth: c.w,
+                            votedMacroblockBitCount: votedMacroblock.count
+                        )
+                        return (votedMacroblock, diag)
+                    }
                 }
             }
         }

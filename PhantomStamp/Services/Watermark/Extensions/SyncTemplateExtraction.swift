@@ -206,7 +206,20 @@ extension WatermarkService {
         }
         let mean: Float = count > 0 ? sum / Float(count) : 0
 
-        // PASS 2: write (pixel - mean) into the real part; OOB stays at the default 0.
+        // 2D Hann window (separable, periodic/DFT-even form).
+        //
+        // WHY: with a rectangular window, a peak at a non-integer bin leaks an asymmetric |sinc|
+        // pattern into its neighbors, and sub-bin interpolation gets pulled toward the integer
+        // bin by up to ~0.3 cells. At r≈90 that is a systematic ~0.3% scale error — which
+        // accumulates to >10px of macroblock-grid drift across a 4K image and de-correlates the
+        // tile repetitions during voting. Hann shapes the main lobe so the Grandke ratio
+        // interpolation in `refinePeakSubPixel` becomes (nearly) bias-free.
+        var hann = [Float](repeating: 0, count: N)
+        for i in 0..<N {
+            hann[i] = 0.5 * (1.0 - cos(2.0 * Float.pi * Float(i) / Float(N)))
+        }
+
+        // PASS 2: write (pixel - mean) · hann[j] · hann[i] into the real part; OOB stays 0.
         var matrix = FFTComplexMatrix(width: N, height: N)
         matrix.real.withUnsafeMutableBufferPointer { real in
             yChannel.data.withUnsafeBufferPointer { src in
@@ -215,10 +228,11 @@ extension WatermarkService {
                     if sy < 0 || sy >= h { continue }
                     let dstRowBase = j * N
                     let srcRowBase = sy * w
+                    let wy = hann[j]
                     for i in 0..<N {
                         let sx = startX + i
                         if sx < 0 || sx >= w { continue }
-                        real[dstRowBase + i] = Float(src[srcRowBase + sx]) - mean
+                        real[dstRowBase + i] = (Float(src[srcRowBase + sx]) - mean) * wy * hann[i]
                     }
                 }
             }
@@ -360,11 +374,13 @@ extension WatermarkService {
         return peaks.map { (x: $0.x, y: $0.y) }
     }
 
-    /// 1-D parabolic peak interpolation along rows and columns separately, with FFT wrap-around
+    /// 1-D Grandke ratio interpolation along rows and columns separately, with FFT wrap-around
     /// indexing so peaks near the spectrum borders still get a clean neighborhood.
     ///
-    /// Reference formula: for samples `(left, center, right)` around the integer peak,
-    /// `offset = 0.5 * (left - right) / (left - 2·center + right)`.
+    /// MATCHED TO THE HANN WINDOW applied in `extractAndRemoveDC`: for a Hann-windowed sinusoid
+    /// the estimator `α = |X(k₀±1)| / |X(k₀)| (toward the larger neighbor), δ = (2α − 1)/(α + 1)`
+    /// is exact — unlike parabolic-on-magnitude over a rectangular window, whose |sinc| leakage
+    /// biased the radius by up to ~0.3 cells (≈0.3% scale error ⇒ >10px grid drift on 4K images).
     private func refinePeakSubPixel(in freqMatrix: FFTComplexMatrix, row: Int, col: Int) -> (row: Float, col: Float) {
         let N = freqMatrix.width
         let rm1 = (row - 1 + N) % N
@@ -378,17 +394,25 @@ extension WatermarkService {
         let mL = freqMatrix.magnitudeAt(row: row, col: cm1)
         let mR = freqMatrix.magnitudeAt(row: row, col: cp1)
 
-        let denomCol = mL - 2 * mC + mR
-        let denomRow = mU - 2 * mC + mD
-        let dCol: Float = abs(denomCol) > 1e-12 ? 0.5 * (mL - mR) / denomCol : 0
-        let dRow: Float = abs(denomRow) > 1e-12 ? 0.5 * (mU - mD) / denomRow : 0
+        // Clamped to ±0.5 cells — noise can push α outside the model's valid range, and it's
+        // safer to under-correct than to run away from the integer maximum.
+        func grandkeOffset(center: Float, minus: Float, plus: Float) -> Float {
+            guard center > 1e-12 else { return 0 }
+            let delta: Float
+            if plus >= minus {
+                let alpha = plus / center
+                delta = (2 * alpha - 1) / (alpha + 1)
+            } else {
+                let alpha = minus / center
+                delta = -((2 * alpha - 1) / (alpha + 1))
+            }
+            return min(max(delta, -0.5), 0.5)
+        }
 
-        // Clamp to a half cell — beyond that the parabolic model breaks down (e.g. a strong
-        // sidelobe contaminating the neighborhood), so it's safer to under-correct.
-        let drClamped = min(max(dRow, -0.5), 0.5)
-        let dcClamped = min(max(dCol, -0.5), 0.5)
-
-        return (row: Float(row) + drClamped, col: Float(col) + dcClamped)
+        return (
+            row: Float(row) + grandkeOffset(center: mC, minus: mU, plus: mD),
+            col: Float(col) + grandkeOffset(center: mC, minus: mL, plus: mR)
+        )
     }
 
     /// Recovers `(rotation, scale)` from the peak coordinates returned by `findSyncPeaks`.
