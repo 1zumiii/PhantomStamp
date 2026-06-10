@@ -86,7 +86,7 @@ enum WatermarkCompressionAttackTests {
 
         let watermarked: UIImage
         do {
-            watermarked = try await service.embedWatermark(into: img, text: text)
+            watermarked = try await service.embedWatermarkSilently(into: img, text: text)
         } catch {
             return Report(
                 imageLoaded: true,
@@ -132,7 +132,7 @@ enum WatermarkCompressionAttackTests {
         }
 
         do {
-            let extracted = try await service.extractWatermark(from: attacked)
+            let extracted = try await service.extractWatermarkSilently(from: attacked)
             return Report(
                 imageLoaded: true,
                 embedSucceeded: true,
@@ -184,7 +184,7 @@ enum WatermarkCompressionAttackTests {
 
         let watermarked: UIImage
         do {
-            watermarked = try await service.embedWatermark(into: img, text: expectedText)
+            watermarked = try await service.embedWatermarkSilently(into: img, text: expectedText)
         } catch {
             return SweepReport(imageLoaded: true, embedSucceeded: false, cases: [], lowestPassingQuality: nil, firstFailingQuality: nil)
         }
@@ -200,7 +200,7 @@ enum WatermarkCompressionAttackTests {
                 return (failCase, nil)
             }
             let attacked = recompressed.image
-            let extracted = try? await service.extractWatermark(from: attacked)
+            let extracted = try? await service.extractWatermarkSilently(from: attacked)
             let ok = (extracted == expectedText)
             let sweepCase = SweepCase(
                 quality: q,

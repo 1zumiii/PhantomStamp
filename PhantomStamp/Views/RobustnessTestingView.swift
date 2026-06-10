@@ -1,5 +1,5 @@
 //
-//  TestPage.swift
+//  RobustnessTestingView.swift
 //  PhantomStamp
 //
 //  Internal tools page: runs manual/DEBUG watermark robustness limit tests.
@@ -10,29 +10,13 @@ import SwiftUI
 import UIKit
 
 struct RobustnessTestingView: View {
-    let watermarkService: any WatermarkServiceProtocol
     @Bindable var settingsStore: UserSettingsStore
+    @State private var vm: RobustnessTestingViewModel
 
-    @State private var isLoading = false
-    @State private var alertMessage = ""
-    @State private var alertTitle = "Test Failed"
-    @State private var showAlert = false
-    @State private var multiFileCount: Int = 5
-
-    // Image manipulation tools (shared picked source for compress + resize).
-    @State private var manipPickerItem: PhotosPickerItem?
-    @State private var manipSourceImage: UIImage?
-    @State private var manipSourcePx: (w: Int, h: Int)?
-    @State private var manipSourceName: String?
-    @State private var manipLoadingImage = false
-
-    @State private var manipJpegQuality: Double = 0.60
-    @State private var manipResizeTargetText: String = "1920"
-    @State private var manipResizeFitMode: ImageResizeUtils.FitMode = .longEdge
-    @State private var manipResultSheet: ManipResultSheetModel?
-    @State private var selectedCropKind: WatermarkCropAttackTests.CropKind = .right
-
-    private var currentSyncTemplateIntensity: Double { settingsStore.syncTemplateIntensity }
+    init(settingsStore: UserSettingsStore) {
+        self.settingsStore = settingsStore
+        _vm = State(initialValue: RobustnessTestingViewModel(settingsStore: settingsStore))
+    }
 
     var body: some View {
         ScrollView {
@@ -50,23 +34,22 @@ struct RobustnessTestingView: View {
         .background(Color(uiColor: .systemGroupedBackground))
         .navigationTitle("Robustness Tests")
         .navigationBarTitleDisplayMode(.large)
-        .alert(alertTitle, isPresented: $showAlert) {
-            Button("OK", role: .cancel) {}
+        .alert(vm.alertTitle, isPresented: $vm.showAlert) {
+            Button("OK", role: .cancel) { vm.dismissAlert() }
         } message: {
-            Text(alertMessage)
+            Text(vm.alertMessage)
         }
-        .sheet(item: $manipResultSheet) { model in
+        .sheet(item: $vm.manipResultSheet) { model in
             ManipResultSheet(model: model) {
-                manipResultSheet = nil
+                vm.dismissManipResultSheet()
             }
             .presentationDetents([.medium])
             .presentationDragIndicator(.visible)
         }
-        .onChange(of: manipPickerItem) { _, newItem in
-            Task { await loadManipSourceImage(from: newItem) }
+        .onChange(of: vm.manipPickerItem) { _, newItem in
+            Task { await vm.loadManipSourceImage(from: newItem) }
         }
     }
-
 
     // MARK: - Attack limit sweeps
 
@@ -78,7 +61,7 @@ struct RobustnessTestingView: View {
                     subtitle: "Coarse sweep high→low, then fine drill-down. Saves lowest-pass / first-fail images.",
                     runTitle: "Sweep"
                 ) {
-                    Task { await runCompressionLimitSweepOnBundledImage() }
+                    Task { await vm.runCompressionLimitSweep() }
                 }
 
                 Divider().opacity(0.25)
@@ -102,7 +85,7 @@ struct RobustnessTestingView: View {
                 }
                 Spacer(minLength: 10)
                 Button {
-                    Task { await runCropLimitSweepOnBundledImage() }
+                    Task { await vm.runCropLimitSweep() }
                 } label: {
                     Text("Sweep")
                         .font(.callout.weight(.semibold))
@@ -110,7 +93,7 @@ struct RobustnessTestingView: View {
                 }
                 .buttonStyle(.bordered)
                 .controlSize(.small)
-                .disabled(isLoading)
+                .disabled(vm.isLoading)
             }
 
             HStack {
@@ -118,19 +101,19 @@ struct RobustnessTestingView: View {
                     .font(.footnote.weight(.semibold))
                     .foregroundStyle(.secondary)
                 Spacer()
-                Picker("Crop direction", selection: $selectedCropKind) {
+                Picker("Crop direction", selection: $vm.selectedCropKind) {
                     ForEach(WatermarkCropAttackTests.CropKind.allCases) { kind in
                         Text(kind.displayName).tag(kind)
                     }
                 }
                 .pickerStyle(.menu)
-                .disabled(isLoading)
+                .disabled(vm.isLoading)
             }
         }
         .padding(.vertical, 2)
     }
 
-    // MARK: - Geometric (DFT sync template)
+    // MARK: - Geometric
 
     private var geometricCard: some View {
         card(title: "Geometric detection limits", systemImage: "rotate.3d") {
@@ -144,7 +127,7 @@ struct RobustnessTestingView: View {
                     subtitle: "Embed → detect on un-attacked image. Confirms detector returns angle≈0°, scale≈1×.",
                     runTitle: "Run"
                 ) {
-                    Task { await runSyncTemplateBasicTest() }
+                    Task { await vm.runSyncTemplateBasicTest() }
                 }
 
                 Divider().opacity(0.25)
@@ -154,7 +137,7 @@ struct RobustnessTestingView: View {
                     subtitle: "Coarse outward sweep ± rotation & scale, then fine drill-down to exact breakdown.",
                     runTitle: "Sweep"
                 ) {
-                    Task { await runSyncTemplateLimitSweep() }
+                    Task { await vm.runSyncTemplateLimitSweep() }
                 }
             }
         }
@@ -180,7 +163,7 @@ struct RobustnessTestingView: View {
                 in: 0.5...10.0,
                 step: 0.5
             )
-            .disabled(isLoading)
+            .disabled(vm.isLoading)
             .accessibilityValue(String(format: "%.1f", settingsStore.syncTemplateIntensity))
         }
     }
@@ -192,7 +175,7 @@ struct RobustnessTestingView: View {
             VStack(alignment: .leading, spacing: 12) {
                 HStack(alignment: .firstTextBaseline, spacing: 12) {
                     VStack(alignment: .leading, spacing: 3) {
-                        Text("Multi-file embed (×\(multiFileCount))")
+                        Text("Multi-file embed (×\(vm.multiFileCount))")
                             .font(.callout.weight(.semibold))
                             .foregroundStyle(.primary)
                         Text("Sequential embed for multiple files. Shows batch progress bar.")
@@ -212,14 +195,14 @@ struct RobustnessTestingView: View {
 
                     HStack(spacing: 10) {
                         stepperCapsule(
-                            value: $multiFileCount,
+                            value: $vm.multiFileCount,
                             range: 2...6,
-                            decrementDisabled: isLoading || multiFileCount <= 2,
-                            incrementDisabled: isLoading || multiFileCount >= 6
+                            decrementDisabled: vm.isLoading || vm.multiFileCount <= 2,
+                            incrementDisabled: vm.isLoading || vm.multiFileCount >= 6
                         )
 
                         Button {
-                            Task { await runMultiFileEmbedTestOnBundledImage(fileCount: multiFileCount) }
+                            Task { await vm.runMultiFileEmbedTest(fileCount: vm.multiFileCount) }
                         } label: {
                             Text("Run")
                                 .font(.callout.weight(.semibold))
@@ -228,14 +211,14 @@ struct RobustnessTestingView: View {
                         .frame(width: 80, height: 32)
                         .buttonStyle(.bordered)
                         .controlSize(.small)
-                        .disabled(isLoading)
+                        .disabled(vm.isLoading)
                     }
                 }
             }
         }
     }
 
-    // MARK: - Image manipulation tools
+    // MARK: - Image tools
 
     private var imageManipCard: some View {
         card(title: "Image tools", systemImage: "photo.on.rectangle.angled") {
@@ -266,30 +249,30 @@ struct RobustnessTestingView: View {
             }
             Spacer(minLength: 8)
             PhotosPicker(
-                selection: $manipPickerItem,
+                selection: $vm.manipPickerItem,
                 matching: ImagePickerSupport.imagesOnlyFilter,
                 photoLibrary: .shared()
             ) {
-                Text(manipSourceImage == nil ? "Pick" : "Change")
+                Text(vm.manipSourceImage == nil ? "Pick" : "Change")
                     .font(.callout.weight(.semibold))
                     .padding(.horizontal, 12)
             }
             .buttonStyle(.bordered)
             .controlSize(.small)
-            .disabled(isLoading || manipLoadingImage)
+            .disabled(vm.isLoading || vm.manipLoadingImage)
         }
     }
 
     @ViewBuilder
     private var manipSourcePreviewRow: some View {
-        if manipLoadingImage {
+        if vm.manipLoadingImage {
             HStack(spacing: 8) {
                 ProgressView()
                 Text("Loading image…")
                     .font(.caption)
                     .foregroundStyle(.secondary)
             }
-        } else if let img = manipSourceImage, let px = manipSourcePx {
+        } else if let img = vm.manipSourceImage, let px = vm.manipSourcePx {
             HStack(spacing: 12) {
                 Image(uiImage: img)
                     .resizable()
@@ -298,7 +281,7 @@ struct RobustnessTestingView: View {
                     .clipShape(RoundedRectangle(cornerRadius: 10, style: .continuous))
 
                 VStack(alignment: .leading, spacing: 2) {
-                    Text(manipSourceName ?? "Selected image")
+                    Text(vm.manipSourceName ?? "Selected image")
                         .font(.caption.weight(.semibold))
                         .lineLimit(1)
                     Text("\(px.w) × \(px.h) px")
@@ -307,7 +290,7 @@ struct RobustnessTestingView: View {
                 }
                 Spacer()
                 Button("Clear") {
-                    clearManipSourceImage()
+                    vm.clearManipSourceImage()
                 }
                 .font(.caption.weight(.semibold))
                 .foregroundStyle(.secondary)
@@ -334,18 +317,18 @@ struct RobustnessTestingView: View {
                     .font(.footnote.weight(.semibold))
                     .foregroundStyle(.secondary)
                 Spacer()
-                Text(String(format: "%.2f", ImageCompressionUtils.clampQuality(manipJpegQuality)))
+                Text(String(format: "%.2f", ImageCompressionUtils.clampQuality(vm.manipJpegQuality)))
                     .font(.caption.monospacedDigit())
                     .foregroundStyle(.secondary)
             }
 
-            Slider(value: $manipJpegQuality, in: 0.05...0.95, step: 0.05)
-                .disabled(isLoading || manipSourceImage == nil)
+            Slider(value: $vm.manipJpegQuality, in: 0.05...0.95, step: 0.05)
+                .disabled(vm.isLoading || vm.manipSourceImage == nil)
 
             HStack {
                 Spacer()
                 Button {
-                    Task { await runManipJpegCompress() }
+                    Task { await vm.runManipJpegCompress() }
                 } label: {
                     Text("Compress & Save")
                         .font(.callout.weight(.semibold))
@@ -353,7 +336,7 @@ struct RobustnessTestingView: View {
                 }
                 .buttonStyle(.borderedProminent)
                 .controlSize(.small)
-                .disabled(isLoading || manipSourceImage == nil)
+                .disabled(vm.isLoading || vm.manipSourceImage == nil)
             }
         }
     }
@@ -363,35 +346,25 @@ struct RobustnessTestingView: View {
             Text("Proportional resize")
                 .font(.callout.weight(.semibold))
 
-            Text("Scale the source so the chosen edge matches the target pixel count. Aspect ratio is preserved.")
+            Text("Uniformly scale the source image. Aspect ratio is preserved.")
                 .font(.caption)
                 .foregroundStyle(.secondary)
                 .fixedSize(horizontal: false, vertical: true)
 
-            Picker("Fit by", selection: $manipResizeFitMode) {
-                ForEach(ImageResizeUtils.FitMode.allCases) { mode in
-                    Text(mode.rawValue).tag(mode)
-                }
-            }
-            .pickerStyle(.segmented)
-            .disabled(isLoading || manipSourceImage == nil)
-
-            HStack(spacing: 10) {
-                Text("Target")
+            HStack {
+                Text("Scale")
                     .font(.footnote.weight(.semibold))
                     .foregroundStyle(.secondary)
-                TextField("Pixels", text: $manipResizeTargetText)
-                    .keyboardType(.numberPad)
-                    .textFieldStyle(.roundedBorder)
-                    .frame(maxWidth: 120)
-                    .disabled(isLoading || manipSourceImage == nil)
-                Text("px")
-                    .font(.footnote)
-                    .foregroundStyle(.secondary)
                 Spacer()
+                Text(String(format: "%.2fx", vm.manipResizeScaleFactor))
+                    .font(.caption.monospacedDigit())
+                    .foregroundStyle(.secondary)
             }
 
-            if let preview = manipResizePreviewSize, let src = manipSourcePx {
+            Slider(value: $vm.manipResizeScaleFactor, in: 0.8...1.6, step: 0.05)
+                .disabled(vm.isLoading || vm.manipSourceImage == nil)
+
+            if let preview = vm.manipResizePreviewSize, let src = vm.manipSourcePx {
                 Text("Output: \(preview.w) × \(preview.h) px  (from \(src.w) × \(src.h))")
                     .font(.caption.monospacedDigit())
                     .foregroundStyle(.secondary)
@@ -400,7 +373,7 @@ struct RobustnessTestingView: View {
             HStack {
                 Spacer()
                 Button {
-                    Task { await runManipResize() }
+                    Task { await vm.runManipResize() }
                 } label: {
                     Text("Resize & Save")
                         .font(.callout.weight(.semibold))
@@ -408,22 +381,9 @@ struct RobustnessTestingView: View {
                 }
                 .buttonStyle(.bordered)
                 .controlSize(.small)
-                .disabled(isLoading || manipSourceImage == nil || manipResizePreviewSize == nil)
+                .disabled(vm.isLoading || vm.manipSourceImage == nil || vm.manipResizePreviewSize == nil)
             }
         }
-    }
-
-    private var manipResizePreviewSize: (w: Int, h: Int)? {
-        guard let px = manipSourcePx,
-              let target = Int(manipResizeTargetText.trimmingCharacters(in: .whitespacesAndNewlines)),
-              target > 0,
-              let out = ImageResizeUtils.previewOutputSize(
-                  sourceWidth: px.w,
-                  sourceHeight: px.h,
-                  targetPixels: target,
-                  mode: manipResizeFitMode
-              ) else { return nil }
-        return (w: out.width, h: out.height)
     }
 
     // MARK: - Shared UI
@@ -454,7 +414,7 @@ struct RobustnessTestingView: View {
             }
             .buttonStyle(.bordered)
             .controlSize(.small)
-            .disabled(isLoading)
+            .disabled(vm.isLoading)
         }
         .padding(.vertical, 2)
     }
@@ -522,339 +482,12 @@ struct RobustnessTestingView: View {
         }
         .shadow(color: Color.black.opacity(0.06), radius: 16, x: 0, y: 10)
     }
-
-    // MARK: - Helpers
-
-    @MainActor
-    private func saveToSystemPhotoAlbumIfPossible(_ image: UIImage) async {
-        guard settingsStore.saveToPhotos else { return }
-        do {
-            try await PhotoLibraryExporter.saveToPhotoLibrary(image)
-        } catch {
-            #if DEBUG
-            print("[TestPage] Photo save failed: \(error)")
-            #endif
-        }
-    }
-
-    private func present(_ message: String, title: String = "Test Failed") {
-        alertTitle = title
-        alertMessage = message
-        showAlert = true
-    }
-
-    private func presentManipSuccess(
-        title: String,
-        subtitle: String,
-        details: [(label: String, value: String)]
-    ) {
-        manipResultSheet = ManipResultSheetModel(
-            isSuccess: true,
-            title: title,
-            subtitle: subtitle,
-            details: details.map { ManipResultSheetModel.Detail(label: $0.label, value: $0.value) }
-        )
-    }
-
-    private func presentManipFailure(title: String, subtitle: String) {
-        manipResultSheet = ManipResultSheetModel(
-            isSuccess: false,
-            title: title,
-            subtitle: subtitle,
-            details: []
-        )
-    }
-
-    @MainActor
-    private func loadManipSourceImage(from item: PhotosPickerItem?) async {
-        guard let item else {
-            clearManipSourceImage()
-            return
-        }
-        manipLoadingImage = true
-        defer { manipLoadingImage = false }
-
-        let loaded = await ImagePickerSupport.loadPickedImages(from: [item])
-        guard let first = loaded.first else {
-            clearManipSourceImage()
-            presentManipFailure(title: "Could not load image", subtitle: "The selected photo could not be decoded.")
-            return
-        }
-        manipSourceImage = first.image
-        manipSourcePx = (w: first.width, h: first.height)
-        manipSourceName = first.displayName
-    }
-
-    private func clearManipSourceImage() {
-        manipPickerItem = nil
-        manipSourceImage = nil
-        manipSourcePx = nil
-        manipSourceName = nil
-    }
-
-    @MainActor
-    private func saveManipResultToPhotos(_ image: UIImage) async throws {
-        await PhotoLibraryExporter.preflightAddOnlyAuthorizationIfNeeded()
-        try await PhotoLibraryExporter.saveToPhotoLibrary(image)
-    }
-
-    private func runManipJpegCompress() async {
-        guard let source = manipSourceImage else {
-            presentManipFailure(title: "No source image", subtitle: "Pick a photo in Image tools before compressing.")
-            return
-        }
-
-        isLoading = true
-        defer { isLoading = false }
-
-        let q = ImageCompressionUtils.clampQuality(manipJpegQuality)
-        guard let result = ImageCompressionUtils.recompressJPEG(image: source, quality: q) else {
-            presentManipFailure(title: "Compression failed", subtitle: "JPEG re-encoding did not produce a valid image.")
-            return
-        }
-
-        let outPx = pixelSize(of: result.image)
-        do {
-            try await saveManipResultToPhotos(result.image)
-            print("[TestPage] ManipJPEG q=\(String(format: "%.2f", q)) bytes=\(result.jpegBytes) out=\(outPx.w)x\(outPx.h)")
-            presentManipSuccess(
-                title: "Saved to Photos",
-                subtitle: "JPEG recompression finished successfully.",
-                details: [
-                    ("Quality", String(format: "%.2f", q)),
-                    ("File size", "\(result.jpegBytes) bytes"),
-                    ("Output", "\(outPx.w) × \(outPx.h) px"),
-                ]
-            )
-        } catch {
-            presentManipFailure(title: "Save failed", subtitle: error.localizedDescription)
-        }
-    }
-
-    private func runManipResize() async {
-        guard let source = manipSourceImage else {
-            presentManipFailure(title: "No source image", subtitle: "Pick a photo in Image tools before resizing.")
-            return
-        }
-        guard let target = Int(manipResizeTargetText.trimmingCharacters(in: .whitespacesAndNewlines)),
-              target > 0, target <= 16_384 else {
-            presentManipFailure(title: "Invalid target size", subtitle: "Enter a value between 1 and 16384 px.")
-            return
-        }
-        guard let resized = ImageResizeUtils.resize(
-            image: source,
-            targetPixels: target,
-            mode: manipResizeFitMode
-        ) else {
-            presentManipFailure(title: "Resize failed", subtitle: "Could not scale the image with the current settings.")
-            return
-        }
-
-        let outPx = pixelSize(of: resized)
-        do {
-            try await saveManipResultToPhotos(resized)
-            print("[TestPage] ManipResize mode=\(manipResizeFitMode.rawValue) target=\(target) out=\(outPx.w)x\(outPx.h)")
-            presentManipSuccess(
-                title: "Saved to Photos",
-                subtitle: "Proportional resize finished successfully.",
-                details: [
-                    ("Fit mode", manipResizeFitMode.rawValue),
-                    ("Target", "\(target) px"),
-                    ("Output", "\(outPx.w) × \(outPx.h) px"),
-                ]
-            )
-        } catch {
-            presentManipFailure(title: "Save failed", subtitle: error.localizedDescription)
-        }
-    }
-
-    private func pixelSize(of image: UIImage) -> (w: Int, h: Int) {
-        (Int(image.size.width * image.scale), Int(image.size.height * image.scale))
-    }
-
-    // MARK: - Limit sweep runners
-
-    private func postProgressOverlayStart() {
-        NotificationCenter.default.post(name: AppConstants.Notifications.watermarkProgressOverlayDidStart, object: nil)
-        NotificationCenter.default.post(
-            name: AppConstants.Notifications.watermarkProgress,
-            object: nil,
-            userInfo: ["payload": ProgressPayload(step: .preparation, percentage: 0.05)]
-        )
-    }
-
-    private func postProgressOverlayEnd() {
-        NotificationCenter.default.post(
-            name: AppConstants.Notifications.watermarkProgress,
-            object: nil,
-            userInfo: ["payload": ProgressPayload(step: .reassembling, percentage: 1)]
-        )
-        NotificationCenter.default.post(name: AppConstants.Notifications.watermarkProgressOverlayDidEnd, object: nil)
-    }
-
-    private func runCompressionLimitSweepOnBundledImage() async {
-        isLoading = true
-        defer { isLoading = false }
-
-        postProgressOverlayStart()
-
-        let r = await WatermarkCompressionAttackTests.runJpegQualityLimitSweepOnBundledTestImg()
-        let ok = r.imageLoaded && r.embedSucceeded && (r.lowestPassingQuality != nil)
-        let status = ok ? "PASS" : "FAIL"
-        let lowest = r.lowestPassingQuality.map { String(format: "%.2f", $0) } ?? "nil"
-        let firstFail = r.firstFailingQuality.map { String(format: "%.2f", $0) } ?? "nil"
-        print("[TestPage] CompressionSweep \(status) lowestPass=\(lowest) firstFail=\(firstFail) cases=\(r.cases.count)")
-        for c in r.cases {
-            let mark = c.passed ? "PASS" : "FAIL"
-            print("  - q=\(String(format: "%.2f", c.quality)) \(mark) extracted=\(c.extractedText ?? "nil") bytes=\(c.jpegBytes)")
-        }
-
-        postProgressOverlayEnd()
-
-        if !ok {
-            present("Compression sweep failed. lowestPass=\(lowest)")
-        }
-    }
-
-    private func runCropLimitSweepOnBundledImage() async {
-        isLoading = true
-        defer { isLoading = false }
-
-        postProgressOverlayStart()
-
-        let r = await WatermarkCropAttackTests.runCropPercentLimitSweepOnBundledTestImg(kind: selectedCropKind)
-        let ok = r.imageLoaded && r.embedSucceeded
-        let status = ok ? "RAN" : "FAIL"
-        let maxPass = r.maxPassingCropPercent.map { String(format: "%.1f%%", $0 * 100) } ?? "none"
-        let firstFail = r.firstFailingCropPercent.map { String(format: "%.1f%%", $0 * 100) } ?? "none"
-        print("[TestPage] CropSweep \(status) kind=\(r.kind.displayName) maxPass=\(maxPass) firstFail=\(firstFail) cases=\(r.cases.count)")
-        for c in r.cases {
-            let mark = c.passed ? "PASS" : "FAIL"
-            let px = c.cropPx.map { "\($0.w)x\($0.h)" } ?? "nil"
-            print("  - crop=\(String(format: "%.1f%%", c.cropPercent * 100)) \(mark) px=\(px) extracted=\(c.extractedText ?? "nil")")
-        }
-
-        postProgressOverlayEnd()
-
-        if !ok {
-            present("Crop limit sweep failed to run (image load or embed failure).")
-        }
-    }
-
-    private func runMultiFileEmbedTestOnBundledImage(fileCount: Int) async {
-        isLoading = true
-        defer { isLoading = false }
-
-        let r = await WatermarkMultiFileTests.runMultiFileEmbedOnBundledTestImg(text: "Batch watermark OK", fileCount: fileCount)
-        let ok = r.imageLoaded && r.embedSucceeded
-        let status = ok ? "PASS" : "FAIL"
-        print("[TestPage] MultiFileEmbed \(status) files=\(r.fileCount) totalMs=\(String(format: "%.2f", r.totalMs))")
-
-        if let outs = r.outputImages {
-            if let first = outs.first { await saveToSystemPhotoAlbumIfPossible(first) }
-            if outs.count > 1, let last = outs.last { await saveToSystemPhotoAlbumIfPossible(last) }
-        }
-
-        if !ok {
-            present("Multi-file embed failed.")
-        }
-    }
-
-    // MARK: - Geometric tests
-
-    private func runSyncTemplateBasicTest() async {
-        isLoading = true
-        defer { isLoading = false }
-
-        let intensity = currentSyncTemplateIntensity
-
-        postProgressOverlayStart()
-
-        let r = await SyncTemplateGeometricAttackTests.runBasicSyncTemplateOnBundledTestImg(
-            syncTemplateIntensity: intensity
-        )
-        let ok = r.imageLoaded && r.embedSucceeded && r.detectionRan && r.detectedIdentity
-        let status = ok ? "PASS" : "FAIL"
-        let detAng = r.detectedAngleDegrees.map { String(format: "%.4f°", $0) } ?? "nil"
-        let detSc = r.detectedScale.map { String(format: "%.6f", $0) } ?? "nil"
-        let px = r.watermarkedPx.map { "\($0.w)x\($0.h)px" } ?? "nil"
-        let tolA = SyncTemplateGeometricAttackTests.angleToleranceDegrees
-        let tolS = SyncTemplateGeometricAttackTests.scaleRelativeTolerance
-        print("[TestPage] SyncTemplateBasic \(status) intensity=\(String(format: "%.2f", intensity)) px=\(px) detected(angle=\(detAng), scale=\(detSc)) tol(|angle|≤\(String(format: "%.2f°", tolA)), |scale-1|≤\(String(format: "%.2f", tolS)))")
-        for (i, p) in r.topPeaks.enumerated() {
-            print("  - peak[\(i)] r=\(String(format: "%6.2f", p.radius)) θ=\(String(format: "%+7.2f°", p.angleDegrees)) (x=\(String(format: "%+6.2f", p.centeredX)), y=\(String(format: "%+6.2f", p.centeredY)))")
-        }
-
-        postProgressOverlayEnd()
-
-        if !ok {
-            present("Sync template basic test failed. detected(angle=\(detAng), scale=\(detSc)). Top peak r=\(r.topPeaks.first.map { String(format: "%.1f", $0.radius) } ?? "nil").")
-        }
-    }
-
-    private func runSyncTemplateLimitSweep() async {
-        isLoading = true
-        defer { isLoading = false }
-
-        let intensity = currentSyncTemplateIntensity
-
-        postProgressOverlayStart()
-
-        let r = await SyncTemplateGeometricAttackTests.runRotationAndScaleLimitSweepOnBundledTestImg(
-            syncTemplateIntensity: intensity
-        )
-        let ok = r.imageLoaded && r.embedSucceeded
-        let status = ok ? "RAN" : "FAIL"
-        let rotLimit = r.maxPassingAbsRotationDegrees.map { String(format: "±%.2f°", $0) } ?? "none"
-        let minSc = r.minPassingScaleFactor.map { String(format: "%.3f", $0) } ?? "none"
-        let maxSc = r.maxPassingScaleFactor.map { String(format: "%.3f", $0) } ?? "none"
-        let tolA = SyncTemplateGeometricAttackTests.angleToleranceDegrees
-        let tolS = SyncTemplateGeometricAttackTests.scaleRelativeTolerance
-        print("[TestPage] SyncTemplateSweep \(status) intensity=\(String(format: "%.2f", intensity)) rotationLimit=\(rotLimit) scaleRange=[\(minSc), \(maxSc)] tol(|angleErr|≤\(String(format: "%.2f°", tolA)), |scaleRelErr|≤\(String(format: "%.2f", tolS))) rotCases=\(r.rotationCases.count) scaleCases=\(r.scaleCases.count)")
-
-        for c in r.rotationCases {
-            let detAng = c.detectedAngleDegrees.map { String(format: "%.3f°", $0) } ?? "nil"
-            let detSc = c.detectedScale.map { String(format: "%.4f", $0) } ?? "nil"
-            let angErr = c.angleErrorDegrees.map { String(format: "%.3f°", $0) } ?? "nil"
-            let scErr = c.scaleRelativeError.map { String(format: "%.4f", $0) } ?? "nil"
-            let pass = c.passed ? "PASS" : "FAIL"
-            print("  - rotation \(String(format: "%+6.2f°", c.attackParam)) \(pass) detected(angle=\(detAng), scale=\(detSc)) err(angle=\(angErr), scaleRel=\(scErr)) topPeak r=\(c.topPeaks.first.map { String(format: "%.1f", $0.radius) } ?? "nil") θ=\(c.topPeaks.first.map { String(format: "%+.1f°", $0.angleDegrees) } ?? "nil")")
-        }
-        for c in r.scaleCases {
-            let detAng = c.detectedAngleDegrees.map { String(format: "%.3f°", $0) } ?? "nil"
-            let detSc = c.detectedScale.map { String(format: "%.4f", $0) } ?? "nil"
-            let angErr = c.angleErrorDegrees.map { String(format: "%.3f°", $0) } ?? "nil"
-            let scErr = c.scaleRelativeError.map { String(format: "%.4f", $0) } ?? "nil"
-            let pass = c.passed ? "PASS" : "FAIL"
-            print("  - scale    \(String(format: "%5.3fx", c.attackParam)) \(pass) detected(angle=\(detAng), scale=\(detSc)) err(angle=\(angErr), scaleRel=\(scErr)) topPeak r=\(c.topPeaks.first.map { String(format: "%.1f", $0.radius) } ?? "nil") θ=\(c.topPeaks.first.map { String(format: "%+.1f°", $0.angleDegrees) } ?? "nil")")
-        }
-
-        postProgressOverlayEnd()
-
-        if !ok {
-            present("Sync template limit sweep failed to run (embed or image load failure).")
-        }
-    }
 }
 
 // MARK: - Image tools result sheet
 
-private struct ManipResultSheetModel: Identifiable {
-    struct Detail: Identifiable {
-        let id = UUID()
-        var label: String
-        var value: String
-    }
-
-    let id = UUID()
-    var isSuccess: Bool
-    var title: String
-    var subtitle: String
-    var details: [Detail]
-}
-
 private struct ManipResultSheet: View {
-    let model: ManipResultSheetModel
+    let model: RobustnessTestingViewModel.ManipResultSheetModel
     var onDismiss: () -> Void
 
     var body: some View {
@@ -937,6 +570,6 @@ private struct ManipResultSheet: View {
 
 #Preview {
     NavigationStack {
-        RobustnessTestingView(watermarkService: WatermarkService(), settingsStore: UserSettingsStore())
+        RobustnessTestingView(settingsStore: UserSettingsStore())
     }
 }

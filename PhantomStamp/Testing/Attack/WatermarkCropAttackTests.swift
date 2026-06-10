@@ -103,7 +103,7 @@ enum WatermarkCropAttackTests {
 
         let watermarked: UIImage
         do {
-            watermarked = try await service.embedWatermark(into: img, text: text)
+            watermarked = try await service.embedWatermarkSilently(into: img, text: text)
         } catch {
             let failCases = CropKind.allCases.map {
                 CaseReport(
@@ -220,7 +220,7 @@ enum WatermarkCropAttackTests {
 
         let watermarked: UIImage
         do {
-            watermarked = try await service.embedWatermark(into: img, text: expectedText)
+            watermarked = try await service.embedWatermarkSilently(into: img, text: expectedText)
         } catch {
             return LimitSweepReport(
                 imageLoaded: true, embedSucceeded: false, kind: kind,
@@ -237,7 +237,7 @@ enum WatermarkCropAttackTests {
                 )
             }
             let px = pixelSize(of: cropped)
-            let extracted = try? await service.extractWatermark(from: cropped)
+            let extracted = try? await service.extractWatermarkSilently(from: cropped)
             let ok = (extracted == expectedText)
             return LimitCase(
                 kind: kind,

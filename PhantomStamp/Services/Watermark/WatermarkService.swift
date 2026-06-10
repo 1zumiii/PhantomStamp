@@ -101,18 +101,47 @@ class WatermarkService: WatermarkServiceProtocol {
 
     /// Embed watermark into a single image with source file name for history display.
     func embedWatermark(into image: UIImage, text: String, sourceImageName: String?, shouldHideProgressbar: Bool = true) async throws -> UIImage {
+        try await embedWatermark(
+            into: image,
+            text: text,
+            sourceImageName: sourceImageName,
+            shouldHideProgressbar: shouldHideProgressbar,
+            reportsProgressNotifications: true
+        )
+    }
+
+    /// Embed without posting production overlay / per-step progress notifications.
+    /// Intended for robustness tests and other headless validation runs.
+    func embedWatermarkSilently(into image: UIImage, text: String) async throws -> UIImage {
+        try await embedWatermark(
+            into: image,
+            text: text,
+            sourceImageName: nil,
+            shouldHideProgressbar: false,
+            reportsProgressNotifications: false
+        )
+    }
+
+    private func embedWatermark(
+        into image: UIImage,
+        text: String,
+        sourceImageName: String?,
+        shouldHideProgressbar: Bool,
+        reportsProgressNotifications: Bool
+    ) async throws -> UIImage {
         #if DEBUG
         // Debug-only: prints internal data-layer checks. Disable by default to avoid noisy logs in demos.
         // debugTestDataLayer()
         #endif
         
-        if shouldHideProgressbar {
+        if shouldHideProgressbar, reportsProgressNotifications {
             NotificationCenter.default.post(name: AppConstants.Notifications.watermarkProgressOverlayDidStart, object: nil)
         }
         
         let throttler = ProgressThrottler()
         
         func reportProgress(step: AppConstants.WatermarkStep, percentage: Double) {
+            guard reportsProgressNotifications else { return }
             let clamped = min(max(percentage, 0), 1)
             
             guard throttler.shouldReport(clamped) else { return }
@@ -275,7 +304,7 @@ class WatermarkService: WatermarkServiceProtocol {
             }
             reportProgress(step: .reassembling, percentage: 1)
 
-            if shouldHideProgressbar {
+            if shouldHideProgressbar, reportsProgressNotifications {
                 NotificationCenter.default.post(name: AppConstants.Notifications.watermarkProgressOverlayDidEnd, object: nil)
             }
             await persistEmbedHistoryIfNeeded(
@@ -297,7 +326,7 @@ class WatermarkService: WatermarkServiceProtocol {
             }
             return finalImage
         } catch {
-            if shouldHideProgressbar {
+            if shouldHideProgressbar, reportsProgressNotifications {
                 NotificationCenter.default.post(name: AppConstants.Notifications.watermarkProgressOverlayDidEnd, object: nil)
             }
             await persistEmbedHistoryIfNeeded(
@@ -340,15 +369,42 @@ class WatermarkService: WatermarkServiceProtocol {
 
     /// Extract watermark from a single image with source file name for history display.
     func extractWatermark(from image: UIImage, sourceImageName: String?, shouldHideProgressbar: Bool = true) async throws -> String {
-        if shouldHideProgressbar {
+        try await extractWatermark(
+            from: image,
+            sourceImageName: sourceImageName,
+            shouldHideProgressbar: shouldHideProgressbar,
+            reportsProgressNotifications: true
+        )
+    }
+
+    /// Extract without posting production overlay / per-step progress notifications.
+    func extractWatermarkSilently(from image: UIImage) async throws -> String {
+        try await extractWatermark(
+            from: image,
+            sourceImageName: nil,
+            shouldHideProgressbar: false,
+            reportsProgressNotifications: false
+        )
+    }
+
+    private func extractWatermark(
+        from image: UIImage,
+        sourceImageName: String?,
+        shouldHideProgressbar: Bool,
+        reportsProgressNotifications: Bool
+    ) async throws -> String {
+        if shouldHideProgressbar, reportsProgressNotifications {
             NotificationCenter.default.post(name: AppConstants.Notifications.watermarkProgressOverlayDidStart, object: nil)
         }
-        // ensure the ViewModel has enough time to process the AsyncSequence notifications, and let SwiftUI completely render the progress bar on the screen.
-        try? await Task.sleep(nanoseconds: 300_000_000)
+        if reportsProgressNotifications {
+            // ensure the ViewModel has enough time to process the AsyncSequence notifications, and let SwiftUI completely render the progress bar on the screen.
+            try? await Task.sleep(nanoseconds: 300_000_000)
+        }
 
         let throttler = ProgressThrottler()
         
         func reportProgress(step: AppConstants.WatermarkStep, percentage: Double) {
+            guard reportsProgressNotifications else { return }
             let clamped = min(max(percentage, 0), 1)
             
             guard throttler.shouldReport(clamped) else { return }
@@ -501,7 +557,7 @@ class WatermarkService: WatermarkServiceProtocol {
                 let eccBits = Array(payloadBits.prefix(eccCount))
                 if let correctedText = decodeFEC(bits: eccBits) {
                     reportProgress(step: .extractDecodeFEC, percentage: 1.0)
-                    if shouldHideProgressbar {
+                    if shouldHideProgressbar, reportsProgressNotifications {
                         NotificationCenter.default.post(name: AppConstants.Notifications.watermarkProgressOverlayDidEnd, object: nil)
                     }
                     await persistExtractHistoryIfNeeded(
@@ -528,7 +584,7 @@ class WatermarkService: WatermarkServiceProtocol {
 
             throw WatermarkError.extractFailed
         } catch {
-            if shouldHideProgressbar {
+            if shouldHideProgressbar, reportsProgressNotifications {
                 NotificationCenter.default.post(name: AppConstants.Notifications.watermarkProgressOverlayDidEnd, object: nil)
             }
             // Ensure the bar completes before ending for UX.

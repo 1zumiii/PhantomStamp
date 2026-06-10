@@ -36,7 +36,11 @@ enum WatermarkMultiFileTests {
 
         let t0 = CFAbsoluteTimeGetCurrent()
         do {
-            let outputs = try await service.embedWatermark(into: inputs, text: text)
+            var outputs: [UIImage] = []
+            outputs.reserveCapacity(n)
+            for input in inputs {
+                outputs.append(try await service.embedWatermarkSilently(into: input, text: text))
+            }
             let ms = (CFAbsoluteTimeGetCurrent() - t0) * 1000.0
             let ok = (outputs.count == n)
             return EmbedReport(imageLoaded: true, embedSucceeded: ok, fileCount: n, totalMs: ms, outputImages: outputs)

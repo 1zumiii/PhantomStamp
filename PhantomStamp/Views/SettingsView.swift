@@ -222,10 +222,7 @@ struct SettingsView: View {
     private var testingSection: some View {
         Section {
             NavigationLink {
-                RobustnessTestingView(
-                    watermarkService: watermarkService,
-                    settingsStore: settingsStore
-                )
+                RobustnessTestingView(settingsStore: settingsStore)
             } label: {
                 Text(AppConstants.Copy.Settings.rowRobustnessTests)
             }

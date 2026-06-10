@@ -143,6 +143,60 @@ final class FullScreenWatermarkProgressOverlayViewModel {
                 }
             }
         )
+
+        // Robustness / internal test page
+        notificationTasks.append(
+            Task { @MainActor in
+                for await n in center.notifications(named: AppConstants.Notifications.robustnessTestProgressOverlayDidStart) {
+                    guard let payload = n.userInfo?["payload"] as? RobustnessTestProgressPayload else { continue }
+                    startRobustnessTestIfNeeded(payload)
+                }
+            }
+        )
+        notificationTasks.append(
+            Task { @MainActor in
+                for await _ in center.notifications(named: AppConstants.Notifications.robustnessTestProgressOverlayDidEnd) {
+                    requestEndAndHideWhenDrained()
+                }
+            }
+        )
+        notificationTasks.append(
+            Task { @MainActor in
+                for await n in center.notifications(named: AppConstants.Notifications.robustnessTestProgressDidUpdate) {
+                    guard let payload = n.userInfo?["payload"] as? RobustnessTestProgressPayload else { continue }
+                    if !isVisible { startRobustnessTestIfNeeded(payload) }
+                    enqueueRobustnessTestProgress(payload)
+                }
+            }
+        )
+    }
+
+    private func startRobustnessTestIfNeeded(_ payload: RobustnessTestProgressPayload) {
+        switch state {
+        case .hidden, .finishing:
+            startIfNeeded()
+        case .running:
+            break
+        }
+        title = payload.kind.rawValue
+        detail = payload.phase
+    }
+
+    func enqueueRobustnessTestProgress(_ payload: RobustnessTestProgressPayload) {
+        title = payload.kind.rawValue
+        pendingProgress.insert(
+            .init(
+                step: .preparation,
+                percentage: min(max(payload.percentage, 0), 1),
+                enqueuedAt: DispatchTime.now().uptimeNanoseconds,
+                detailOverride: payload.phase
+            )
+        )
+        if payload.percentage >= 1.0 - 1e-9 {
+            requestEndAndHideWhenDrained()
+        }
+        ensureProgressPump()
+        pumpSignal.signal()
     }
 
     func startIfNeeded() {
@@ -194,7 +248,8 @@ final class FullScreenWatermarkProgressOverlayViewModel {
             .init(
                 step: payload.step,
                 percentage: target,
-                enqueuedAt: DispatchTime.now().uptimeNanoseconds
+                enqueuedAt: DispatchTime.now().uptimeNanoseconds,
+                detailOverride: nil
             )
         )
 
@@ -324,7 +379,7 @@ final class FullScreenWatermarkProgressOverlayViewModel {
                     }
                 }
 
-                detail = next.step.rawValue
+                detail = next.detailOverride ?? next.step.rawValue
 
                 let target = next.percentage
                 // Drop stale regressions (can happen with concurrent notifications arriving out of order).
