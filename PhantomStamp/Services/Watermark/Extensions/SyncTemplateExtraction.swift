@@ -76,21 +76,7 @@ extension WatermarkService {
         performForwardFFT(matrix: &complexMatrix)
         let peaks = findSyncPeaks(in: complexMatrix)
         
-        #if DEBUG
-        print("========================================")
-        print("[SyncTemplate] executing frequency domain geometric detection...")
-        for (i, p) in peaks.prefix(4).enumerated() {
-            let r = sqrt(p.x * p.x + p.y * p.y)
-            let ang = atan2(p.y, p.x) * 180.0 / .pi
-            print("[SyncTemplate] Peak[\(i)] polar coordinates: r=\(String(format: "%.2f", r)), θ=\(String(format: "%+7.2f°", ang)) | Cartesian coordinates: (x=\(String(format: "%+6.2f", p.x)), y=\(String(format: "%+6.2f", p.y)))")
-        }
-        #endif
-        
         guard !peaks.isEmpty else {
-            #if DEBUG
-            print("[SyncTemplate] fatal error: no valid peaks found, returning Identity (0°, 1.0x)")
-            print("========================================")
-            #endif
             return (angle: 0.0, scale: 1.0)
         }
         
@@ -99,12 +85,6 @@ extension WatermarkService {
             originalRadius: WatermarkService.syncTemplateOriginalRadius,
             originalAngle: WatermarkService.syncTemplateOriginalAngleRadians
         )
-        
-        #if DEBUG
-        let deg = params.angle * 180.0 / .pi
-        print("[SyncTemplate] geometric inference completed: rotation angle = \(String(format: "%.3f°", deg)), scale factor = \(String(format: "%.4fx", params.scale))")
-        print("========================================")
-        #endif
         
         return params
     }
@@ -464,9 +444,6 @@ extension WatermarkService {
             let est = solve(peak)
             let angleDelta = atan2(sin(est.angle - reference.angle), cos(est.angle - reference.angle))
             guard abs(angleDelta) <= (1.0 * .pi / 180.0), abs(est.scale / reference.scale - 1.0) <= 0.02 else {
-                #if DEBUG
-                print("[SyncTemplate] peak rejected by consistency gate: angle=\(String(format: "%.3f°", est.angle * 180 / .pi)) scale=\(String(format: "%.4f", est.scale))")
-                #endif
                 continue
             }
             angleSum += est.angle

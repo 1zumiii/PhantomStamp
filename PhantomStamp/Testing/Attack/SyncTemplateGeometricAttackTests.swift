@@ -164,7 +164,7 @@ enum SyncTemplateGeometricAttackTests {
         do {
             // Payload text is irrelevant for the geometric module — the sync template is added on
             // top of the Y channel regardless of which bits are encoded.
-            watermarked = try await service.embedWatermark(into: img, text: "Successful")
+            watermarked = try await service.embedWatermarkSilently(into: img, text: "Successful")
         } catch {
             return BasicReport(
                 imageLoaded: true, embedSucceeded: false, detectionRan: false,
@@ -232,7 +232,7 @@ enum SyncTemplateGeometricAttackTests {
 
         let watermarked: UIImage
         do {
-            watermarked = try await service.embedWatermark(into: img, text: "Successful")
+            watermarked = try await service.embedWatermarkSilently(into: img, text: "Successful")
         } catch {
             return SweepReport(
                 imageLoaded: true, embedSucceeded: false,

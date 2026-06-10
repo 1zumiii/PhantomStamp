@@ -26,6 +26,11 @@ extension AppConstants {
         static let demoProgressDidUpdate = Notification.Name("DemoProgressDidUpdate")
         /// Posted after a `WatermarkHistoryRecord` is inserted or removed so the History tab can reload.
         static let watermarkHistoryRecordsDidChange = Notification.Name("WatermarkHistoryRecordsDidChange")
+
+        // Robustness / internal test page (RobustnessTestingView)
+        static let robustnessTestProgressOverlayDidStart = Notification.Name("RobustnessTestProgressOverlayDidStart")
+        static let robustnessTestProgressDidUpdate = Notification.Name("RobustnessTestProgressDidUpdate")
+        static let robustnessTestProgressOverlayDidEnd = Notification.Name("RobustnessTestProgressOverlayDidEnd")
     }
     
     // Fixed all possible operation stages
@@ -81,4 +86,19 @@ struct DemoProgressPayload: Sendable {
     let title: String
     let detail: String
     let percentage: Double // 0.0 to 1.0
+}
+
+/// Progress payload for internal robustness / limit tests (`RobustnessTestingView`).
+struct RobustnessTestProgressPayload: Sendable {
+    enum Kind: String, Sendable {
+        case compressionLimit = "JPEG quality limit"
+        case cropLimit = "Crop limit"
+        case syncTemplateBasic = "Sync template baseline"
+        case syncTemplateSweep = "Geometric sweep"
+        case multiFileEmbed = "Multi-file embed"
+    }
+
+    let kind: Kind
+    let phase: String
+    let percentage: Double
 }

@@ -95,6 +95,9 @@ enum AppConstants {
             static let batchEmbedDoneBodyFormat  = "Succeeded: %d, failed: %d."
             static let batchExtractDoneTitle     = "Batch extract finished"
             static let batchExtractDoneBodyFormat = "Succeeded: %d, failed: %d."
+            static let robustnessTestDoneTitleFormat = "%@ — %@"
+            static let robustnessTestPassStatus  = "Pass"
+            static let robustnessTestFailStatus  = "Fail"
             static let genericErrorBody          = "Something went wrong."
         }
 

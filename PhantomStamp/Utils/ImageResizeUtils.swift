@@ -17,6 +17,32 @@ enum ImageResizeUtils {
         var id: String { rawValue }
     }
 
+    /// Output size after uniform isotropic scaling.
+    static func previewOutputSize(sourceWidth: Int, sourceHeight: Int, scaleFactor: Double) -> (width: Int, height: Int)? {
+        guard sourceWidth > 0, sourceHeight > 0, scaleFactor > 0 else { return nil }
+        let outW = max(1, Int((Double(sourceWidth) * scaleFactor).rounded()))
+        let outH = max(1, Int((Double(sourceHeight) * scaleFactor).rounded()))
+        return (outW, outH)
+    }
+
+    /// Uniform isotropic scale. Output uses `scale = 1`.
+    static func resize(image: UIImage, scaleFactor: Double) -> UIImage? {
+        let srcW = Int((image.size.width * image.scale).rounded())
+        let srcH = Int((image.size.height * image.scale).rounded())
+        guard let preview = previewOutputSize(sourceWidth: srcW, sourceHeight: srcH, scaleFactor: scaleFactor) else {
+            return nil
+        }
+        let size = CGSize(width: preview.width, height: preview.height)
+        let format = UIGraphicsImageRendererFormat()
+        format.scale = 1.0
+        format.opaque = false
+        let renderer = UIGraphicsImageRenderer(size: size, format: format)
+        return renderer.image { context in
+            context.cgContext.interpolationQuality = .medium
+            image.draw(in: CGRect(origin: .zero, size: size))
+        }
+    }
+
     /// Computes the output pixel size without rendering — useful for live UI previews.
     static func previewOutputSize(
         sourceWidth: Int,

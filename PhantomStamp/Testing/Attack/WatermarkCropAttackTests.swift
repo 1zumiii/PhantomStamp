@@ -2,179 +2,432 @@
 //  WatermarkCropAttackTests.swift
 //  PhantomStamp
 //
-//  Manual / DEBUG validation:
-//  - embed watermark into bundled TestImg
-//  - crop away right 10% of the watermarked image
-//  - save the cropped (attacked) image to system photo library
-//  - extract watermark from the cropped image
+//  Manual / DEBUG validation focused on edge-crop resistance.
+//  Uses the app's live `WatermarkService` + `UserSettingsStore` (see harness).
 //
 
 import Foundation
 import UIKit
 
 enum WatermarkCropAttackTests {
-    enum CropKind: String, Sendable {
-        case right10 = "right10%"
-        case left10 = "left10%"
-        case top10 = "top10%"
+
+    enum CropKind: String, Sendable, CaseIterable, Identifiable {
+        case top
+        case bottom
+        case left
+        case right
+        case topLeft
+        case topRight
+        case bottomLeft
+        case bottomRight
+
+        var id: String { rawValue }
+
+        var displayName: String {
+            switch self {
+            case .top: "Top"
+            case .bottom: "Bottom"
+            case .left: "Left"
+            case .right: "Right"
+            case .topLeft: "Top left"
+            case .topRight: "Top right"
+            case .bottomLeft: "Bottom left"
+            case .bottomRight: "Bottom right"
+            }
+        }
+    }
+
+    struct BasicReport: Sendable {
+        var imageLoaded: Bool
+        var embedSucceeded: Bool
+        var cropSucceeded: Bool
+        var extractSucceeded: Bool
+        var textRoundTripPassed: Bool
+
+        var kind: CropKind
+        var cropPercent: Double
+        var extractedText: String?
+        var cropPx: (w: Int, h: Int)?
     }
 
     struct CaseReport: Sendable {
         var kind: CropKind
         var embedSucceeded: Bool
         var cropSucceeded: Bool
-        var saveSucceeded: Bool
         var extractSucceeded: Bool
         var textRoundTripPassed: Bool
-
         var extractedText: String?
         var cropPx: (w: Int, h: Int)?
     }
 
     struct Report: Sendable {
         var imageLoaded: Bool
+        var embedSucceeded: Bool
         var cases: [CaseReport]
     }
 
-    /// Runs 3 crop-attack cases:
-    /// - crop away right 10%
-    /// - crop away left 10%
-    /// - crop away top 10%
-    ///
-    /// Each case saves the attacked image to Photo Library (best-effort), then extracts watermark.
-    static func runAllCrop10PercentOnBundledTestImg() async -> Report {
+    struct AttackCase: Sendable {
+        var kind: CropKind
+        var cropPercent: Double
+        var cropPx: (w: Int, h: Int)?
+        var extractSucceeded: Bool
+        var textRoundTripPassed: Bool
+        var extractedText: String?
+        var passed: Bool
+    }
+
+    struct SweepReport: Sendable {
+        var imageLoaded: Bool
+        var embedSucceeded: Bool
+        var identityExtractPassed: Bool
+        var kind: CropKind
+        var cases: [AttackCase]
+        var maxPassingCropPercent: Double?
+        var firstFailingCropPercent: Double?
+    }
+
+    typealias LimitCase = AttackCase
+    typealias LimitSweepReport = SweepReport
+
+  // MARK: - Test 1: Single-Point Crop
+
+    static func runBasicCropOnBundledTestImg(
+        service: WatermarkService,
+        settingsStore: UserSettingsStore,
+        kind: CropKind = .right,
+        percent: Double = 0.10
+    ) async -> BasicReport {
         guard let img = ImagePipelineTests.loadBundledTestUIImage() else {
-            return Report(imageLoaded: false, cases: [])
+            return BasicReport(
+                imageLoaded: false, embedSucceeded: false, cropSucceeded: false,
+                extractSucceeded: false, textRoundTripPassed: false,
+                kind: kind, cropPercent: percent, extractedText: nil, cropPx: nil
+            )
         }
 
-        let text = "Successful"
-        let service = WatermarkService()
+        let expectedText = "Successful"
 
-        // Embed once, reuse the watermarked image for all crop cases.
         let watermarked: UIImage
         do {
-            watermarked = try await service.embedWatermark(into: img, text: text)
+            watermarked = try await WatermarkAttackTestHarness.embedForAttackTest(
+                service: service, settingsStore: settingsStore, image: img, text: expectedText
+            )
         } catch {
-            let failCases = [CropKind.right10, .left10, .top10].map {
+            return BasicReport(
+                imageLoaded: true, embedSucceeded: false, cropSucceeded: false,
+                extractSucceeded: false, textRoundTripPassed: false,
+                kind: kind, cropPercent: percent, extractedText: nil, cropPx: nil
+            )
+        }
+
+        guard let cropped = crop(image: watermarked, kind: kind, percent: percent) else {
+            return BasicReport(
+                imageLoaded: true, embedSucceeded: true, cropSucceeded: false,
+                extractSucceeded: false, textRoundTripPassed: false,
+                kind: kind, cropPercent: percent, extractedText: nil, cropPx: nil
+            )
+        }
+
+        let px = WatermarkAttackTestHarness.pixelSize(of: cropped)
+
+        do {
+            let extracted = try await service.extractWatermarkSilently(from: cropped)
+            return BasicReport(
+                imageLoaded: true, embedSucceeded: true, cropSucceeded: true,
+                extractSucceeded: true, textRoundTripPassed: (extracted == expectedText),
+                kind: kind, cropPercent: percent, extractedText: extracted, cropPx: px
+            )
+        } catch {
+            return BasicReport(
+                imageLoaded: true, embedSucceeded: true, cropSucceeded: true,
+                extractSucceeded: false, textRoundTripPassed: false,
+                kind: kind, cropPercent: percent, extractedText: nil, cropPx: px
+            )
+        }
+    }
+
+    static func runRightCrop10PercentOnBundledTestImg(
+        service: WatermarkService,
+        settingsStore: UserSettingsStore
+    ) async -> CaseReport {
+        let r = await runBasicCropOnBundledTestImg(
+            service: service, settingsStore: settingsStore, kind: .right, percent: 0.10
+        )
+        return CaseReport(
+            kind: r.kind,
+            embedSucceeded: r.embedSucceeded,
+            cropSucceeded: r.cropSucceeded,
+            extractSucceeded: r.extractSucceeded,
+            textRoundTripPassed: r.textRoundTripPassed,
+            extractedText: r.extractedText,
+            cropPx: r.cropPx
+        )
+    }
+
+  // MARK: - Test 2: All Directions at 10%
+
+    static func runAllCrop10PercentOnBundledTestImg(
+        service: WatermarkService,
+        settingsStore: UserSettingsStore
+    ) async -> Report {
+        guard let img = ImagePipelineTests.loadBundledTestUIImage() else {
+            return Report(imageLoaded: false, embedSucceeded: false, cases: [])
+        }
+
+        let expectedText = "Successful"
+
+        let watermarked: UIImage
+        do {
+            watermarked = try await WatermarkAttackTestHarness.embedForAttackTest(
+                service: service, settingsStore: settingsStore, image: img, text: expectedText
+            )
+        } catch {
+            let failCases = CropKind.allCases.map {
                 CaseReport(
-                    kind: $0,
-                    embedSucceeded: false,
-                    cropSucceeded: false,
-                    saveSucceeded: false,
-                    extractSucceeded: false,
-                    textRoundTripPassed: false,
-                    extractedText: nil,
-                    cropPx: nil
+                    kind: $0, embedSucceeded: false, cropSucceeded: false,
+                    extractSucceeded: false, textRoundTripPassed: false,
+                    extractedText: nil, cropPx: nil
                 )
             }
-            return Report(imageLoaded: true, cases: failCases)
+            return Report(imageLoaded: true, embedSucceeded: false, cases: failCases)
         }
 
         var out: [CaseReport] = []
-        out.reserveCapacity(3)
+        out.reserveCapacity(CropKind.allCases.count)
 
-        let kinds: [CropKind] = [.right10, .left10, .top10]
-        var croppedImages: [UIImage?] = []
-        croppedImages.reserveCapacity(kinds.count)
-        var saveSucceededByKind: [CropKind: Bool] = [:]
-        var cropPxByKind: [CropKind: (w: Int, h: Int)] = [:]
-
-        for kind in kinds {
+        for kind in CropKind.allCases {
             guard let cropped = crop(image: watermarked, kind: kind, percent: 0.10) else {
-                croppedImages.append(nil)
+                out.append(CaseReport(
+                    kind: kind, embedSucceeded: true, cropSucceeded: false,
+                    extractSucceeded: false, textRoundTripPassed: false,
+                    extractedText: nil, cropPx: nil
+                ))
                 continue
             }
-            croppedImages.append(cropped)
 
-            let pxW = Int(cropped.size.width * cropped.scale)
-            let pxH = Int(cropped.size.height * cropped.scale)
-            cropPxByKind[kind] = (pxW, pxH)
-
-            var saveSucceeded = false
-            do {
-                try await PhotoLibraryExporter.saveToPhotoLibrary(cropped)
-                saveSucceeded = true
-            } catch {
-                saveSucceeded = false
-            }
-            saveSucceededByKind[kind] = saveSucceeded
+            let px = WatermarkAttackTestHarness.pixelSize(of: cropped)
+            let extracted = try? await service.extractWatermarkSilently(from: cropped)
+            out.append(CaseReport(
+                kind: kind,
+                embedSucceeded: true,
+                cropSucceeded: true,
+                extractSucceeded: (extracted != nil),
+                textRoundTripPassed: (extracted == expectedText),
+                extractedText: extracted,
+                cropPx: px
+            ))
         }
 
-        let imagesForBatch = croppedImages.compactMap { $0 }
-        let extractedBatch = await service.extractWatermarkBestEffort(from: imagesForBatch)
-        var extractedIter = extractedBatch.makeIterator()
+        return Report(imageLoaded: true, embedSucceeded: true, cases: out)
+    }
 
-        for kind in kinds {
-            if croppedImages[kinds.firstIndex(of: kind) ?? 0] != nil {
-                let extracted = extractedIter.next() ?? nil
-                let saveOk = saveSucceededByKind[kind] ?? false
-                let cropPx = cropPxByKind[kind]
-                out.append(
-                    CaseReport(
-                        kind: kind,
-                        embedSucceeded: true,
-                        cropSucceeded: true,
-                        saveSucceeded: saveOk,
-                        extractSucceeded: (extracted != nil),
-                        textRoundTripPassed: (extracted == text),
-                        extractedText: extracted,
-                        cropPx: cropPx
-                    )
-                )
-            } else {
-                out.append(
-                    CaseReport(
-                        kind: kind,
-                        embedSucceeded: true,
-                        cropSucceeded: false,
-                        saveSucceeded: false,
-                        extractSucceeded: false,
-                        textRoundTripPassed: false,
-                        extractedText: nil,
-                        cropPx: nil
-                    )
-                )
-            }
+  // MARK: - Test 3: Smart Boundary Sweep
+
+    static func runCropPercentLimitSweepOnBundledTestImg(
+        service: WatermarkService,
+        settingsStore: UserSettingsStore,
+        kind: CropKind,
+        coarsePercents: [Double] = [0.0, 0.05, 0.10, 0.15, 0.20, 0.25, 0.30, 0.35, 0.40, 0.45, 0.50],
+        fineStep: Double = 0.01
+    ) async -> SweepReport {
+        guard let img = ImagePipelineTests.loadBundledTestUIImage() else {
+            return SweepReport(
+                imageLoaded: false, embedSucceeded: false, identityExtractPassed: false,
+                kind: kind, cases: [], maxPassingCropPercent: nil, firstFailingCropPercent: nil
+            )
         }
 
-        return Report(imageLoaded: true, cases: out)
+        let expectedText = "Successful"
+
+        let watermarked: UIImage
+        do {
+            watermarked = try await WatermarkAttackTestHarness.embedForAttackTest(
+                service: service, settingsStore: settingsStore, image: img, text: expectedText
+            )
+        } catch {
+            return SweepReport(
+                imageLoaded: true, embedSucceeded: false, identityExtractPassed: false,
+                kind: kind, cases: [], maxPassingCropPercent: nil, firstFailingCropPercent: nil
+            )
+        }
+
+        try? await PhotoLibraryExporter.saveToPhotoLibrary(watermarked)
+
+        let identityExtracted = try? await service.extractWatermarkSilently(from: watermarked)
+        let identityPassed = (identityExtracted == expectedText)
+        #if DEBUG
+        print("[WatermarkCropAttackTests] identity extract \(identityPassed ? "PASS" : "FAIL") text=\(identityExtracted ?? "nil")")
+        #endif
+
+        func evaluate(percent: Double) async -> AttackCase {
+            guard let cropped = crop(image: watermarked, kind: kind, percent: percent) else {
+                return AttackCase(
+                    kind: kind, cropPercent: percent, cropPx: nil,
+                    extractSucceeded: false, textRoundTripPassed: false,
+                    extractedText: nil, passed: false
+                )
+            }
+            let extracted = try? await service.extractWatermarkSilently(from: cropped)
+            let ok = (extracted == expectedText)
+            return AttackCase(
+                kind: kind,
+                cropPercent: percent,
+                cropPx: WatermarkAttackTestHarness.pixelSize(of: cropped),
+                extractSucceeded: (extracted != nil),
+                textRoundTripPassed: ok,
+                extractedText: extracted,
+                passed: ok
+            )
+        }
+
+        func sweepDirection(coarseSteps: [Double], fineStep: Double) async -> [AttackCase] {
+            var results: [AttackCase] = []
+            var consecutiveFails = 0
+            var highestPassIndex = -1
+
+            for (i, pct) in coarseSteps.enumerated() {
+                let res = await evaluate(percent: pct)
+                results.append(res)
+
+                if res.passed {
+                    consecutiveFails = 0
+                    highestPassIndex = i
+                } else {
+                    consecutiveFails += 1
+                    if consecutiveFails >= 2 { break }
+                }
+            }
+
+            if highestPassIndex >= 0 {
+                let lastPassVal = coarseSteps[highestPassIndex]
+                let direction = (coarseSteps.last! > coarseSteps.first!) ? 1.0 : -1.0
+                var currentFine = lastPassVal + (fineStep * direction)
+                var fineFails = 0
+
+                while fineFails < 2 {
+                    if results.count > 100 { break }
+
+                    let pctKey = roundedPercent(currentFine)
+                    if let existing = results.first(where: { abs($0.cropPercent - pctKey) < 1e-4 }) {
+                        if existing.passed { fineFails = 0 } else { fineFails += 1 }
+                    } else {
+                        let res = await evaluate(percent: currentFine)
+                        results.append(res)
+                        if res.passed { fineFails = 0 } else { fineFails += 1 }
+                    }
+                    currentFine += (fineStep * direction)
+                }
+            }
+
+            return results
+        }
+
+        let allCases = await sweepDirection(coarseSteps: coarsePercents, fineStep: fineStep)
+        let sortedCases = allCases.sorted { $0.cropPercent > $1.cropPercent }
+
+        let passingPercents = sortedCases.filter(\.passed).map(\.cropPercent)
+        let maxPass = passingPercents.max()
+        let firstFail: Double? = {
+            guard let pass = maxPass else { return nil }
+            return sortedCases
+                .filter { $0.cropPercent > pass && !$0.passed }
+                .map(\.cropPercent)
+                .min()
+        }()
+
+        if let passPct = maxPass,
+           let cropped = crop(image: watermarked, kind: kind, percent: passPct) {
+            try? await PhotoLibraryExporter.saveToPhotoLibrary(cropped)
+        }
+        if let failPct = firstFail,
+           let failImg = crop(image: watermarked, kind: kind, percent: failPct) {
+            try? await PhotoLibraryExporter.saveToPhotoLibrary(failImg)
+        }
+
+        return SweepReport(
+            imageLoaded: true,
+            embedSucceeded: true,
+            identityExtractPassed: identityPassed,
+            kind: kind,
+            cases: sortedCases,
+            maxPassingCropPercent: maxPass,
+            firstFailingCropPercent: firstFail
+        )
     }
 
-    /// Backward-compatible entry for the previous single-case test.
-    static func runRightCrop10PercentOnBundledTestImg() async -> CaseReport {
-        let r = await runAllCrop10PercentOnBundledTestImg()
-        return r.cases.first(where: { $0.kind == .right10 })
-            ?? CaseReport(kind: .right10, embedSucceeded: false, cropSucceeded: false, saveSucceeded: false, extractSucceeded: false, textRoundTripPassed: false, extractedText: nil, cropPx: nil)
-    }
+  // MARK: - Attack Helpers
 
-    /// Crop image using pixel-precise `cgImage` cropping.
+    /// Pixel-exact `cgImage` crop. `percent == 0` returns the image unchanged (no re-render).
     private static func crop(image: UIImage, kind: CropKind, percent: Double) -> UIImage? {
-        guard percent > 0, percent < 1 else { return image }
+        if percent == 0 { return image }
+        guard percent > 0, percent < 1 else { return nil }
         guard let cg = image.cgImage else { return nil }
 
-        // `cgImage` dimensions are already in pixels.
         let w = cg.width
         let h = cg.height
+        let cutW = max(0, Int(Double(w) * percent))
+        let cutH = max(0, Int(Double(h) * percent))
 
         let rect: CGRect
         switch kind {
-        case .right10:
-            let newW = max(1, Int(Double(w) * (1.0 - percent)))
-            rect = CGRect(x: 0, y: 0, width: newW, height: h)
-        case .left10:
-            let cut = max(0, Int(Double(w) * percent))
-            let newW = max(1, w - cut)
-            rect = CGRect(x: cut, y: 0, width: newW, height: h)
-        case .top10:
-            let cut = max(0, Int(Double(h) * percent))
-            let newH = max(1, h - cut)
-            // `cgImage.cropping` uses pixel coordinates with origin at top-left for the image data buffer,
-            // so cropping "top" means shifting `y` down and keeping the lower portion.
-            rect = CGRect(x: 0, y: cut, width: w, height: newH)
+        case .right:
+            rect = CGRect(x: 0, y: 0, width: max(1, w - cutW), height: h)
+        case .left:
+            rect = CGRect(x: cutW, y: 0, width: max(1, w - cutW), height: h)
+        case .top:
+            rect = CGRect(x: 0, y: cutH, width: w, height: max(1, h - cutH))
+        case .bottom:
+            rect = CGRect(x: 0, y: 0, width: w, height: max(1, h - cutH))
+        case .topLeft:
+            rect = CGRect(x: cutW, y: cutH, width: max(1, w - cutW), height: max(1, h - cutH))
+        case .topRight:
+            rect = CGRect(x: 0, y: cutH, width: max(1, w - cutW), height: max(1, h - cutH))
+        case .bottomLeft:
+            rect = CGRect(x: cutW, y: 0, width: max(1, w - cutW), height: max(1, h - cutH))
+        case .bottomRight:
+            rect = CGRect(x: 0, y: 0, width: max(1, w - cutW), height: max(1, h - cutH))
         }
 
         guard let croppedCG = cg.cropping(to: rect) else { return nil }
-        return UIImage(cgImage: croppedCG, scale: image.scale, orientation: image.imageOrientation)
+        return UIImage(cgImage: croppedCG, scale: 1.0, orientation: .up)
+    }
+
+    private static func roundedPercent(_ value: Double) -> Double {
+        (value * 1000).rounded() / 1000
+    }
+
+  // MARK: - DEBUG print
+
+    static func runBasicAndPrint(
+        service: WatermarkService,
+        settingsStore: UserSettingsStore,
+        kind: CropKind = .right,
+        percent: Double = 0.10
+    ) async {
+        #if DEBUG
+        let r = await runBasicCropOnBundledTestImg(
+            service: service, settingsStore: settingsStore, kind: kind, percent: percent
+        )
+        let ok = r.imageLoaded && r.embedSucceeded && r.cropSucceeded
+            && r.extractSucceeded && r.textRoundTripPassed
+        print("[WatermarkCropAttackTests] \(ok ? "PASS" : "FAIL") \(kind.displayName) \(String(format: "%.0f%%", percent * 100)) text=\(r.extractedText ?? "nil")")
+        #endif
+    }
+
+    static func runLimitSweepAndPrint(
+        service: WatermarkService,
+        settingsStore: UserSettingsStore,
+        kind: CropKind = .right
+    ) async {
+        #if DEBUG
+        let r = await runCropPercentLimitSweepOnBundledTestImg(
+            service: service, settingsStore: settingsStore, kind: kind
+        )
+        let maxPass = r.maxPassingCropPercent.map { String(format: "%.1f%%", $0 * 100) } ?? "none"
+        print("[WatermarkCropAttackTests] LimitSweep identity=\(r.identityExtractPassed ? "PASS" : "FAIL") \(kind.displayName) maxPass=\(maxPass) cases=\(r.cases.count)")
+        for c in r.cases {
+            print("  - crop=\(String(format: "%.1f%%", c.cropPercent * 100)) \(c.passed ? "PASS" : "FAIL") extracted=\(c.extractedText ?? "nil")")
+        }
+        #endif
     }
 }
-

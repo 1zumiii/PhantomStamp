@@ -198,7 +198,7 @@ struct WatermarkInsertView: View {
                         .padding(.horizontal, 18)
                     }
                     .frame(maxWidth: .infinity)
-                    .frame(height: 320)
+                    .frame(height: 180)
                     .contentShape(Rectangle())
                 }
             )
