@@ -141,13 +141,6 @@ extension WatermarkService {
         let p2 = (u: 2, v: 1)
         let absA = abs(freqBlock[p1.u, p1.v])
         let absB = abs(freqBlock[p2.u, p2.v])
-
-        #if DEBUG
-        if isDebug {
-            print("[DCT_Probe] absA=\(String(format: "%6.1f", absA)), absB=\(String(format: "%6.1f", absB)) | Diff=\(String(format: "%+6.1f", absA - absB)) -> Bit:\(absA >= absB ? 1 : 0)")
-        }
-        #endif
-
         return absA - absB
     }
 

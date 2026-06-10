@@ -76,16 +76,6 @@ extension WatermarkService {
         performForwardFFT(matrix: &complexMatrix)
         let peaks = findSyncPeaks(in: complexMatrix)
         
-        #if DEBUG
-        print("========================================")
-        print("[SyncTemplate] executing frequency domain geometric detection...")
-        for (i, p) in peaks.prefix(4).enumerated() {
-            let r = sqrt(p.x * p.x + p.y * p.y)
-            let ang = atan2(p.y, p.x) * 180.0 / .pi
-            print("[SyncTemplate] Peak[\(i)] polar coordinates: r=\(String(format: "%.2f", r)), θ=\(String(format: "%+7.2f°", ang)) | Cartesian coordinates: (x=\(String(format: "%+6.2f", p.x)), y=\(String(format: "%+6.2f", p.y)))")
-        }
-        #endif
-        
         guard !peaks.isEmpty else {
             #if DEBUG
             print("[SyncTemplate] fatal error: no valid peaks found, returning Identity (0°, 1.0x)")

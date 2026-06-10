@@ -4,8 +4,8 @@
 //
 //  Manual / DEBUG validation:
 //  - embed watermark into bundled TestImg
-//  - JPEG recompress at a "medium" quality
-//  - save the recompressed (attacked) image to system photo library
+//  - JPEG recompress at varying qualities
+//  - save boundary images to system photo library
 //  - extract watermark from the recompressed image
 //
 
@@ -50,6 +50,7 @@ enum WatermarkCompressionAttackTests {
         var extractSucceeded: Bool
         var textRoundTripPassed: Bool
         var extractedText: String?
+        var passed: Bool
     }
 
     struct SweepReport: Sendable {
@@ -160,13 +161,18 @@ enum WatermarkCompressionAttackTests {
         }
     }
 
-    /// Sweeps multiple JPEG qualities (from high to low) and finds the extraction limit.
+    /// Smart boundary scan: coarse sweep from high → low quality, then fine drill-down.
     ///
-    /// - Saves to Photo Library:
+    /// Mirrors `SyncTemplateGeometricAttackTests.sweepDirection`: tolerates one consecutive
+    /// failure in the coarse phase (encoder / interpolation noise), then steps outward with a
+    /// small quality decrement to locate the exact breakdown boundary.
+    ///
+    /// Saves to Photo Library:
     ///   - the lowest passing attacked image (if any)
     ///   - the first failing attacked image after the last pass (if any)
     static func runJpegQualityLimitSweepOnBundledTestImg(
-        qualities: [Double] = [0.90, 0.80, 0.70, 0.60, 0.50, 0.40, 0.35, 0.30, 0.25, 0.20, 0.15, 0.10]
+        coarseQualities: [Double] = [0.95, 0.90, 0.80, 0.70, 0.60, 0.50, 0.40, 0.35, 0.30, 0.25, 0.20, 0.15, 0.10, 0.05],
+        fineStep: Double = 0.01
     ) async -> SweepReport {
         guard let img = ImagePipelineTests.loadBundledTestUIImage() else {
             return SweepReport(imageLoaded: false, embedSucceeded: false, cases: [], lowestPassingQuality: nil, firstFailingQuality: nil)
@@ -183,152 +189,107 @@ enum WatermarkCompressionAttackTests {
             return SweepReport(imageLoaded: true, embedSucceeded: false, cases: [], lowestPassingQuality: nil, firstFailingQuality: nil)
         }
 
-        // Helper to test a single quality. Returns (case, attackedImage?).
-        func testQuality(_ q0: Double) async -> (quality: Double, jpegBytes: Int, attacked: UIImage?) {
+        func evaluate(quality q0: Double) async -> (case: SweepCase, attacked: UIImage?) {
             let q = ImageCompressionUtils.clampQuality(q0)
             guard let recompressed = ImageCompressionUtils.recompressJPEG(image: watermarked, quality: q) else {
-                return (quality: q, jpegBytes: 0, attacked: nil)
+                let failCase = SweepCase(
+                    quality: q, jpegBytes: 0, saveSucceeded: false,
+                    extractSucceeded: false, textRoundTripPassed: false,
+                    extractedText: nil, passed: false
+                )
+                return (failCase, nil)
             }
             let attacked = recompressed.image
-            let jpegBytes = recompressed.jpegBytes
-            return (quality: q, jpegBytes: jpegBytes, attacked: attacked)
-        }
-
-        var casesByQuality: [Double: SweepCase] = [:]
-        var imageByQuality: [Double: UIImage] = [:]
-
-        var lastPassQ: Double?
-        var lastPassImage: UIImage?
-        var firstFailQAfterPass: Double?
-        var firstFailImageAfterPass: UIImage?
-
-        // 1) Coarse sweep (user-visible list).
-        for q0 in qualities {
-            let r = await testQuality(q0)
-            if let img = r.attacked {
-                imageByQuality[r.quality] = img
-            }
-            casesByQuality[r.quality] = SweepCase(
-                quality: r.quality,
-                jpegBytes: r.jpegBytes,
-                saveSucceeded: false, // boundary images are saved later
-                extractSucceeded: false,
-                textRoundTripPassed: false,
-                extractedText: nil
-            )
-        }
-
-        // Batch extract (best effort) for the coarse sweep.
-        let orderedQualities = qualities.map(ImageCompressionUtils.clampQuality)
-        let orderedImages: [UIImage] = orderedQualities.compactMap { imageByQuality[$0] }
-        let extractedBatch = await service.extractWatermarkBestEffort(from: orderedImages)
-        var extractedIter = extractedBatch.makeIterator()
-
-        for q in orderedQualities {
-            guard imageByQuality[q] != nil else { continue }
-            let extracted = extractedIter.next() ?? nil
+            let extracted = try? await service.extractWatermark(from: attacked)
             let ok = (extracted == expectedText)
-            casesByQuality[q] = SweepCase(
+            let sweepCase = SweepCase(
                 quality: q,
-                jpegBytes: casesByQuality[q]?.jpegBytes ?? 0,
+                jpegBytes: recompressed.jpegBytes,
                 saveSucceeded: false,
                 extractSucceeded: (extracted != nil),
                 textRoundTripPassed: ok,
-                extractedText: extracted
+                extractedText: extracted,
+                passed: ok
             )
-            if ok {
-                lastPassQ = q
-                lastPassImage = imageByQuality[q]
-            } else if lastPassQ != nil, firstFailQAfterPass == nil {
-                firstFailQAfterPass = q
-                firstFailImageAfterPass = imageByQuality[q]
-            }
+            return (sweepCase, attacked)
         }
 
-        // 2) Refine between the last passing and first failing quality using binary search.
-        //
-        // Example: pass=0.60, fail=0.50 -> probe 0.55, 0.575, ...
-        if let passQ = lastPassQ, let failQ = firstFailQAfterPass, failQ < passQ {
-            var hi = passQ
-            var lo = failQ
-            var bestPassQ = passQ
-            var bestPassImg = lastPassImage
-            var bestFailQ = failQ
-            var bestFailImg = firstFailImageAfterPass
+        func sweepDirection(coarseSteps: [Double], fineStep: Double) async -> [SweepCase] {
+            var results: [SweepCase] = []
+            var imageByQuality: [Double: UIImage] = [:]
+            var consecutiveFails = 0
+            var highestPassIndex = -1
 
-            let targetResolution: Double = 0.01
-            var iter = 0
-            while (hi - lo) > targetResolution, iter < 12 {
-                iter += 1
-                let mid = (hi + lo) / 2.0
-                // Round to 3 decimals to reduce duplicate encoder rounding noise.
-                let midQ = (mid * 1000).rounded() / 1000
-                if casesByQuality[midQ] != nil {
-                    // Already tested this exact value.
-                    if casesByQuality[midQ]?.textRoundTripPassed == true {
-                        hi = midQ
-                        bestPassQ = midQ
-                        bestPassImg = imageByQuality[midQ]
+            // 1. Coarse sweep (high → low quality).
+            for (i, q0) in coarseSteps.enumerated() {
+                let r = await evaluate(quality: q0)
+                results.append(r.case)
+                if let img = r.attacked { imageByQuality[r.case.quality] = img }
+
+                if r.case.passed {
+                    consecutiveFails = 0
+                    highestPassIndex = i
+                } else {
+                    consecutiveFails += 1
+                    if consecutiveFails >= 2 { break }
+                }
+            }
+
+            // 2. Fine sweep (drill down past the last pass).
+            if highestPassIndex >= 0 {
+                let lastPassVal = coarseSteps[highestPassIndex]
+                let direction = (coarseSteps.last! > coarseSteps.first!) ? 1.0 : -1.0
+                var currentFine = lastPassVal + (fineStep * direction)
+                var fineFails = 0
+
+                while fineFails < 2 {
+                    if results.count > 100 { break }
+
+                    let qKey = ImageCompressionUtils.clampQuality(currentFine)
+                    if let existing = results.first(where: { abs($0.quality - qKey) < 1e-4 }) {
+                        if existing.passed { fineFails = 0 } else { fineFails += 1 }
                     } else {
-                        lo = midQ
-                        bestFailQ = midQ
-                        bestFailImg = imageByQuality[midQ]
+                        let r = await evaluate(quality: currentFine)
+                        results.append(r.case)
+                        if let img = r.attacked { imageByQuality[r.case.quality] = img }
+                        if r.case.passed { fineFails = 0 } else { fineFails += 1 }
                     }
-                    continue
-                }
-
-                let r = await testQuality(midQ)
-                if let img = r.attacked { imageByQuality[r.quality] = img }
-
-                // Keep refine step simple: single extract is fine for just a few probes.
-                let extracted: String?
-                if let img = r.attacked {
-                    extracted = try? await service.extractWatermark(from: img)
-                } else {
-                    extracted = nil
-                }
-                let ok = (extracted == expectedText)
-                casesByQuality[r.quality] = SweepCase(
-                    quality: r.quality,
-                    jpegBytes: r.jpegBytes,
-                    saveSucceeded: false,
-                    extractSucceeded: (extracted != nil),
-                    textRoundTripPassed: ok,
-                    extractedText: extracted
-                )
-
-                if ok {
-                    hi = r.quality
-                    bestPassQ = r.quality
-                    bestPassImg = r.attacked
-                } else {
-                    lo = r.quality
-                    bestFailQ = r.quality
-                    bestFailImg = r.attacked
+                    currentFine += (fineStep * direction)
                 }
             }
 
-            lastPassQ = bestPassQ
-            lastPassImage = bestPassImg
-            firstFailQAfterPass = bestFailQ
-            firstFailImageAfterPass = bestFailImg
+            return results
         }
+
+        let allCases = await sweepDirection(coarseSteps: coarseQualities, fineStep: fineStep)
+        let sortedCases = allCases.sorted { $0.quality > $1.quality }
+
+        let passingCases = sortedCases.filter(\.passed)
+        let lowestPassQ = passingCases.map(\.quality).min()
+        let firstFailQ: Double? = {
+            guard let lowest = lowestPassQ else { return nil }
+            return sortedCases
+                .filter { $0.quality < lowest && !$0.passed }
+                .map(\.quality)
+                .max()
+        }()
 
         // Save boundary images (best effort).
-        if let img = lastPassImage {
-            try? await PhotoLibraryExporter.saveToPhotoLibrary(img)
+        if let passQ = lowestPassQ,
+           let recompressed = ImageCompressionUtils.recompressJPEG(image: watermarked, quality: passQ) {
+            try? await PhotoLibraryExporter.saveToPhotoLibrary(recompressed.image)
         }
-        if let img = firstFailImageAfterPass {
-            try? await PhotoLibraryExporter.saveToPhotoLibrary(img)
+        if let failQ = firstFailQ,
+           let recompressed = ImageCompressionUtils.recompressJPEG(image: watermarked, quality: failQ) {
+            try? await PhotoLibraryExporter.saveToPhotoLibrary(recompressed.image)
         }
 
-        let orderedCases = casesByQuality.values.sorted { $0.quality > $1.quality }
         return SweepReport(
             imageLoaded: true,
             embedSucceeded: true,
-            cases: orderedCases,
-            lowestPassingQuality: lastPassQ,
-            firstFailingQuality: firstFailQAfterPass
+            cases: sortedCases,
+            lowestPassingQuality: lowestPassQ,
+            firstFailingQuality: firstFailQ
         )
     }
 }
