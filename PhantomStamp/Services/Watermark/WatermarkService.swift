@@ -319,7 +319,7 @@ class WatermarkService: WatermarkServiceProtocol {
                 embedVisited8x8BlockCount: embedVisited8x8Blocks,
                 embedSmoothSkipped8x8BlockCount: embedSmoothSkipped8x8Blocks
             )
-            if !shouldSuppressSingleOperationNotification {
+            if reportsProgressNotifications, !shouldSuppressSingleOperationNotification {
                 await deliverWatermarkNotificationIfAllowed {
                     await WatermarkOperationNotificationService.notifySingleEmbedFinished(success: true, error: nil)
                 }
@@ -341,7 +341,7 @@ class WatermarkService: WatermarkServiceProtocol {
                 embedVisited8x8BlockCount: nil,
                 embedSmoothSkipped8x8BlockCount: nil
             )
-            if !shouldSuppressSingleOperationNotification {
+            if reportsProgressNotifications, !shouldSuppressSingleOperationNotification {
                 await deliverWatermarkNotificationIfAllowed {
                     await WatermarkOperationNotificationService.notifySingleEmbedFinished(success: false, error: error)
                 }
@@ -569,7 +569,7 @@ class WatermarkService: WatermarkServiceProtocol {
                         startedAt: historyStarted,
                         work: work
                     )
-                    if !shouldSuppressSingleOperationNotification {
+                    if reportsProgressNotifications, !shouldSuppressSingleOperationNotification {
                         await deliverWatermarkNotificationIfAllowed {
                             await WatermarkOperationNotificationService.notifySingleExtractFinished(
                                 success: true,
@@ -598,7 +598,7 @@ class WatermarkService: WatermarkServiceProtocol {
                 startedAt: historyStarted,
                 work: extractWorkForHistory
             )
-            if !shouldSuppressSingleOperationNotification {
+            if reportsProgressNotifications, !shouldSuppressSingleOperationNotification {
                 await deliverWatermarkNotificationIfAllowed {
                     await WatermarkOperationNotificationService.notifySingleExtractFinished(success: false, extractedText: nil, error: error)
                 }

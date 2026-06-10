@@ -99,4 +99,14 @@ enum WatermarkOperationNotificationService {
         let body = String(format: AppConstants.Copy.WatermarkPush.batchExtractDoneBodyFormat, succeeded, failed)
         await scheduleImmediate(title: title, body: body)
     }
+
+
+    // MARK: - Robustness / limit tests (one summary per run)
+    static func notifyRobustnessTestFinished(testName: String, success: Bool, summary: String) async {
+        let status = success
+            ? AppConstants.Copy.WatermarkPush.robustnessTestPassStatus
+            : AppConstants.Copy.WatermarkPush.robustnessTestFailStatus
+        let title = String(format: AppConstants.Copy.WatermarkPush.robustnessTestDoneTitleFormat, testName, status)
+        await scheduleImmediate(title: title, body: trimBody(summary))
+    }
 }

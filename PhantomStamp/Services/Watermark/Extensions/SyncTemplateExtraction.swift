@@ -77,10 +77,6 @@ extension WatermarkService {
         let peaks = findSyncPeaks(in: complexMatrix)
         
         guard !peaks.isEmpty else {
-            #if DEBUG
-            print("[SyncTemplate] fatal error: no valid peaks found, returning Identity (0°, 1.0x)")
-            print("========================================")
-            #endif
             return (angle: 0.0, scale: 1.0)
         }
         
@@ -89,12 +85,6 @@ extension WatermarkService {
             originalRadius: WatermarkService.syncTemplateOriginalRadius,
             originalAngle: WatermarkService.syncTemplateOriginalAngleRadians
         )
-        
-        #if DEBUG
-        let deg = params.angle * 180.0 / .pi
-        print("[SyncTemplate] geometric inference completed: rotation angle = \(String(format: "%.3f°", deg)), scale factor = \(String(format: "%.4fx", params.scale))")
-        print("========================================")
-        #endif
         
         return params
     }
@@ -454,9 +444,6 @@ extension WatermarkService {
             let est = solve(peak)
             let angleDelta = atan2(sin(est.angle - reference.angle), cos(est.angle - reference.angle))
             guard abs(angleDelta) <= (1.0 * .pi / 180.0), abs(est.scale / reference.scale - 1.0) <= 0.02 else {
-                #if DEBUG
-                print("[SyncTemplate] peak rejected by consistency gate: angle=\(String(format: "%.3f°", est.angle * 180 / .pi)) scale=\(String(format: "%.4f", est.scale))")
-                #endif
                 continue
             }
             angleSum += est.angle

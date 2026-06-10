@@ -163,10 +163,9 @@ final class RobustnessTestingViewModel {
             RobustnessTestProgress.post(.compressionLimit, phase: "Analyzing sweep results…", percentage: 0.92)
 
             let ok = r.imageLoaded && r.embedSucceeded && (r.lowestPassingQuality != nil)
-            let status = ok ? "PASS" : "FAIL"
-            let lowest = r.lowestPassingQuality.map { String(format: "%.2f", $0) } ?? "nil"
-            let firstFail = r.firstFailingQuality.map { String(format: "%.2f", $0) } ?? "nil"
-            print("[TestPage] CompressionSweep \(status) lowestPass=\(lowest) firstFail=\(firstFail) cases=\(r.cases.count)")
+            let lowest = r.lowestPassingQuality.map { String(format: "%.2f", $0) } ?? "none"
+            let firstFail = r.firstFailingQuality.map { String(format: "%.2f", $0) } ?? "none"
+            print("[TestPage] CompressionSweep \(ok ? "PASS" : "FAIL") lowestPass=\(lowest) firstFail=\(firstFail) cases=\(r.cases.count)")
             for c in r.cases {
                 let mark = c.passed ? "PASS" : "FAIL"
                 print("  - q=\(String(format: "%.2f", c.quality)) \(mark) extracted=\(c.extractedText ?? "nil") bytes=\(c.jpegBytes)")
@@ -175,6 +174,10 @@ final class RobustnessTestingViewModel {
             if !ok {
                 present("Compression sweep failed. lowestPass=\(lowest)")
             }
+            return TestRunResult(
+                success: ok,
+                summary: "Lowest pass q=\(lowest), first fail q=\(firstFail) (\(r.cases.count) cases)."
+            )
         }
     }
 
@@ -185,10 +188,9 @@ final class RobustnessTestingViewModel {
             RobustnessTestProgress.post(.cropLimit, phase: "Analyzing \(selectedCropKind.displayName) edge…", percentage: 0.92)
 
             let ok = r.imageLoaded && r.embedSucceeded
-            let status = ok ? "RAN" : "FAIL"
             let maxPass = r.maxPassingCropPercent.map { String(format: "%.1f%%", $0 * 100) } ?? "none"
             let firstFail = r.firstFailingCropPercent.map { String(format: "%.1f%%", $0 * 100) } ?? "none"
-            print("[TestPage] CropSweep \(status) kind=\(r.kind.displayName) maxPass=\(maxPass) firstFail=\(firstFail) cases=\(r.cases.count)")
+            print("[TestPage] CropSweep \(ok ? "RAN" : "FAIL") kind=\(r.kind.displayName) maxPass=\(maxPass) firstFail=\(firstFail) cases=\(r.cases.count)")
             for c in r.cases {
                 let mark = c.passed ? "PASS" : "FAIL"
                 let px = c.cropPx.map { "\($0.w)x\($0.h)" } ?? "nil"
@@ -198,6 +200,10 @@ final class RobustnessTestingViewModel {
             if !ok {
                 present("Crop limit sweep failed to run (image load or embed failure).")
             }
+            return TestRunResult(
+                success: ok,
+                summary: "\(selectedCropKind.displayName): max pass \(maxPass), first fail \(firstFail)."
+            )
         }
     }
 
@@ -208,9 +214,7 @@ final class RobustnessTestingViewModel {
             RobustnessTestProgress.post(.multiFileEmbed, phase: "Finalizing batch…", percentage: 0.95)
 
             let ok = r.imageLoaded && r.embedSucceeded
-            let status = ok ? "PASS" : "FAIL"
-            print("[TestPage] MultiFileEmbed \(status) files=\(r.fileCount) totalMs=\(String(format: "%.2f", r.totalMs))")
-
+            print("[TestPage] MultiFileEmbed \(ok ? "PASS" : "FAIL") files=\(r.fileCount) totalMs=\(String(format: "%.2f", r.totalMs))")            
             if let outs = r.outputImages {
                 if let first = outs.first { await saveToSystemPhotoAlbumIfPossible(first) }
                 if outs.count > 1, let last = outs.last { await saveToSystemPhotoAlbumIfPossible(last) }
@@ -219,6 +223,10 @@ final class RobustnessTestingViewModel {
             if !ok {
                 present("Multi-file embed failed.")
             }
+            return TestRunResult(
+                success: ok,
+                summary: "Embedded \(r.fileCount) file(s) in \(String(format: "%.1f", r.totalMs)) ms."
+            )
         }
     }
 
@@ -230,20 +238,20 @@ final class RobustnessTestingViewModel {
             RobustnessTestProgress.post(.syncTemplateBasic, phase: "Running identity detector…", percentage: 0.85)
 
             let ok = r.imageLoaded && r.embedSucceeded && r.detectionRan && r.detectedIdentity
-            let status = ok ? "PASS" : "FAIL"
             let detAng = r.detectedAngleDegrees.map { String(format: "%.4f°", $0) } ?? "nil"
             let detSc = r.detectedScale.map { String(format: "%.6f", $0) } ?? "nil"
-            let px = r.watermarkedPx.map { "\($0.w)x\($0.h)px" } ?? "nil"
-            let tolA = SyncTemplateGeometricAttackTests.angleToleranceDegrees
-            let tolS = SyncTemplateGeometricAttackTests.scaleRelativeTolerance
-            print("[TestPage] SyncTemplateBasic \(status) intensity=\(String(format: "%.2f", intensity)) px=\(px) detected(angle=\(detAng), scale=\(detSc)) tol(|angle|≤\(String(format: "%.2f°", tolA)), |scale-1|≤\(String(format: "%.2f", tolS)))")
+            print("[TestPage] SyncTemplateBasic \(ok ? "PASS" : "FAIL") intensity=\(String(format: "%.2f", intensity)) detected(angle=\(detAng), scale=\(detSc))")     
             for (i, p) in r.topPeaks.enumerated() {
-                print("  - peak[\(i)] r=\(String(format: "%6.2f", p.radius)) θ=\(String(format: "%+7.2f°", p.angleDegrees)) (x=\(String(format: "%+6.2f", p.centeredX)), y=\(String(format: "%+6.2f", p.centeredY)))")
+                print("  - peak[\(i)] r=\(String(format: "%6.2f", p.radius)) θ=\(String(format: "%+7.2f°", p.angleDegrees))")
             }
 
             if !ok {
-                present("Sync template basic test failed. detected(angle=\(detAng), scale=\(detSc)). Top peak r=\(r.topPeaks.first.map { String(format: "%.1f", $0.radius) } ?? "nil").")
+                present("Sync template basic test failed. detected(angle=\(detAng), scale=\(detSc)).")
             }
+            return TestRunResult(
+                success: ok,
+                summary: "Detected angle=\(detAng), scale=\(detSc) at ±\(String(format: "%.1f", intensity)) LSB."
+            )
         }
     }
 
@@ -255,49 +263,61 @@ final class RobustnessTestingViewModel {
             RobustnessTestProgress.post(.syncTemplateSweep, phase: "Aggregating rotation & scale limits…", percentage: 0.94)
 
             let ok = r.imageLoaded && r.embedSucceeded
-            let status = ok ? "RAN" : "FAIL"
             let rotLimit = r.maxPassingAbsRotationDegrees.map { String(format: "±%.2f°", $0) } ?? "none"
             let minSc = r.minPassingScaleFactor.map { String(format: "%.3f", $0) } ?? "none"
             let maxSc = r.maxPassingScaleFactor.map { String(format: "%.3f", $0) } ?? "none"
-            let tolA = SyncTemplateGeometricAttackTests.angleToleranceDegrees
-            let tolS = SyncTemplateGeometricAttackTests.scaleRelativeTolerance
-            print("[TestPage] SyncTemplateSweep \(status) intensity=\(String(format: "%.2f", intensity)) rotationLimit=\(rotLimit) scaleRange=[\(minSc), \(maxSc)] tol(|angleErr|≤\(String(format: "%.2f°", tolA)), |scaleRelErr|≤\(String(format: "%.2f", tolS))) rotCases=\(r.rotationCases.count) scaleCases=\(r.scaleCases.count)")
-
+            print("[TestPage] SyncTemplateSweep \(ok ? "RAN" : "FAIL") rotationLimit=\(rotLimit) scaleRange=[\(minSc), \(maxSc)]")            
             for c in r.rotationCases {
-                let detAng = c.detectedAngleDegrees.map { String(format: "%.3f°", $0) } ?? "nil"
-                let detSc = c.detectedScale.map { String(format: "%.4f", $0) } ?? "nil"
-                let angErr = c.angleErrorDegrees.map { String(format: "%.3f°", $0) } ?? "nil"
-                let scErr = c.scaleRelativeError.map { String(format: "%.4f", $0) } ?? "nil"
                 let pass = c.passed ? "PASS" : "FAIL"
-                print("  - rotation \(String(format: "%+6.2f°", c.attackParam)) \(pass) detected(angle=\(detAng), scale=\(detSc)) err(angle=\(angErr), scaleRel=\(scErr)) topPeak r=\(c.topPeaks.first.map { String(format: "%.1f", $0.radius) } ?? "nil") θ=\(c.topPeaks.first.map { String(format: "%+.1f°", $0.angleDegrees) } ?? "nil")")
+                print("  - rotation \(String(format: "%+6.2f°", c.attackParam)) \(pass)")
             }
             for c in r.scaleCases {
-                let detAng = c.detectedAngleDegrees.map { String(format: "%.3f°", $0) } ?? "nil"
-                let detSc = c.detectedScale.map { String(format: "%.4f", $0) } ?? "nil"
-                let angErr = c.angleErrorDegrees.map { String(format: "%.3f°", $0) } ?? "nil"
-                let scErr = c.scaleRelativeError.map { String(format: "%.4f", $0) } ?? "nil"
                 let pass = c.passed ? "PASS" : "FAIL"
-                print("  - scale    \(String(format: "%5.3fx", c.attackParam)) \(pass) detected(angle=\(detAng), scale=\(detSc)) err(angle=\(angErr), scaleRel=\(scErr)) topPeak r=\(c.topPeaks.first.map { String(format: "%.1f", $0.radius) } ?? "nil") θ=\(c.topPeaks.first.map { String(format: "%+.1f°", $0.angleDegrees) } ?? "nil")")
+                print("  - scale \(String(format: "%5.3fx", c.attackParam)) \(pass)")
             }
-
             if !ok {
-                present("Sync template limit sweep failed to run (embed or image load failure).")
+            present("Sync template limit sweep failed to run (embed or image load failure).")
             }
+                        return TestRunResult(
+                success: ok,
+                summary: "Rotation \(rotLimit), scale [\(minSc), \(maxSc)]."
+            )
         }
     }
 
     // MARK: - Private
 
-    private func runTest(kind: RobustnessTestProgressPayload.Kind, operation: () async -> Void) async {
+    private struct TestRunResult {
+        var success: Bool
+        var summary: String
+    }
+    private func runTest(
+        kind: RobustnessTestProgressPayload.Kind,
+        operation: () async -> TestRunResult
+    ) async {
         isLoading = true
         defer { isLoading = false }
 
         RobustnessTestProgress.start(kind)
         defer { RobustnessTestProgress.end() }
 
-        await operation()
+        let result = await operation()
         RobustnessTestProgress.post(kind, phase: "Complete", percentage: 1.0)
+        await deliverTestResultNotificationIfAllowed(kind: kind, result: result)
     }
+
+    private func deliverTestResultNotificationIfAllowed(
+        kind: RobustnessTestProgressPayload.Kind,
+        result: TestRunResult
+    ) async {
+        guard settingsStore.watermarkOperationNotificationsEnabled else { return }
+        await WatermarkOperationNotificationService.notifyRobustnessTestFinished(
+            testName: kind.rawValue,
+            success: result.success,
+            summary: result.summary
+        )
+    }
+
 
     private func present(_ message: String, title: String = "Test Failed") {
         alertTitle = title
