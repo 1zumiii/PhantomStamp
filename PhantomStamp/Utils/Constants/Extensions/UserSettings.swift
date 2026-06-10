@@ -55,4 +55,12 @@ extension AppConstants {
         /// per-image via the slider on `RobustnessTestingView`.
         static let syncTemplateIntensity: Double = 5.0
     }
+
+    /// Converts the Settings “Embedding strength” slider (0–100%) into the global multiplier
+    /// passed to `adaptiveQuantizationStep`. Default 50% → 1.0 (baseline adaptive Q unchanged).
+    static func embeddingStrengthMultiplier(for strengthPercent: Double) -> Float {
+        let baseline = SettingsDefault.embeddingStrength
+        guard baseline > 0 else { return 1.0 }
+        return Float(strengthPercent / baseline)
+    }
 }

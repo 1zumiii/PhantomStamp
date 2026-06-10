@@ -33,15 +33,39 @@ extension WatermarkService {
         guard maxRows > 0, maxCols > 0 else { return [] }
 
         // Write into a flat buffer so concurrent rows can write without reallocations.
-        var flatBits = [Int](repeating: 0, count: maxRows * maxCols)
+        // initalize with a specific "invalid flag" (e.g. -1) instead of 0
+        // so that we can know which blocks are out of bounds and discarded in the voting
+        var flatBits = [Int](repeating: -1, count: maxRows * maxCols)
+        
         flatBits.withUnsafeMutableBufferPointer { bitPtr in
             // Concurrency: process rows in parallel. Each row writes to a disjoint slice of `flatBits`.
-            // This can still be CPU-heavy; callers should not run this on the main thread.
             DispatchQueue.concurrentPerform(iterations: maxRows) { r in
                 for c in 0..<maxCols {
                     let block = extractSpatialBlock(from: matrix, x: startX + c * DCTMatrix8x8.side, y: startY + r * DCTMatrix8x8.side)
-                    let freqBlock = performDCT(block)
-                    bitPtr[r * maxCols + c] = extractBitFromFrequencies(freqBlock)
+                    
+                    // --- 物理隔离毒选票 (边缘高反差侦测) ---
+                    var isPolluted = false
+                    var minVal: Float = 255.0
+                    var maxVal: Float = 0.0
+                    for r in 0..<DCTMatrix8x8.side {
+                        for c in 0..<DCTMatrix8x8.side {
+                            let v = block[r, c]
+                            if v < minVal { minVal = v }
+                            if v > maxVal { maxVal = v }
+                        }
+                    }
+                    
+                    // 如果一个块里既有接近黑边的像素(<3.0)，
+                    // 又有正常图像的亮度(>30.0)，这绝对是 deskew 产生的人造悬崖！
+                    if minVal <= 3.0 && maxVal > 30.0 {
+                        isPolluted = true
+                    }
+                    
+                    if !isPolluted {
+                        let freqBlock = performDCT(block)
+                        bitPtr[r * maxCols + c] = extractBitFromFrequencies(freqBlock)
+                    }
+                    // if it is polluted, it remains -1 in flatBits, representing a vote of no confidence
                 }
             }
         }
@@ -117,14 +141,22 @@ extension WatermarkService {
                         for m in -1...(maxCols / w + 1) {
                             let globalX = originX + tileCol + m * w
                             if globalX >= 0 && globalX < maxCols {
-                                if bits[globalY][globalX] == 1 { ones += 1 }
-                                total += 1
+                                let bitValue = bits[globalY][globalX]
+                                // only 0 and 1 are valid votes, skip -1 (polluted blocks)
+                                if bitValue == 1 { 
+                                    ones += 1 
+                                    total += 1
+                                } else if bitValue == 0 {
+                                    total += 1
+                                }
                             }
                         }
                     }
                 }
-
-                votedMacroblock[i] = (ones * 2 >= total) ? 1 : 0
+                
+                // if all blocks at this position are恰好都被黑边污染了（total == 0），
+                // can only guess 0 
+                votedMacroblock[i] = (total > 0 && ones * 2 >= total) ? 1 : 0
             }
             return votedMacroblock
         }
@@ -251,9 +283,9 @@ extension WatermarkService {
             // Fallback: try FEC-decoding for top-N candidates.
             // This avoids false negatives caused by the raw (uncorrected) 8-bit length byte.
             #if DEBUG
-            let candidatesToTry = topCandidates.sorted { $0.matchCount > $1.matchCount }.prefix(3)
+            let candidatesToTry = topCandidates.sorted { $0.matchCount > $1.matchCount }.prefix(6)
             #else
-            let candidatesToTry = topCandidates.sorted { $0.matchCount > $1.matchCount }.prefix(1)
+            let candidatesToTry = topCandidates.sorted { $0.matchCount > $1.matchCount }.prefix(3)
             #endif
             for c in candidatesToTry {
                 let w = c.w

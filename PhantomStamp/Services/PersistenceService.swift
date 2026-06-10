@@ -11,6 +11,12 @@ import SwiftData
 @MainActor
 enum PersistenceService {
     static func save(_ context: ModelContext) {
-        try? context.save()
+        do {
+            try context.save()
+        } catch {
+            #if DEBUG
+            print("[PersistenceService] context.save failed: \(error)")
+            #endif
+        }
     }
 }

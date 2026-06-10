@@ -69,15 +69,29 @@ struct RootView: View {
         .zIndex(1000)
     }
     .onAppear {
-      guard let svc = watermarkService as? WatermarkService else { return }
-      svc.historyModelContext = modelContext
-      svc.settingsStore = settingsStore
+      wireWatermarkServiceDependencies()
+    }
+    .onChange(of: modelContext) { _, _ in
+      wireWatermarkServiceDependencies()
     }
     .onChange(of: tab) { _, newValue in
       if newValue == AnyHashable("history") {
         historyListRefreshToken += 1
       }
     }
+  }
+
+  /// Binds SwiftData + settings to the shared `WatermarkService` singleton.
+  /// Called from `onAppear` and whenever SwiftUI refreshes the environment `modelContext`.
+  private func wireWatermarkServiceDependencies() {
+    guard let svc = watermarkService as? WatermarkService else {
+      #if DEBUG
+      print("[RootView] watermarkService is not WatermarkService — history wiring skipped")
+      #endif
+      return
+    }
+    svc.modelContainer = modelContext.container
+    svc.settingsStore = settingsStore
   }
 }
 

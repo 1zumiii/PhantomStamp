@@ -5,6 +5,7 @@
 //  Internal tools page: runs manual/DEBUG watermark tests.
 //
 
+import PhotosUI
 import SwiftUI
 import UIKit
 
@@ -14,8 +15,20 @@ struct RobustnessTestingView: View {
 
     @State private var isLoading = false
     @State private var alertMessage = ""
+    @State private var alertTitle = "Test Failed"
     @State private var showAlert = false
     @State private var multiFileCount: Int = 5
+
+    // Image manipulation tools (shared picked source for compress + resize).
+    @State private var manipPickerItem: PhotosPickerItem?
+    @State private var manipSourceImage: UIImage?
+    @State private var manipSourcePx: (w: Int, h: Int)?
+    @State private var manipSourceName: String?
+    @State private var manipLoadingImage = false
+
+    @State private var manipJpegQuality: Double = 0.60
+    @State private var manipResizeTargetText: String = "1920"
+    @State private var manipResizeFitMode: ImageResizeUtils.FitMode = .longEdge
 
     // Geometric (DFT sync template) test parameter.
     // Bound to `settingsStore.syncTemplateIntensity` via the slider in `geometricCard`, which also
@@ -33,6 +46,7 @@ struct RobustnessTestingView: View {
                 attacksCard
                 compressionCard
                 geometricCard
+                imageManipCard
                 Spacer(minLength: 18)
             }
             .padding(.horizontal, 18)
@@ -42,10 +56,13 @@ struct RobustnessTestingView: View {
         .background(Color(uiColor: .systemGroupedBackground))
         .navigationTitle("Test Page")
         .navigationBarTitleDisplayMode(.large)
-        .alert("Test Failed", isPresented: $showAlert) {
+        .alert(alertTitle, isPresented: $showAlert) {
             Button("OK", role: .cancel) {}
         } message: {
             Text(alertMessage)
+        }
+        .onChange(of: manipPickerItem) { _, newItem in
+            Task { await loadManipSourceImage(from: newItem) }
         }
     }
 
@@ -287,6 +304,199 @@ struct RobustnessTestingView: View {
         }
     }
 
+    // ==========================================
+    // MARK: - Image Manipulation Tools
+    // ==========================================
+
+    private var imageManipCard: some View {
+        card(title: "Image tools", systemImage: "photo.on.rectangle.angled") {
+            VStack(alignment: .leading, spacing: 14) {
+                manipImagePickerRow
+                manipSourcePreviewRow
+
+                Divider().opacity(0.25)
+
+                manipJpegCompressSection
+
+                Divider().opacity(0.25)
+
+                manipResizeSection
+            }
+        }
+    }
+
+    private var manipImagePickerRow: some View {
+        HStack(alignment: .center, spacing: 12) {
+            VStack(alignment: .leading, spacing: 3) {
+                Text("Source image")
+                    .font(.callout.weight(.semibold))
+                Text("Pick one photo. Both tools below operate on this image.")
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+                    .fixedSize(horizontal: false, vertical: true)
+            }
+            Spacer(minLength: 8)
+            PhotosPicker(
+                selection: $manipPickerItem,
+                matching: ImagePickerSupport.imagesOnlyFilter,
+                photoLibrary: .shared()
+            ) {
+                Text(manipSourceImage == nil ? "Pick" : "Change")
+                    .font(.callout.weight(.semibold))
+                    .padding(.horizontal, 12)
+            }
+            .buttonStyle(.bordered)
+            .controlSize(.small)
+            .disabled(isLoading || manipLoadingImage)
+        }
+    }
+
+    @ViewBuilder
+    private var manipSourcePreviewRow: some View {
+        if manipLoadingImage {
+            HStack(spacing: 8) {
+                ProgressView()
+                Text("Loading image…")
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+            }
+        } else if let img = manipSourceImage, let px = manipSourcePx {
+            HStack(spacing: 12) {
+                Image(uiImage: img)
+                    .resizable()
+                    .scaledToFill()
+                    .frame(width: 56, height: 56)
+                    .clipShape(RoundedRectangle(cornerRadius: 10, style: .continuous))
+
+                VStack(alignment: .leading, spacing: 2) {
+                    Text(manipSourceName ?? "Selected image")
+                        .font(.caption.weight(.semibold))
+                        .lineLimit(1)
+                    Text("\(px.w) × \(px.h) px")
+                        .font(.caption.monospacedDigit())
+                        .foregroundStyle(.secondary)
+                }
+                Spacer()
+                Button("Clear") {
+                    clearManipSourceImage()
+                }
+                .font(.caption.weight(.semibold))
+                .foregroundStyle(.secondary)
+            }
+        } else {
+            Text("No image selected.")
+                .font(.caption)
+                .foregroundStyle(.secondary)
+        }
+    }
+
+    private var manipJpegCompressSection: some View {
+        VStack(alignment: .leading, spacing: 10) {
+            Text("JPEG compress")
+                .font(.callout.weight(.semibold))
+
+            Text("Re-encode the source as JPEG at the chosen quality (simulates platform compression). Saves result to Photos.")
+                .font(.caption)
+                .foregroundStyle(.secondary)
+                .fixedSize(horizontal: false, vertical: true)
+
+            HStack {
+                Text("Quality")
+                    .font(.footnote.weight(.semibold))
+                    .foregroundStyle(.secondary)
+                Spacer()
+                Text(String(format: "%.2f", ImageCompressionUtils.clampQuality(manipJpegQuality)))
+                    .font(.caption.monospacedDigit())
+                    .foregroundStyle(.secondary)
+            }
+
+            Slider(value: $manipJpegQuality, in: 0.05...0.95, step: 0.05)
+                .disabled(isLoading || manipSourceImage == nil)
+
+            HStack {
+                Spacer()
+                Button {
+                    Task { await runManipJpegCompress() }
+                } label: {
+                    Text("Compress & Save")
+                        .font(.callout.weight(.semibold))
+                        .padding(.horizontal, 12)
+                }
+                .buttonStyle(.borderedProminent)
+                .controlSize(.small)
+                .disabled(isLoading || manipSourceImage == nil)
+            }
+        }
+    }
+
+    private var manipResizeSection: some View {
+        VStack(alignment: .leading, spacing: 10) {
+            Text("Proportional resize")
+                .font(.callout.weight(.semibold))
+
+            Text("Scale the source so the chosen edge matches the target pixel count. Aspect ratio is preserved.")
+                .font(.caption)
+                .foregroundStyle(.secondary)
+                .fixedSize(horizontal: false, vertical: true)
+
+            Picker("Fit by", selection: $manipResizeFitMode) {
+                ForEach(ImageResizeUtils.FitMode.allCases) { mode in
+                    Text(mode.rawValue).tag(mode)
+                }
+            }
+            .pickerStyle(.segmented)
+            .disabled(isLoading || manipSourceImage == nil)
+
+            HStack(spacing: 10) {
+                Text("Target")
+                    .font(.footnote.weight(.semibold))
+                    .foregroundStyle(.secondary)
+                TextField("Pixels", text: $manipResizeTargetText)
+                    .keyboardType(.numberPad)
+                    .textFieldStyle(.roundedBorder)
+                    .frame(maxWidth: 120)
+                    .disabled(isLoading || manipSourceImage == nil)
+                Text("px")
+                    .font(.footnote)
+                    .foregroundStyle(.secondary)
+                Spacer()
+            }
+
+            if let preview = manipResizePreviewSize, let src = manipSourcePx {
+                Text("Output: \(preview.w) × \(preview.h) px  (from \(src.w) × \(src.h))")
+                    .font(.caption.monospacedDigit())
+                    .foregroundStyle(.secondary)
+            }
+
+            HStack {
+                Spacer()
+                Button {
+                    Task { await runManipResize() }
+                } label: {
+                    Text("Resize & Save")
+                        .font(.callout.weight(.semibold))
+                        .padding(.horizontal, 12)
+                }
+                .buttonStyle(.bordered)
+                .controlSize(.small)
+                .disabled(isLoading || manipSourceImage == nil || manipResizePreviewSize == nil)
+            }
+        }
+    }
+
+    private var manipResizePreviewSize: (w: Int, h: Int)? {
+        guard let px = manipSourcePx,
+              let target = Int(manipResizeTargetText.trimmingCharacters(in: .whitespacesAndNewlines)),
+              target > 0,
+              let out = ImageResizeUtils.previewOutputSize(
+                  sourceWidth: px.w,
+                  sourceHeight: px.h,
+                  targetPixels: target,
+                  mode: manipResizeFitMode
+              ) else { return nil }
+        return (w: out.width, h: out.height)
+    }
+
     // MARK: - Buttons / UI
 
     private enum RunButtonStyle {
@@ -373,9 +583,105 @@ struct RobustnessTestingView: View {
         }
     }
 
-    private func present(_ message: String) {
+    private func present(_ message: String, title: String = "Test Failed") {
+        alertTitle = title
         alertMessage = message
         showAlert = true
+    }
+
+    private func presentSuccess(_ message: String) {
+        present(message, title: "Done")
+    }
+
+    @MainActor
+    private func loadManipSourceImage(from item: PhotosPickerItem?) async {
+        guard let item else {
+            clearManipSourceImage()
+            return
+        }
+        manipLoadingImage = true
+        defer { manipLoadingImage = false }
+
+        let loaded = await ImagePickerSupport.loadPickedImages(from: [item])
+        guard let first = loaded.first else {
+            clearManipSourceImage()
+            present("Could not load the selected image.")
+            return
+        }
+        manipSourceImage = first.image
+        manipSourcePx = (w: first.width, h: first.height)
+        manipSourceName = first.displayName
+    }
+
+    private func clearManipSourceImage() {
+        manipPickerItem = nil
+        manipSourceImage = nil
+        manipSourcePx = nil
+        manipSourceName = nil
+    }
+
+    @MainActor
+    private func saveManipResultToPhotos(_ image: UIImage) async throws {
+        await PhotoLibraryExporter.preflightAddOnlyAuthorizationIfNeeded()
+        try await PhotoLibraryExporter.saveToPhotoLibrary(image)
+    }
+
+    private func runManipJpegCompress() async {
+        guard let source = manipSourceImage else {
+            present("Pick a source image first.")
+            return
+        }
+
+        isLoading = true
+        defer { isLoading = false }
+
+        let q = ImageCompressionUtils.clampQuality(manipJpegQuality)
+        guard let result = ImageCompressionUtils.recompressJPEG(image: source, quality: q) else {
+            present("JPEG recompression failed.")
+            return
+        }
+
+        let outPx = pixelSize(of: result.image)
+        do {
+            try await saveManipResultToPhotos(result.image)
+            print("[TestPage] ManipJPEG q=\(String(format: "%.2f", q)) bytes=\(result.jpegBytes) out=\(outPx.w)x\(outPx.h)")
+            presentSuccess("Saved to Photos.\nQuality \(String(format: "%.2f", q)), \(result.jpegBytes) bytes, \(outPx.w)×\(outPx.h) px.")
+        } catch {
+            present("Save failed: \(error.localizedDescription)")
+        }
+    }
+
+    private func runManipResize() async {
+        guard let source = manipSourceImage else {
+            present("Pick a source image first.")
+            return
+        }
+        guard let target = Int(manipResizeTargetText.trimmingCharacters(in: .whitespacesAndNewlines)),
+              target > 0, target <= 16_384 else {
+            present("Enter a target size between 1 and 16384 px.")
+            return
+        }
+        guard let resized = ImageResizeUtils.resize(
+            image: source,
+            targetPixels: target,
+            mode: manipResizeFitMode
+        ) else {
+            present("Resize failed.")
+            return
+        }
+
+        let outPx = pixelSize(of: resized)
+        do {
+            try await saveManipResultToPhotos(resized)
+            print("[TestPage] ManipResize mode=\(manipResizeFitMode.rawValue) target=\(target) out=\(outPx.w)x\(outPx.h)")
+            presentSuccess("Saved to Photos.\n\(manipResizeFitMode.rawValue) = \(target) px → \(outPx.w)×\(outPx.h) px.")
+        } catch {
+            present("Save failed: \(error.localizedDescription)")
+        }
+    }
+
+    private func pixelSize(of image: UIImage) -> (w: Int, h: Int) {
+        (Int(image.size.width * image.scale), Int(image.size.height * image.scale))
     }
 
     // MARK: - Tests

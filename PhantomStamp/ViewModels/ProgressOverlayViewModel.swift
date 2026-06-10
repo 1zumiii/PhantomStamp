@@ -312,7 +312,7 @@ final class FullScreenWatermarkProgressOverlayViewModel {
 
                 // Enforce minimum time between *applied* updates (adaptive + fast-forward under backlog).
                 let qCount = pendingProgress.count
-                let dynamicMinInterval = qCount > 2 ? 0.01 : 0.10
+                let dynamicMinInterval = qCount > 2 ? 0.01 : 0.05
 
                 let deltaForInterval = abs(next.percentage - progress)
                 let intervalSeconds = min(max(deltaForInterval * 10.0, dynamicMinInterval), 1.00)

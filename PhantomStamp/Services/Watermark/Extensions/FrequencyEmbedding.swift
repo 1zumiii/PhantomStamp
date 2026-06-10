@@ -12,7 +12,12 @@ extension WatermarkService {
     // ==========================================
     // Strip embedding
     // ==========================================
-    nonisolated func processSingleStripForEmbedding(strip: ImageStrip, macroblock: Macroblock2D, thresholdSmooth: Float) -> (strip: ImageStrip, visited8x8Blocks: Int, smoothSkipped8x8Blocks: Int) {
+    nonisolated func processSingleStripForEmbedding(
+        strip: ImageStrip,
+        macroblock: Macroblock2D,
+        thresholdSmooth: Float,
+        embeddingStrengthMultiplier: Float = 1.0
+    ) -> (strip: ImageStrip, visited8x8Blocks: Int, smoothSkipped8x8Blocks: Int) {
         var resultStrip = strip
         var visited8x8Blocks = 0
         var smoothSkipped8x8Blocks = 0
@@ -68,7 +73,12 @@ extension WatermarkService {
                     strength = 1.45
                 }
 
-                embedBitIntoFrequencies(&freqBlock, bit: targetBit, strength: strength)
+                embedBitIntoFrequencies(
+                    &freqBlock,
+                    bit: targetBit,
+                    strength: strength,
+                    globalMultiplier: embeddingStrengthMultiplier
+                )
                 pixelBlock = performIDCT(freqBlock)
                 resultStrip.write8x8Block(pixelBlock, x: blockX, y: blockY)
             }
@@ -78,14 +88,19 @@ extension WatermarkService {
     }
 
     /// Embeds one payload bit into the mid-frequency band of an 8×8 DCT block.
-    nonisolated func embedBitIntoFrequencies(_ freqBlock: inout DCTMatrix8x8, bit: Int, strength: Float = 1.45) {
+    nonisolated func embedBitIntoFrequencies(
+        _ freqBlock: inout DCTMatrix8x8,
+        bit: Int,
+        strength: Float = 1.45,
+        globalMultiplier: Float = 1.0
+    ) {
         let p1 = (u: 3, v: 4)
         let p2 = (u: 4, v: 3)
 
         let a = freqBlock[p1.u, p1.v]
         let b = freqBlock[p2.u, p2.v]
 
-        let qa = adaptiveQuantizationStep(for: freqBlock)
+        let qa = adaptiveQuantizationStep(for: freqBlock, globalMultiplier: globalMultiplier)
         // Increase the target separation between (3,4) and (4,3) so the decision survives
         // IDCT/quantization round-trips, and optionally boost header bits for compression robustness.
         let s = max(1.0, strength)
@@ -124,7 +139,10 @@ extension WatermarkService {
         return absA >= absB ? 1 : 0
     }
 
-    nonisolated private func adaptiveQuantizationStep(for freqBlock: DCTMatrix8x8) -> Float {
+    nonisolated private func adaptiveQuantizationStep(
+        for freqBlock: DCTMatrix8x8,
+        globalMultiplier: Float = 1.0
+    ) -> Float {
         var sumAbs: Float = 0
         for u in 0..<DCTMatrix8x8.side {
             for v in 0..<DCTMatrix8x8.side {
@@ -134,8 +152,9 @@ extension WatermarkService {
         }
         let acMean = sumAbs / 63.0
         // Stronger baseline helps sync recovery on real images (E2E).
-        let q = 9.0 + min(10.0, acMean * 0.18)
-        return max(9.0, min(18.0, q))
+        let baseQ = 9.0 + min(10.0, acMean * 0.18)
+        let clampedBaseQ = max(9.0, min(18.0, baseQ))
+        return clampedBaseQ * globalMultiplier
     }
 
     nonisolated private func applyMagnitude(_ magnitude: Float, keepingSignOf value: Float) -> Float {

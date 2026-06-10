@@ -8,8 +8,10 @@ import Accelerate
 import SwiftData
 
 class WatermarkService: WatermarkServiceProtocol {
-    /// When set from the UI host (see `RootView.onAppear`), completed embed/extract attempts append a `WatermarkHistoryRecord`.
-    var historyModelContext: ModelContext?
+    /// SwiftData store for watermark history rows. Prefer this over caching a `ModelContext` directly —
+    /// `ModelContext` is MainActor-bound and must not be read from background watermark work.
+    /// Wired from `RootView` via `modelContext.container`.
+    var modelContainer: ModelContainer?
 
     /// When set from `RootView`, embed/extract honors notification + embed-history toggles in `UserSettingsStore`.
     weak var settingsStore: UserSettingsStore?
@@ -140,6 +142,9 @@ class WatermarkService: WatermarkServiceProtocol {
         let syncIntensitySnapshot: Double = await MainActor.run {
             settingsStore?.syncTemplateIntensity ?? AppConstants.SettingsDefault.syncTemplateIntensity
         }
+        let embeddingStrengthSnapshot: Double = await MainActor.run {
+            settingsStore?.embeddingStrength ?? AppConstants.SettingsDefault.embeddingStrength
+        }
 
         do {
             // ==========================================
@@ -196,6 +201,9 @@ class WatermarkService: WatermarkServiceProtocol {
             reportProgress(step: .processingStrips, percentage: colorEnd)
 
             let thresholdSmooth: Float = Float(thresholdSnapshot)
+            let embeddingStrengthMultiplier = AppConstants.embeddingStrengthMultiplier(
+                for: embeddingStrengthSnapshot
+            )
 
             let stripCount = imageStrips.count
             var embedVisited8x8Blocks = 0
@@ -205,7 +213,12 @@ class WatermarkService: WatermarkServiceProtocol {
                     group.addTask {
                         // force memory recycling to prevent OOM silent crash caused by large image slicing computation
                         autoreleasepool {
-                            let out = self.processSingleStripForEmbedding(strip: strip, macroblock: macroblock, thresholdSmooth: thresholdSmooth)
+                            let out = self.processSingleStripForEmbedding(
+                                strip: strip,
+                                macroblock: macroblock,
+                                thresholdSmooth: thresholdSmooth,
+                                embeddingStrengthMultiplier: embeddingStrengthMultiplier
+                            )
                             return (out.strip, out.visited8x8Blocks, out.smoothSkipped8x8Blocks)
                         }
                     }
@@ -711,22 +724,37 @@ class WatermarkService: WatermarkServiceProtocol {
         embedVisited8x8BlockCount: Int? = nil,
         embedSmoothSkipped8x8BlockCount: Int? = nil
     ) async {
-        guard await userAllowsEmbedHistoryRecords() else { return }
-        guard let ctx = historyModelContext else { return }
+        guard await userAllowsEmbedHistoryRecords() else {
+            #if DEBUG
+            print("[WatermarkService] embed history skipped: auto-log disabled in settings")
+            #endif
+            return
+        }
+
         let durationMs = (CFAbsoluteTimeGetCurrent() - startedAt) * 1000
         let thumbnailSource = succeeded ? (outputImage ?? inputImage) : inputImage
-        let record = HistoryRecordService.makeEmbedRecord(
-            succeeded: succeeded,
-            payloadText: text,
-            sourceImageForThumbnail: thumbnailSource,
-            sourceImageName: sourceImageName,
-            error: error,
-            durationMs: durationMs,
-            embedVisited8x8BlockCount: embedVisited8x8BlockCount,
-            embedSmoothSkipped8x8BlockCount: embedSmoothSkipped8x8BlockCount,
-            embedTextureVarianceThreshold: embedTextureVarianceThreshold
-        )
+
+        // Build + insert on MainActor using the container's mainContext so SwiftData sees the same
+        // store that HistoryView reads — never touch a cached ModelContext from a background task.
         await MainActor.run {
+            guard let container = self.modelContainer else {
+                #if DEBUG
+                print("[WatermarkService] embed history skipped: modelContainer not wired (see RootView)")
+                #endif
+                return
+            }
+            let ctx = container.mainContext
+            let record = HistoryRecordService.makeEmbedRecord(
+                succeeded: succeeded,
+                payloadText: text,
+                sourceImageForThumbnail: thumbnailSource,
+                sourceImageName: sourceImageName,
+                error: error,
+                durationMs: durationMs,
+                embedVisited8x8BlockCount: embedVisited8x8BlockCount,
+                embedSmoothSkipped8x8BlockCount: embedSmoothSkipped8x8BlockCount,
+                embedTextureVarianceThreshold: embedTextureVarianceThreshold
+            )
             HistoryRecordService.insertAndSave(record, context: ctx)
         }
     }
@@ -740,8 +768,13 @@ class WatermarkService: WatermarkServiceProtocol {
         startedAt: CFAbsoluteTime,
         work: ExtractMatrixWorkResult? = nil
     ) async {
-        guard await userAllowsEmbedHistoryRecords() else { return }
-        guard let ctx = historyModelContext else { return }
+        guard await userAllowsEmbedHistoryRecords() else {
+            #if DEBUG
+            print("[WatermarkService] extract history skipped: auto-log disabled in settings")
+            #endif
+            return
+        }
+
         let durationMs = (CFAbsoluteTimeGetCurrent() - startedAt) * 1000
         let rawRows: Int? = {
             guard let w = work, w.rawBitGridRows > 0 else { return nil }
@@ -751,22 +784,30 @@ class WatermarkService: WatermarkServiceProtocol {
             guard let w = work, w.rawBitGridCols > 0 else { return nil }
             return w.rawBitGridCols
         }()
-        let record = HistoryRecordService.makeExtractRecord(
-            succeeded: succeeded,
-            extractedText: extractedText,
-            sourceImage: image,
-            sourceImageName: sourceImageName,
-            error: error,
-            durationMs: durationMs,
-            syncMatchCount: work?.offsetScanBestSyncBits,
-            extractGridOffsetXPx: work?.gridOffsetX,
-            extractGridOffsetYPx: work?.gridOffsetY,
-            extractMajoritySyncBits: work?.majorityBestSyncBits,
-            extractMacroTileWidth: work?.majorityMacroTileWidth,
-            extractRawBitGridRows: rawRows,
-            extractRawBitGridCols: rawCols
-        )
+
         await MainActor.run {
+            guard let container = self.modelContainer else {
+                #if DEBUG
+                print("[WatermarkService] extract history skipped: modelContainer not wired (see RootView)")
+                #endif
+                return
+            }
+            let ctx = container.mainContext
+            let record = HistoryRecordService.makeExtractRecord(
+                succeeded: succeeded,
+                extractedText: extractedText,
+                sourceImage: image,
+                sourceImageName: sourceImageName,
+                error: error,
+                durationMs: durationMs,
+                syncMatchCount: work?.offsetScanBestSyncBits,
+                extractGridOffsetXPx: work?.gridOffsetX,
+                extractGridOffsetYPx: work?.gridOffsetY,
+                extractMajoritySyncBits: work?.majorityBestSyncBits,
+                extractMacroTileWidth: work?.majorityMacroTileWidth,
+                extractRawBitGridRows: rawRows,
+                extractRawBitGridCols: rawCols
+            )
             HistoryRecordService.insertAndSave(record, context: ctx)
         }
     }
