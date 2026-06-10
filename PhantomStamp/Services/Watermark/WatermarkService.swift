@@ -378,6 +378,13 @@ class WatermarkService: WatermarkServiceProtocol {
                 // [New Feature] Extract Region + DFT Global Star Seeking
                 // ==========================================
                 let transformParams = await self.detectGeometricTransforms(in: yChannel)
+                #if DEBUG
+                if abs(transformParams.angle) > 5e-3 || abs(transformParams.scale - 1.0) > 5e-4 {
+                    print("[WatermarkService] geometric transformation detected, applying deskewing...")
+                } else {
+                    print("[WatermarkService] geometric transformation too small, skipping deskewing.")
+                }
+                #endif
                 await reportProgress(step: .extractDetectTransforms, percentage: 0.20)
 
                 // ==========================================
