@@ -72,6 +72,15 @@ extension WatermarkService {
                 for r in 0..<maxRows {
                     for c in 0..<maxCols {
                         let block = extractSpatialBlock(from: matrix, x: offsetX + c * DCTMatrix8x8.side, y: offsetY + r * DCTMatrix8x8.side)
+                        // Poison-skip (same rule as `extractBitsWithOffset`): a block touched by the
+                        // deskew OOB sentinel is (near-)constant, so ALL its AC coefficients are ~0 and
+                        // `extractBitFromFrequencies` would return a deterministic, fabricated `1`.
+                        // Mark it -1 instead — it can never equal a sync-marker bit, so windows
+                        // overlapping the dead frame lose score instead of gaining fake matches.
+                        if isBlockPolluted(block) {
+                            bitGrid[r][c] = -1
+                            continue
+                        }
                         let freqBlock = performDCT(block)
                         bitGrid[r][c] = extractBitFromFrequencies(freqBlock)
                     }
@@ -151,6 +160,19 @@ extension WatermarkService {
             }
         }
         return block
+    }
+
+    /// True when any sample of the 8×8 block carries the deskew OOB poison sentinel (-1000).
+    ///
+    /// Poisoned blocks MUST NOT cast bit votes: a constant block has every AC coefficient equal
+    /// to EXACTLY 0.0, so `abs(C1) >= abs(C2)` ties and decodes as a deterministic `1`. After an
+    /// upscale attack the deskewed plane has a full dead frame around the content; letting it
+    /// vote floods the macro-tile fold with fabricated 1s (the classic `lenByte=255` symptom).
+    func isBlockPolluted(_ block: DCTMatrix8x8) -> Bool {
+        for v in block.values where v < -500.0 {
+            return true
+        }
+        return false
     }
 
     /// Float-plane overload: copies the un-truncated `Float` samples straight into the DCT buffer,

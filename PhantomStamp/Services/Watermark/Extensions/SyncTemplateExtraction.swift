@@ -117,8 +117,9 @@ extension WatermarkService {
     /// the image center, using bilinear interpolation for sub-pixel sampling.
     ///
     /// The output canvas size is identical to the input — pixels that would map outside the
-    /// source frame stay 0 (black). This keeps the 8×8 macroblock grid period intact for the
-    /// downstream grid scan, while the visible corners simply turn black after a rotation.
+    /// source frame receive the POISON sentinel `-1000.0` (via `bilinearInterpolate`), so the
+    /// downstream grid scan / bit extraction can identify and exclude the dead frame. This keeps
+    /// the 8×8 macroblock grid period intact while rotated corners / upscale borders abstain.
     ///
     /// PRECISION: returns a ``FloatMatrix`` carrying the RAW bilinear samples. Rounding back to
     /// `UInt8` here would quantize away the sub-intensity AC variations (< 1.0 gray level) that
@@ -452,10 +453,9 @@ extension WatermarkService {
         return (x: xInv + centerX, y: yInv + centerY)
     }
 
-    /// Bilinear sample from a UInt8 matrix with zero-fill outside the source frame.
-    ///
-    /// Returns a `Float` so the caller can clamp + round itself — matches the rest of the
-    /// pipeline (e.g. `applySpatialTiling`) where UInt8 conversion is done explicitly.
+    /// Bilinear sample from a UInt8 matrix. Out-of-frame coordinates return the POISON sentinel
+    /// `-1000.0` (not 0): downstream block extraction uses `isBlockPolluted` to make dead-frame
+    /// blocks abstain from voting instead of decoding as fabricated bits.
     ///
     /// NOTE: We use a strict OOB check `> Float(w - 1)` rather than `>= Float(w)` so the sample
     /// at the very last valid row/column still works (its `x1`/`y1` neighbor would otherwise be

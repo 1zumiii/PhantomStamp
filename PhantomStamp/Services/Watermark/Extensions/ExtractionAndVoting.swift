@@ -51,31 +51,27 @@ extension WatermarkService {
             DispatchQueue.concurrentPerform(iterations: maxRows) { r in
                 for c in 0..<maxCols {
                     let block = extractSpatialBlock(from: matrix, x: startX + c * DCTMatrix8x8.side, y: startY + r * DCTMatrix8x8.side)
-                    
-                    var isPolluted = false
-                    for r in 0..<DCTMatrix8x8.side {
-                        for c in 0..<DCTMatrix8x8.side {
-                            // 只要这个 8x8 块里沾到哪怕一滴越界毒药 (或者插值带进来的毒药残余)
-                            if block[r, c] < -500.0 {
-                                isPolluted = true
-                                break
-                            }
-                        }
-                        if isPolluted { break }
-                    }
-                    
-                    if !isPolluted {
+
+                    // 只要这个 8x8 块里沾到哪怕一滴越界毒药，就弃权 (-1)，不投票。
+                    if !isBlockPolluted(block) {
                         let freqBlock = performDCT(block)
-                        // 算出这是第几个处理的 block (仅作调试参考)
-                        let linearIndex = r * maxCols + c
-                        // 如果是前 40 个，开启调试打印
-                        let enableDebug = (linearIndex < 40)
-                        bitPtr[linearIndex] = extractBitFromFrequencies(freqBlock, isDebug: enableDebug)
+                        // DEBUG 探针：采样网格"正中间一行"的前 40 块。
+                        // 旧探针 (linearIndex < 40) 采的是第 0 行 —— 放大攻击去歪斜后整条第 0 行
+                        // 都落在四周的毒框死区里，要么打印 Diff 恒为 +0.0（修毒值之前的常数块），
+                        // 要么干脆什么都不打印，极易误判成"全图载荷归零"。
+                        // 图像中心不论旋转还是缩放都必然存活，因此中间行反映的才是真实内容。
+                        let enableDebug = (r == maxRows / 2 && c < 40)
+                        bitPtr[r * maxCols + c] = extractBitFromFrequencies(freqBlock, isDebug: enableDebug)
                     }
                     // if it is polluted, it remains -1 in flatBits, representing a vote of no confidence
                 }
             }
         }
+
+        #if DEBUG
+        let pollutedCount = flatBits.lazy.filter { $0 == -1 }.count
+        print("[WatermarkService] DEBUG extractBits: grid=\(maxRows)x\(maxCols) polluted(dead-frame)=\(pollutedCount)/\(maxRows * maxCols)")
+        #endif
 
         var bitGrid = [[Int]](repeating: [], count: maxRows)
         for r in 0..<maxRows {
@@ -209,13 +205,23 @@ extension WatermarkService {
                                     for m in -1...(maxCols / w + 1) {
                                         let gx = originX + tileCol + m * w
                                         if gx >= 0 && gx < maxCols {
-                                            if bits[gy][gx] == 1 { ones += 1 }
-                                            total += 1
+                                            // Must mirror computeVotedMacroblock: -1 (polluted/dead-frame)
+                                            // is an abstention, NOT a 0-vote. Counting it in `total` biases
+                                            // every length bit toward 0 whenever a dead frame exists.
+                                            let bitValue = bits[gy][gx]
+                                            if bitValue == 1 {
+                                                ones += 1
+                                                total += 1
+                                            } else if bitValue == 0 {
+                                                total += 1
+                                            }
                                         }
                                     }
                                 }
                             }
-                            lengthBits.append((ones * 2 >= total) ? 1 : 0)
+                            // Guard total > 0: with all repetitions abstaining, `0 >= 0` would
+                            // otherwise fabricate a 1 — same convention as computeVotedMacroblock.
+                            lengthBits.append((total > 0 && ones * 2 >= total) ? 1 : 0)
                         }
                         lengthByte = bitsToByte(lengthBits)
                         // Length header is the UTF-8 byte count of the original message.
