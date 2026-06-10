@@ -404,27 +404,54 @@ extension WatermarkService {
     /// Larger rotations would also flip the macroblock layout in ways the existing grid scan
     /// can't recover from anyway.
     func calculateAffineParams(from peaks: [(x: Float, y: Float)], originalRadius: Float, originalAngle: Float) -> (angle: Float, scale: Float) {
-        guard let peak = peaks.first else { return (0.0, 1.0) }
+        // Per-peak estimate with 4-fold disambiguation: try every k ∈ {0, 1, 2, 3} and keep the
+        // rotation closest to 0 (wrap to (-π, π] via atan2(sin, cos) — cheap and branch-free).
+        func solve(_ peak: (x: Float, y: Float)) -> (angle: Float, scale: Float) {
+            let r = sqrt(peak.x * peak.x + peak.y * peak.y)
+            let detectedAngle = atan2(peak.y, peak.x)
+            // Guard against zero radius (would only happen if the DC mask failed).
+            let scale = originalRadius / max(r, 1e-3)
 
-        let r = sqrt(peak.x * peak.x + peak.y * peak.y)
-        let detectedAngle = atan2(peak.y, peak.x)
-
-        // Guard against zero radius (would only happen if the DC mask failed).
-        let safeRadius = max(r, 1e-3)
-        let scale = originalRadius / safeRadius
-
-        // 4-fold disambiguation: try every k ∈ {0, 1, 2, 3} and keep the rotation closest to 0.
-        var bestRotation: Float = .infinity
-        for k in 0..<4 {
-            let candidate = detectedAngle - (originalAngle + Float(k) * (.pi / 2))
-            // Wrap to (-π, π] using atan2(sin, cos) — cheap and branch-free.
-            let wrapped = atan2(sin(candidate), cos(candidate))
-            if abs(wrapped) < abs(bestRotation) {
-                bestRotation = wrapped
+            var bestRotation: Float = .infinity
+            for k in 0..<4 {
+                let candidate = detectedAngle - (originalAngle + Float(k) * (.pi / 2))
+                let wrapped = atan2(sin(candidate), cos(candidate))
+                if abs(wrapped) < abs(bestRotation) {
+                    bestRotation = wrapped
+                }
             }
+            return (angle: bestRotation, scale: scale)
         }
 
-        return (angle: bestRotation, scale: scale)
+        guard let strongest = peaks.first else { return (0.0, 1.0) }
+        let reference = solve(strongest)
+
+        // PRECISION: averaging the (up to) 4 template peaks roughly halves the estimator noise
+        // vs using the strongest peak alone. This matters downstream: a residual scale error of
+        // just 3e-4 (or ~0.1° of rotation) accumulates to >1px of macroblock-grid drift across a
+        // 4000+ px image, which is what de-correlates distant tile repetitions during voting.
+        //
+        // Consistency gate vs the strongest peak (±1°, ±2% scale) rejects the occasional
+        // image-content peak that survived the radius prior in a weak quadrant.
+        var angleSum: Float = 0
+        var scaleSum: Float = 0
+        var count = 0
+        for peak in peaks.prefix(4) {
+            let est = solve(peak)
+            let angleDelta = atan2(sin(est.angle - reference.angle), cos(est.angle - reference.angle))
+            guard abs(angleDelta) <= (1.0 * .pi / 180.0), abs(est.scale / reference.scale - 1.0) <= 0.02 else {
+                #if DEBUG
+                print("[SyncTemplate] peak rejected by consistency gate: angle=\(String(format: "%.3f°", est.angle * 180 / .pi)) scale=\(String(format: "%.4f", est.scale))")
+                #endif
+                continue
+            }
+            angleSum += est.angle
+            scaleSum += est.scale
+            count += 1
+        }
+
+        guard count > 0 else { return reference }
+        return (angle: angleSum / Float(count), scale: scaleSum / Float(count))
     }
 
     /// Maps a destination pixel `(targetX, targetY)` back to its source pixel in the attacked

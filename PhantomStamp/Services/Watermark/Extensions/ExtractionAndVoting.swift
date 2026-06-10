@@ -2,13 +2,15 @@
 //  ExtractionAndVoting.swift
 //  PhantomStamp
 //
-//  Bit extraction on an aligned grid + macro-tile majority voting.
+//  Bit extraction on an aligned grid + macro-tile SOFT majority voting.
 //
 //  This file assumes you already found the correct *pixel-level* 8×8 alignment (via `findGridOffsetAndSyncMarker`).
 //  It then:
-//  - extracts one bit per 8×8 DCT block over the image (or search region),
-//  - relocates the sync header in that bit grid (in-memory, no DCT),
-//  - folds repeated tiles and performs majority voting to recover one canonical `W×W` macro-tile.
+//  - extracts one signed confidence score per 8×8 DCT block over the image,
+//  - relocates the sync header in the (hard-thresholded) bit grid (in-memory, no DCT),
+//  - folds repeated tiles by SUMMING signed scores (soft decision) to recover one canonical `W×W` macro-tile,
+//  - validates candidates by actually FEC-decoding them (the only structurally sound check, since the
+//    payload after sync is Hamming(8,4)-coded AND bit-interleaved — there is no raw "length byte" on the grid).
 //
 
 import CoreGraphics
@@ -29,10 +31,23 @@ extension WatermarkService {
         extractBitsWithOffset(FloatMatrix(promoting: matrix), offset: offset)
     }
 
-    /// Extracts one bit per aligned 8×8 block from a `Float` Y-plane (output of `deskewImage`).
-    /// Keeping the samples in `Float` end-to-end is what lets the mid-frequency AC coefficients
-    /// retain the sub-intensity payload energy after geometric correction.
+    /// Hard-decision view of `extractSoftBitsWithOffset`: sign → bit, NaN → -1 (abstain).
     func extractBitsWithOffset(_ matrix: FloatMatrix, offset: CGPoint) -> [[Int]] {
+        extractSoftBitsWithOffset(matrix, offset: offset).map { row in
+            row.map { $0.isNaN ? -1 : ($0 >= 0 ? 1 : 0) }
+        }
+    }
+
+    /// Extracts one SIGNED CONFIDENCE SCORE (`abs(C(1,2)) − abs(C(2,1))`) per aligned 8×8 block
+    /// from a `Float` Y-plane (output of `deskewImage`). `.nan` marks polluted (dead-frame)
+    /// blocks that must abstain from voting.
+    ///
+    /// WHY SOFT SCORES: after a geometric attack + deskew, interpolation/JPEG shrink the diffs
+    /// (e.g. ±90 clean → ±5..±40). Hard majority voting gives a |diff|=0.3 coin-flip block the
+    /// same weight as a |diff|=40 block, so smooth-skipped and attenuated blocks can out-vote
+    /// the reliable ones. Summing signed scores (a matched-filter fold) weighs each repetition
+    /// by its actual evidence and dramatically lowers the post-vote bit error rate.
+    func extractSoftBitsWithOffset(_ matrix: FloatMatrix, offset: CGPoint) -> [[Float]] {
         let startX = Int(offset.x)
         let startY = Int(offset.y)
 
@@ -41,125 +56,174 @@ extension WatermarkService {
         let maxCols = (matrix.width - startX) / DCTMatrix8x8.side
         guard maxRows > 0, maxCols > 0 else { return [] }
 
-        // Write into a flat buffer so concurrent rows can write without reallocations.
-        // initalize with a specific "invalid flag" (e.g. -1) instead of 0
-        // so that we can know which blocks are out of bounds and discarded in the voting
-        var flatBits = [Int](repeating: -1, count: maxRows * maxCols)
-        
-        flatBits.withUnsafeMutableBufferPointer { bitPtr in
-            // Concurrency: process rows in parallel. Each row writes to a disjoint slice of `flatBits`.
+        // Flat buffer so concurrent rows write disjoint slices without reallocation.
+        // NaN = "invalid/abstain" (polluted by the deskew dead frame).
+        var flatScores = [Float](repeating: .nan, count: maxRows * maxCols)
+
+        flatScores.withUnsafeMutableBufferPointer { scorePtr in
             DispatchQueue.concurrentPerform(iterations: maxRows) { r in
                 for c in 0..<maxCols {
                     let block = extractSpatialBlock(from: matrix, x: startX + c * DCTMatrix8x8.side, y: startY + r * DCTMatrix8x8.side)
 
-                    // 只要这个 8x8 块里沾到哪怕一滴越界毒药，就弃权 (-1)，不投票。
                     if !isBlockPolluted(block) {
                         let freqBlock = performDCT(block)
-                        // DEBUG 探针：采样网格"正中间一行"的前 40 块。
-                        // 旧探针 (linearIndex < 40) 采的是第 0 行 —— 放大攻击去歪斜后整条第 0 行
-                        // 都落在四周的毒框死区里，要么打印 Diff 恒为 +0.0（修毒值之前的常数块），
-                        // 要么干脆什么都不打印，极易误判成"全图载荷归零"。
-                        // 图像中心不论旋转还是缩放都必然存活，因此中间行反映的才是真实内容。
+                        // DEBUG probe: sample the first 40 blocks in the "middle row" of the grid (the image center survives any rotation/scaling deskew)
                         let enableDebug = (r == maxRows / 2 && c < 40)
-                        bitPtr[r * maxCols + c] = extractBitFromFrequencies(freqBlock, isDebug: enableDebug)
+                        scorePtr[r * maxCols + c] = extractBitConfidence(freqBlock, isDebug: enableDebug)
                     }
-                    // if it is polluted, it remains -1 in flatBits, representing a vote of no confidence
                 }
             }
         }
 
         #if DEBUG
-        let pollutedCount = flatBits.lazy.filter { $0 == -1 }.count
+        let pollutedCount = flatScores.lazy.filter { $0.isNaN }.count
         print("[WatermarkService] DEBUG extractBits: grid=\(maxRows)x\(maxCols) polluted(dead-frame)=\(pollutedCount)/\(maxRows * maxCols)")
         #endif
 
-        var bitGrid = [[Int]](repeating: [], count: maxRows)
+        var scoreGrid = [[Float]](repeating: [], count: maxRows)
         for r in 0..<maxRows {
             let start = r * maxCols
-            bitGrid[r] = Array(flatBits[start..<(start + maxCols)])
+            scoreGrid[r] = Array(flatScores[start..<(start + maxCols)])
         }
-        return bitGrid
+        return scoreGrid
     }
 
+    /// Hard-bit compatibility wrapper (tests / legacy callers): ±1 equal-weight votes reproduce
+    /// the classic majority-vote semantics exactly (`sum >= 0` ⇔ `ones*2 >= total`, ties → 1).
     func applyMajorityVotingWithDiagnostics(to bits: [[Int]]) -> (bits: [Int], diagnostics: MajorityVotingDiagnostics?) {
-        guard !bits.isEmpty, !bits[0].isEmpty else { return ([], nil) }
-        let maxRows = bits.count
-        let maxCols = bits[0].count
+        let scores: [[Float]] = bits.map { row in
+            row.map { b -> Float in
+                switch b {
+                case 1: return 1.0
+                case 0: return -1.0
+                default: return .nan // -1 = abstain
+                }
+            }
+        }
+        return applySoftMajorityVotingWithDiagnostics(to: scores)
+    }
+
+    /// Soft-decision macro-tile recovery:
+    /// 1. relocate the 32-bit sync header by correlating HARD bits (sign of each score),
+    /// 2. fold all tile repetitions by SUMMING signed scores per cell (confidence-weighted vote),
+    /// 3. validate candidates by genuinely FEC-decoding them, best sync match first.
+    ///
+    /// NOTE ON THE REMOVED "LENGTH BYTE" CHECK: `encodeFEC` lays out
+    /// `interleave(hamming84(lengthByte + payload))` after the sync marker, so the 8 grid bits
+    /// following sync are interleaved CODEWORD bits — never a raw length byte. The old quick
+    /// check therefore failed even on clean images (e.g. lenByte=121) and could PREFER a worse
+    /// sync window whose garbage byte happened to land in 1...16. Real `decodeFEC` (SECDED:
+    /// detects double-bit errors per codeword) is the only meaningful validator.
+    func applySoftMajorityVotingWithDiagnostics(to scores: [[Float]]) -> (bits: [Int], diagnostics: MajorityVotingDiagnostics?) {
+        guard !scores.isEmpty, !scores[0].isEmpty else { return ([], nil) }
+        let maxRows = scores.count
+        let maxCols = scores[0].count
         let syncMarker = getSyncMarkerBits()
         let tolerance = 4
         let syncCount = syncMarker.count // 32
 
-        // When sync match is close to the tolerance threshold, length header bits can still be corrupted.
-        // We keep a small top-N candidate list so that on failure we can try FEC-decoding instead of
-        // hard-rejecting by the *uncorrected* length byte.
+        // Hard view for sync-header correlation; -1 (abstain) never matches a marker bit.
+        var hardBits = [[Int]](repeating: [], count: maxRows)
+        for r in 0..<maxRows {
+            hardBits[r] = scores[r].map { $0.isNaN ? -1 : ($0 >= 0 ? 1 : 0) }
+        }
+
         struct Candidate {
             let matchCount: Int
             let w: Int
             let bx: Int
             let by: Int
-            let lengthByte: Int
-            let lengthValid: Bool
         }
+        // Collected in ALL build configurations (the old list was #if DEBUG-only, which silently
+        // disabled the decode fallback in Release builds).
         var topCandidates: [Candidate] = []
-        func pushTopCandidate(_ c: Candidate, topN: Int = 5) {
+        func pushTopCandidate(_ c: Candidate, topN: Int = 6) {
             topCandidates.append(c)
-            topCandidates.sort {
-                if $0.lengthValid != $1.lengthValid { return $0.lengthValid && !$1.lengthValid }
-                return $0.matchCount > $1.matchCount
-            }
+            topCandidates.sort { $0.matchCount > $1.matchCount }
             if topCandidates.count > topN { topCandidates.removeLast(topCandidates.count - topN) }
         }
 
-        // Candidate selection:
-        // Matching the 32-bit sync header alone can be ambiguous when matchCount is close to threshold
-        // (e.g. 28/32). To disambiguate W, we additionally validate the 8-bit length header that follows
-        // the sync marker in the FEC payload:
-        //   payloadBits = sync(32) + eccBits
-        // and eccBits begins with a length byte (1...16).
-        var bestMatchCount = -1
-        var bestLengthValid = false
-        var bestLengthByte: Int = -1
-        var bestBx = 0
-        var bestBy = 0
-        var bestW = 8
-
-        // Majority-vote the full W×W macro-tile for a given candidate.
-        // Used both for the fast path (bestLengthValid) and the decode fallback.
+        // SYNC-GATED confidence-weighted fold of the full W×W macro-tile.
+        //
+        // WHY GATING: the deskew is only as accurate as the FFT peak detector. A residual scale
+        // error of just 3e-4 (or ~0.1° of rotation) accumulates to >1px of grid drift across a
+        // 4000+ px image. The 64-offset scan calibrates the integer offset for ONE region; tile
+        // repetitions far from it gradually fall out of phase and read near-random bits. Folding
+        // those in destroys the vote (observed: single-window sync 32/32 raw, yet the folded
+        // payload was ~46% wrong after a scale attack).
+        //
+        // Every repetition carries the 32-bit sync header at its tile origin, so each repetition
+        // can self-certify its own alignment: only repetitions whose LOCAL sync agreement is high
+        // enough get to vote. This is purely data-driven — no drift model needed — and uniformly
+        // handles drift, dead frames, local JPEG damage and partial crops.
         func computeVotedMacroblock(w: Int, bx: Int, by: Int) -> [Int] {
-            var votedMacroblock = [Int](repeating: 0, count: w * w)
             let originX = bx % w
             let originY = by % w
 
+            struct Repetition {
+                let gy0: Int
+                let gx0: Int
+            }
+
+            // Enumerate all (even partially visible) tile repetitions.
+            var allReps: [Repetition] = []
+            var gatedReps: [Repetition] = []
+            for k in -1...(maxRows / w + 1) {
+                let gy0 = originY + k * w
+                if gy0 + w <= 0 || gy0 >= maxRows { continue }
+                for m in -1...(maxCols / w + 1) {
+                    let gx0 = originX + m * w
+                    if gx0 + w <= 0 || gx0 >= maxCols { continue }
+                    let rep = Repetition(gy0: gy0, gx0: gx0)
+                    allReps.append(rep)
+
+                    // Local sync agreement for this repetition.
+                    var valid = 0
+                    var matched = 0
+                    for i in 0..<syncCount {
+                        let gy = gy0 + i / w
+                        let gx = gx0 + i % w
+                        guard gy >= 0, gy < maxRows, gx >= 0, gx < maxCols else { continue }
+                        let hb = hardBits[gy][gx]
+                        guard hb != -1 else { continue }
+                        valid += 1
+                        if hb == syncMarker[i] { matched += 1 }
+                    }
+                    // Need enough visible sync cells to judge, and ≥75% agreement.
+                    // Aligned repetitions sit at ~90-100% even under JPEG; drifted ones at ~50%.
+                    if valid >= 24 && Float(matched) >= 0.75 * Float(valid) {
+                        gatedReps.append(rep)
+                    }
+                }
+            }
+
+            // Degenerate fallback (e.g. heavy crop leaves almost no certifiable repetition):
+            // fold everything rather than nothing.
+            let reps = gatedReps.count >= 3 ? gatedReps : allReps
+            #if DEBUG
+            print("[WatermarkService] DEBUG voting: sync-gated fold w=\(w) bx=\(bx) by=\(by): accepted \(gatedReps.count)/\(allReps.count) repetitions\(gatedReps.count >= 3 ? "" : " (gate too sparse — folding ALL)")")
+            #endif
+
+            var votedMacroblock = [Int](repeating: 0, count: w * w)
             for i in 0..<(w * w) {
                 let tileRow = i / w
                 let tileCol = i % w
 
-                var ones = 0
-                var total = 0
-
-                // Start from -1 to "steal" partially-visible tiles at the top/left after cropping.
-                for k in -1...(maxRows / w + 1) {
-                    let globalY = originY + tileRow + k * w
-                    if globalY >= 0 && globalY < maxRows {
-                        for m in -1...(maxCols / w + 1) {
-                            let globalX = originX + tileCol + m * w
-                            if globalX >= 0 && globalX < maxCols {
-                                let bitValue = bits[globalY][globalX]
-                                // only 0 and 1 are valid votes, skip -1 (polluted blocks)
-                                if bitValue == 1 { 
-                                    ones += 1 
-                                    total += 1
-                                } else if bitValue == 0 {
-                                    total += 1
-                                }
-                            }
-                        }
+                var sum: Float = 0
+                var validVotes = 0
+                for rep in reps {
+                    let gy = rep.gy0 + tileRow
+                    let gx = rep.gx0 + tileCol
+                    guard gy >= 0, gy < maxRows, gx >= 0, gx < maxCols else { continue }
+                    let s = scores[gy][gx]
+                    if !s.isNaN {
+                        sum += s
+                        validVotes += 1
                     }
                 }
-                
-                // if all blocks at this position are恰好都被黑边污染了（total == 0），
-                // can only guess 0 
-                votedMacroblock[i] = (total > 0 && ones * 2 >= total) ? 1 : 0
+
+                // All repetitions abstained (e.g. fully inside the dead frame) → guess 0.
+                votedMacroblock[i] = (validVotes > 0 && sum >= 0) ? 1 : 0
             }
             return votedMacroblock
         }
@@ -169,8 +233,13 @@ extension WatermarkService {
         // We do not know:
         // - where the macro tile starts (block-level crop/translation),
         // - what W is (depends on payload size; extractor doesn't know length until it finds sync),
-        // so we scan (bx,by,w) and pick the best match.
-        for by in 0..<maxRows {
+        // so we scan (bx,by,w) and keep the best matches.
+        var bestMatchCount = -1
+        var bestBx = 0
+        var bestBy = 0
+        var bestW = 8
+
+        scan: for by in 0..<maxRows {
             for bx in 0..<maxCols {
                 for w in 8...18 {
                     let maxRowNeeded = by + (32 / w) + 1
@@ -181,94 +250,21 @@ extension WatermarkService {
                     for i in 0..<32 {
                         let r = by + (i / w)
                         let c = bx + (i % w)
-                        if bits[r][c] == syncMarker[i] { matchCount += 1 }
+                        if hardBits[r][c] == syncMarker[i] { matchCount += 1 }
                     }
 
-                    // Quick extra signal: decode the 8-bit length header right after sync using majority vote
-                    // across the repeated lattice phase implied by (bx,by,w).
-                    var lengthValid = false
-                    var lengthByte = -1
                     if matchCount >= (syncCount - tolerance) {
-                        let originX = bx % w
-                        let originY = by % w
-                        var lengthBits: [Int] = []
-                        lengthBits.reserveCapacity(8)
-                        for j in 0..<8 {
-                            let idx = syncCount + j // tile index right after sync
-                            let tileRow = idx / w
-                            let tileCol = idx % w
-                            var ones = 0
-                            var total = 0
-                            for k in -1...(maxRows / w + 1) {
-                                let gy = originY + tileRow + k * w
-                                if gy >= 0 && gy < maxRows {
-                                    for m in -1...(maxCols / w + 1) {
-                                        let gx = originX + tileCol + m * w
-                                        if gx >= 0 && gx < maxCols {
-                                            // Must mirror computeVotedMacroblock: -1 (polluted/dead-frame)
-                                            // is an abstention, NOT a 0-vote. Counting it in `total` biases
-                                            // every length bit toward 0 whenever a dead frame exists.
-                                            let bitValue = bits[gy][gx]
-                                            if bitValue == 1 {
-                                                ones += 1
-                                                total += 1
-                                            } else if bitValue == 0 {
-                                                total += 1
-                                            }
-                                        }
-                                    }
-                                }
-                            }
-                            // Guard total > 0: with all repetitions abstaining, `0 >= 0` would
-                            // otherwise fabricate a 1 — same convention as computeVotedMacroblock.
-                            lengthBits.append((total > 0 && ones * 2 >= total) ? 1 : 0)
-                        }
-                        lengthByte = bitsToByte(lengthBits)
-                        // Length header is the UTF-8 byte count of the original message.
-                        // In addition to being within [1,16], the inferred `w` must be able to carry the full payload:
-                        //   payloadBits = sync(32) + eccBits
-                        // and `eccBits` length is fully determined by messageLength under our Hamming(8,4)+interleaving scheme.
-                        if (1...16).contains(lengthByte) {
-                            let eccCount = expectedEccBitCount(messageLengthBytes: lengthByte)
-                            lengthValid = (syncCount + eccCount) <= (w * w)
-                        } else {
-                            lengthValid = false
-                        }
-
-                        #if DEBUG
-                        if matchCount >= (syncCount - tolerance) {
-                            pushTopCandidate(
-                                Candidate(
-                                    matchCount: matchCount,
-                                    w: w,
-                                    bx: bx,
-                                    by: by,
-                                    lengthByte: lengthByte,
-                                    lengthValid: lengthValid
-                                )
-                            )
-                        }
-                        #endif
+                        pushTopCandidate(Candidate(matchCount: matchCount, w: w, bx: bx, by: by))
                     }
-
-                    // Prefer candidates with a valid length header; then maximize matchCount.
-                    let better =
-                        (lengthValid && !bestLengthValid)
-                        || (lengthValid == bestLengthValid && matchCount > bestMatchCount)
-
-                    if better {
+                    if matchCount > bestMatchCount {
                         bestMatchCount = matchCount
-                        bestLengthValid = lengthValid
-                        bestLengthByte = lengthByte
                         bestBx = bx
                         bestBy = by
                         bestW = w
                     }
-                    if matchCount == 32 { break }
+                    if matchCount == 32 { break scan }
                 }
-                if bestMatchCount == 32 { break }
             }
-            if bestMatchCount == 32 { break }
         }
 
         guard bestMatchCount >= (syncCount - tolerance) else {
@@ -279,77 +275,40 @@ extension WatermarkService {
             )
             return ([], diag)
         }
-        // If we found at least one candidate above sync tolerance but none yields a plausible payload length,
-        // extraction is too noisy—fail closed.
-        if !bestLengthValid {
-            #if DEBUG
-            print("[WatermarkService] DEBUG voting: sync ok (\(bestMatchCount)/32) but length header invalid (byte=\(bestLengthByte)) w=\(bestW) bx=\(bestBx) by=\(bestBy)")
-            if !topCandidates.isEmpty {
-                let shown = topCandidates.prefix(5)
-                print("[WatermarkService] DEBUG voting: top candidates (sync/w/lenValid/lenByte/bx/by):")
-                for c in shown {
-                    print("  - sync=\(c.matchCount)/32 w=\(c.w) lenValid=\(c.lengthValid ? "true" : "false") lenByte=\(c.lengthByte) bx=\(c.bx) by=\(c.by)")
-                }
-            }
-            #endif
 
-            // Fallback: try FEC-decoding for top-N candidates.
-            // This avoids false negatives caused by the raw (uncorrected) 8-bit length byte.
-            #if DEBUG
-            let candidatesToTry = topCandidates.sorted { $0.matchCount > $1.matchCount }.prefix(6)
-            #else
-            let candidatesToTry = topCandidates.sorted { $0.matchCount > $1.matchCount }.prefix(3)
-            #endif
-            for c in candidatesToTry {
-                let w = c.w
-                let votedMacroblock = computeVotedMacroblock(w: w, bx: c.bx, by: c.by)
-                let payloadBits = votedMacroblock.count >= syncCount ? Array(votedMacroblock.dropFirst(syncCount)) : []
-                #if DEBUG
-                print("[WatermarkService] DEBUG voting: fallback macroblock sync=\(c.matchCount)/32 w=\(w) payloadBits=\(payloadBits.count) rawLenByte=\(c.lengthByte)")
-                #endif
+        // 2) Validate candidates by ACTUAL FEC decode, best sync match first.
+        // `w*w` may include padded zeros beyond the real eccBits length, which would feed garbage
+        // Hamming codewords into decodeFEC — so we truncate per guessed message length instead.
+        for c in topCandidates {
+            let votedMacroblock = computeVotedMacroblock(w: c.w, bx: c.bx, by: c.by)
+            let payloadBits = Array(votedMacroblock.dropFirst(syncCount))
 
-                // Critical: do NOT decode the entire payloadBits blindly.
-                // `w*w` may include padded zeros beyond the real eccBits length, which can introduce
-                // extra (garbage/noisy) Hamming codewords and cause decodeFEC to fail.
-                // Instead, try truncating to the expected ecc bit-count for each possible message length.
-                for messageLenGuess in 1...16 {
-                    let eccCount = expectedEccBitCount(messageLengthBytes: messageLenGuess)
-                    guard payloadBits.count >= eccCount else { continue }
-                    let eccBits = Array(payloadBits.prefix(eccCount))
-                    let decoded = decodeFEC(bits: eccBits)
+            for messageLenGuess in 1...16 {
+                let eccCount = expectedEccBitCount(messageLengthBytes: messageLenGuess)
+                guard (syncCount + eccCount) <= (c.w * c.w), payloadBits.count >= eccCount else { continue }
+                if decodeFEC(bits: Array(payloadBits.prefix(eccCount))) != nil {
                     #if DEBUG
-                    if decoded != nil {
-                        print("[WatermarkService] DEBUG voting: fallback decode SUCCESS sync=\(c.matchCount)/32 w=\(w) guessLen=\(messageLenGuess) decodedCount=\(decoded!.count)")
-                    }
+                    print("[WatermarkService] DEBUG voting: decode SUCCESS sync=\(c.matchCount)/32 w=\(c.w) bx=\(c.bx) by=\(c.by) guessLen=\(messageLenGuess)")
                     #endif
-                    if decoded != nil {
-                        let diag = MajorityVotingDiagnostics(
-                            bestSyncBitsMatched: c.matchCount,
-                            macroTileWidth: w,
-                            votedMacroblockBitCount: votedMacroblock.count
-                        )
-                        return (votedMacroblock, diag)
-                    }
+                    let diag = MajorityVotingDiagnostics(
+                        bestSyncBitsMatched: c.matchCount,
+                        macroTileWidth: c.w,
+                        votedMacroblockBitCount: votedMacroblock.count
+                    )
+                    return (votedMacroblock, diag)
                 }
             }
-
-            // Even if length header is invalid, return the best-sync macroblock so the caller can
-            // try a more robust decode strategy (e.g. length-guessed truncation).
-            #if DEBUG
-            print("[WatermarkService] DEBUG voting: all fallback decode attempts failed; returning best-sync macroblock (w=\(bestW) bx=\(bestBx) by=\(bestBy))")
-            #endif
-            let voted = computeVotedMacroblock(w: bestW, bx: bestBx, by: bestBy)
-            let diag = MajorityVotingDiagnostics(
-                bestSyncBitsMatched: bestMatchCount,
-                macroTileWidth: bestW,
-                votedMacroblockBitCount: voted.count
-            )
-            return (voted, diag)
         }
-        #if DEBUG
-        print("[WatermarkService] DEBUG voting: best sync=\(bestMatchCount)/32 w=\(bestW) len=\(bestLengthByte) bx=\(bestBx) by=\(bestBy)")
-        #endif
 
+        // 3) Nothing decoded — return the best-sync macroblock so the caller can still try its
+        // own decode strategies (e.g. length-guessed truncation).
+        #if DEBUG
+        print("[WatermarkService] DEBUG voting: no candidate FEC-decoded; returning best-sync macroblock sync=\(bestMatchCount)/32 w=\(bestW) bx=\(bestBx) by=\(bestBy)")
+        print("[WatermarkService] DEBUG voting: top candidates (sync/w/bx/by):")
+        for c in topCandidates.prefix(6) {
+            print("  - sync=\(c.matchCount)/32 w=\(c.w) bx=\(c.bx) by=\(c.by)")
+        }
+        #endif
         let voted = computeVotedMacroblock(w: bestW, bx: bestBx, by: bestBy)
         let diag = MajorityVotingDiagnostics(
             bestSyncBitsMatched: bestMatchCount,
@@ -362,14 +321,6 @@ extension WatermarkService {
     func applyMajorityVoting(to bits: [[Int]]) -> [Int] {
         applyMajorityVotingWithDiagnostics(to: bits).bits
     }
-}
-
-private func bitsToByte(_ bits: [Int]) -> Int {
-    var value = 0
-    for b in bits.prefix(8) {
-        value = (value << 1) | (b & 1)
-    }
-    return value
 }
 
 /// Computes `encodeFEC(text:)` output bit count for a given UTF-8 byte length, without constructing the text.
@@ -385,4 +336,3 @@ private func expectedEccBitCount(messageLengthBytes: Int) -> Int {
     let codewordBits = (paddedRaw / 4) * 8
     return codewordBits
 }
-

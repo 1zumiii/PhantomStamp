@@ -432,17 +432,20 @@ class WatermarkService: WatermarkServiceProtocol {
                 // IMPORTANT: must read from the deskewed Y channel — the offset was found on the
                 // geometrically-corrected image, so applying it to the raw (still rotated/scaled)
                 // yChannel would dis-align every macroblock and yield garbage bits.
-                let rawExtractedBits = await self.extractBitsWithOffset(deskewedYChannel, offset: gridOffset)
+                // SOFT scores (signed diffs) instead of hard bits: after geometric attacks the
+                // per-block diffs are heavily attenuated, and confidence-weighted voting is what
+                // keeps the folded macro-tile inside the Hamming(8,4) correction budget.
+                let rawExtractedScores = await self.extractSoftBitsWithOffset(deskewedYChannel, offset: gridOffset)
                 await reportProgress(step: .extractBitGrid, percentage: 0.72)
 
                 // 4. data recovery and decoding
-                let voting = await self.applyMajorityVotingWithDiagnostics(to: rawExtractedBits)
+                let voting = await self.applySoftMajorityVotingWithDiagnostics(to: rawExtractedScores)
                 let votedBits = voting.bits
                 await reportProgress(step: .extractMajorityVoting, percentage: 0.85)
 
                 #if DEBUG
-                let rows = rawExtractedBits.count
-                let cols = rawExtractedBits.first?.count ?? 0
+                let rows = rawExtractedScores.count
+                let cols = rawExtractedScores.first?.count ?? 0
                 print("[WatermarkService] DEBUG extract: gridOffset=(\(Int(gridOffset.x)),\(Int(gridOffset.y))) rawBits=\(rows)x\(cols) votedBits=\(votedBits.count)")
                 #endif
 
@@ -454,8 +457,8 @@ class WatermarkService: WatermarkServiceProtocol {
                     offsetScanBestSyncBits: gridScan.bestSyncBitsMatched,
                     gridOffsetX: Int(gridOffset.x),
                     gridOffsetY: Int(gridOffset.y),
-                    rawBitGridRows: rawExtractedBits.count,
-                    rawBitGridCols: rawExtractedBits.first?.count ?? 0,
+                    rawBitGridRows: rawExtractedScores.count,
+                    rawBitGridCols: rawExtractedScores.first?.count ?? 0,
                     majorityBestSyncBits: maj?.bestSyncBitsMatched,
                     majorityMacroTileWidth: maj?.macroTileWidth
                 )
