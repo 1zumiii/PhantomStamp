@@ -16,7 +16,8 @@ extension WatermarkService {
         strip: ImageStrip,
         macroblock: Macroblock2D,
         thresholdSmooth: Float,
-        embeddingStrengthMultiplier: Float = 1.0
+        embeddingStrengthMultiplier: Float = 1.0,
+        smoothReductionFactor: Float = AppConstants.SmoothProtection.reductionFactor
     ) -> (strip: ImageStrip, visited8x8Blocks: Int, smoothSkipped8x8Blocks: Int) {
         var resultStrip = strip
         var visited8x8Blocks = 0
@@ -49,15 +50,15 @@ extension WatermarkService {
                 let tileIndex = iy * max(1, macroblock.bitsWide) + ix
                 let targetBit = macroblock.getBitAt(imageX: imageX, imageY: imageY)
 
-                if variance < thresholdSmooth {
-                    // Zero-energy embed on smooth blocks:
-                    // - logically occupies the macro-cell (bit index is still determined by position),
-                    // - physically keeps this 8×8 tile unchanged so we don't inject visible artifacts.
-                    // The extractor will still read a noisy bit here; majority voting + FEC are expected
-                    // to recover the canonical macro-tile thanks to full-image repetition.
+                // Weak-energy embed on smooth blocks (replaces the old zero-energy skip):
+                // smooth regions are spatially CLUSTERED (sky, bokeh), so skipping them wipes out
+                // entire tile repetitions at once — sync correlation and majority voting then read
+                // coherent garbage there instead of independent noise, which FEC cannot absorb.
+                // Embedding at `smoothReductionFactor × Q` keeps every macro-cell physically
+                // present (votes + sync phase never break) while the ripple stays near-invisible.
+                let isSmoothBlock = variance < thresholdSmooth
+                if isSmoothBlock {
                     smoothSkipped8x8Blocks += 1
-                    resultStrip.write8x8Block(pixelBlock, x: blockX, y: blockY)
-                    continue
                 }
 
                 var freqBlock = performDCT(pixelBlock)
@@ -77,7 +78,9 @@ extension WatermarkService {
                     &freqBlock,
                     bit: targetBit,
                     strength: strength,
-                    globalMultiplier: embeddingStrengthMultiplier
+                    globalMultiplier: isSmoothBlock
+                        ? embeddingStrengthMultiplier * smoothReductionFactor
+                        : embeddingStrengthMultiplier
                 )
                 pixelBlock = performIDCT(freqBlock)
                 resultStrip.write8x8Block(pixelBlock, x: blockX, y: blockY)

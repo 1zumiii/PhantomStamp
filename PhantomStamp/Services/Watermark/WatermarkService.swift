@@ -106,6 +106,24 @@ class WatermarkService: WatermarkServiceProtocol {
             text: text,
             sourceImageName: sourceImageName,
             shouldHideProgressbar: shouldHideProgressbar,
+            parameterOverrides: nil,
+            reportsProgressNotifications: true
+        )
+    }
+
+    /// Advanced Mode: one-shot embed parameters that bypass persisted `UserSettingsStore` values.
+    func embedWatermark(
+        into image: UIImage,
+        text: String,
+        sourceImageName: String?,
+        parameterOverrides: AdvancedEmbedOverrides
+    ) async throws -> UIImage {
+        try await embedWatermark(
+            into: image,
+            text: text,
+            sourceImageName: sourceImageName,
+            shouldHideProgressbar: true,
+            parameterOverrides: parameterOverrides,
             reportsProgressNotifications: true
         )
     }
@@ -118,6 +136,7 @@ class WatermarkService: WatermarkServiceProtocol {
             text: text,
             sourceImageName: nil,
             shouldHideProgressbar: false,
+            parameterOverrides: nil,
             reportsProgressNotifications: false
         )
     }
@@ -127,6 +146,7 @@ class WatermarkService: WatermarkServiceProtocol {
         text: String,
         sourceImageName: String?,
         shouldHideProgressbar: Bool,
+        parameterOverrides: AdvancedEmbedOverrides?,
         reportsProgressNotifications: Bool
     ) async throws -> UIImage {
         #if DEBUG
@@ -166,13 +186,19 @@ class WatermarkService: WatermarkServiceProtocol {
 
         let historyStarted = CFAbsoluteTimeGetCurrent()
         let thresholdSnapshot: Double = await MainActor.run {
-            settingsStore?.textureVarianceThreshold ?? AppConstants.SettingsDefault.textureVarianceThreshold
+            if let overrides = parameterOverrides {
+                return overrides.varianceThreshold
+            }
+            return settingsStore?.textureVarianceThreshold ?? AppConstants.SettingsDefault.textureVarianceThreshold
         }
         let syncIntensitySnapshot: Double = await MainActor.run {
             settingsStore?.syncTemplateIntensity ?? AppConstants.SettingsDefault.syncTemplateIntensity
         }
         let embeddingStrengthSnapshot: Double = await MainActor.run {
-            settingsStore?.embeddingStrength ?? AppConstants.SettingsDefault.embeddingStrength
+            if let overrides = parameterOverrides {
+                return overrides.embeddingIntensity
+            }
+            return settingsStore?.embeddingStrength ?? AppConstants.SettingsDefault.embeddingStrength
         }
 
         do {

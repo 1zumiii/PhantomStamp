@@ -26,7 +26,8 @@ extension AppConstants {
         /// Save to Photos toggle (always-on until properly wired to export pipeline).
         static let saveToPhotos         = "phantomstamp.settings.saveToPhotos"
 
-        /// Adaptive texture protection: skip modifying low-variance 8×8 blocks (zero-energy embed).
+        /// Adaptive texture protection: low-variance 8×8 blocks are embedded at reduced strength
+        /// (weak-energy embed, see `SmoothProtection.reductionFactor`).
         static let textureVarianceThreshold = "phantomstamp.settings.textureVarianceThreshold"
 
         /// DFT sync template ripple intensity (peak ± LSB per pixel) used by `applySpatialTiling`.
@@ -55,6 +56,16 @@ extension AppConstants {
         /// barely visible but the geometric detection becomes flaky on textured images. Tunable
         /// per-image via the slider on `RobustnessTestingView`.
         static let syncTemplateIntensity: Double = 5.0
+    }
+
+    /// Smooth-block protection (weak-energy embed).
+    ///
+    /// Blocks whose variance falls below `textureVarianceThreshold` are NO LONGER zero-energy
+    /// skipped: they are embedded with the adaptive-Q global multiplier scaled by this factor.
+    /// The bit stays physically present (sync correlation and majority voting never lose whole
+    /// repetitions in flat regions) while the ripple amplitude stays visually negligible.
+    enum SmoothProtection {
+        static let reductionFactor: Float = 0.3
     }
 
     /// Settings slider range for embedding strength (global Q multiplier).
