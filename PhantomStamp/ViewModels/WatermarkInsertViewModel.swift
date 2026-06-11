@@ -30,6 +30,7 @@ final class WatermarkInsertViewModel {
 
     static let payloadMinLength = 8
     static let payloadMaxLength = 16
+    static let maxSelectedImageCount = 9
 
     init(watermarkService: any WatermarkServiceProtocol) {
         self.watermarkService = watermarkService
@@ -51,10 +52,18 @@ final class WatermarkInsertViewModel {
         !selectedPhotoItems.isEmpty && isPayloadLengthValid && !isEmbedding && !showSuccessOverlay
     }
 
+    var remainingImageSlots: Int {
+        max(0, Self.maxSelectedImageCount - selectedPhotoItems.count)
+    }
+
+    var isAtImageLimit: Bool {
+        remainingImageSlots == 0
+    }
+
     func appendPickedItems(_ items: [SelectedPhotoItem]) {
-        guard !items.isEmpty else { return }
+        guard !items.isEmpty, remainingImageSlots > 0 else { return }
         let start = selectedPhotoItems.count
-        let adjusted: [SelectedPhotoItem] = items.enumerated().map { offset, item in
+        let adjusted: [SelectedPhotoItem] = items.prefix(remainingImageSlots).enumerated().map { offset, item in
             guard item.displayName == SelectedPhotoItem.missingFileNamePlaceholder else { return item }
             let n = start + offset + 1
             return SelectedPhotoItem(

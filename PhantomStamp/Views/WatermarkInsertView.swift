@@ -87,6 +87,12 @@ struct WatermarkInsertView: View {
         })
     }
 
+    private var uploadedCountLabel: String {
+        let max = WatermarkInsertViewModel.maxSelectedImageCount
+        if vm.selectedPhotoItems.isEmpty { return "None yet" }
+        return "\(vm.selectedPhotoItems.count) / \(max) photo(s)"
+    }
+
     private var embedErrorBinding: Binding<Bool> {
         Binding(
             get: { vm.showEmbedErrorAlert },
@@ -137,7 +143,7 @@ struct WatermarkInsertView: View {
 
     private var header: some View {
         VStack(alignment: .leading, spacing: 8) {
-            Text("Embed flow")
+            Text("Embedding Flow")
                 .font(.caption.weight(.semibold))
                 .foregroundStyle(.secondary)
                 .padding(.horizontal, 10)
@@ -169,7 +175,7 @@ struct WatermarkInsertView: View {
 
             PhotosPicker(
                 selection: $photoPickerItems,
-                maxSelectionCount: nil,
+                maxSelectionCount: vm.isAtImageLimit ? 1 : vm.remainingImageSlots,
                 matching: ImagePickerSupport.imagesOnlyFilter,
                 preferredItemEncoding: .automatic,
                 label: {
@@ -190,7 +196,9 @@ struct WatermarkInsertView: View {
                             Text("Tap to choose photos")
                                 .font(.headline.weight(.semibold))
                                 .foregroundStyle(.primary)
-                            Text("Images only • Added picks append to the strip")
+                            Text(vm.isAtImageLimit
+                                ? "Maximum \(WatermarkInsertViewModel.maxSelectedImageCount) photos reached"
+                                : "Images only • Up to \(WatermarkInsertViewModel.maxSelectedImageCount) • Picks append")
                                 .font(.caption)
                                 .foregroundStyle(.secondary)
                                 .multilineTextAlignment(.center)
@@ -203,7 +211,7 @@ struct WatermarkInsertView: View {
                 }
             )
             .buttonStyle(.plain)
-            .disabled(vm.isEmbedding || vm.showSuccessOverlay)
+            .disabled(vm.isEmbedding || vm.showSuccessOverlay || vm.isAtImageLimit)
 
             Divider()
                 .opacity(0.35)
@@ -213,7 +221,7 @@ struct WatermarkInsertView: View {
                     .font(.caption.weight(.semibold))
                     .foregroundStyle(.secondary)
                 Spacer()
-                Text(vm.selectedPhotoItems.isEmpty ? "None yet" : "\(vm.selectedPhotoItems.count) photo(s)")
+                Text(uploadedCountLabel)
                     .font(.caption)
                     .foregroundStyle(.secondary)
             }
