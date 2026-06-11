@@ -26,6 +26,8 @@ class WatermarkService: WatermarkServiceProtocol {
     /// Heavy-matrix extract phase: payload after sync strip, plus optional diagnostics for history UI.
     private struct ExtractMatrixWorkResult: Sendable {
         var payloadBitsWithoutSync: [Int]
+        var deskewAngleRadians: Float
+        var deskewScale: Float
         var offsetScanBestSyncBits: Int
         var gridOffsetX: Int?
         var gridOffsetY: Int?
@@ -342,6 +344,7 @@ class WatermarkService: WatermarkServiceProtocol {
                 startedAt: historyStarted,
                 sourceImageName: sourceImageName,
                 embedTextureVarianceThreshold: thresholdSnapshot,
+                embedEmbeddingStrength: embeddingStrengthSnapshot,
                 embedVisited8x8BlockCount: embedVisited8x8Blocks,
                 embedSmoothSkipped8x8BlockCount: embedSmoothSkipped8x8Blocks
             )
@@ -364,6 +367,7 @@ class WatermarkService: WatermarkServiceProtocol {
                 startedAt: historyStarted,
                 sourceImageName: sourceImageName,
                 embedTextureVarianceThreshold: thresholdSnapshot,
+                embedEmbeddingStrength: embeddingStrengthSnapshot,
                 embedVisited8x8BlockCount: nil,
                 embedSmoothSkipped8x8BlockCount: nil
             )
@@ -500,6 +504,8 @@ class WatermarkService: WatermarkServiceProtocol {
                 guard let gridOffset = gridScan.offset else {
                     return ExtractMatrixWorkResult(
                         payloadBitsWithoutSync: [],
+                        deskewAngleRadians: transformParams.angle,
+                        deskewScale: transformParams.scale,
                         offsetScanBestSyncBits: gridScan.bestSyncBitsMatched,
                         gridOffsetX: nil,
                         gridOffsetY: nil,
@@ -536,6 +542,8 @@ class WatermarkService: WatermarkServiceProtocol {
                 let maj = voting.diagnostics
                 return ExtractMatrixWorkResult(
                     payloadBitsWithoutSync: payload,
+                    deskewAngleRadians: transformParams.angle,
+                    deskewScale: transformParams.scale,
                     offsetScanBestSyncBits: gridScan.bestSyncBitsMatched,
                     gridOffsetX: Int(gridOffset.x),
                     gridOffsetY: Int(gridOffset.y),
@@ -806,6 +814,7 @@ class WatermarkService: WatermarkServiceProtocol {
         startedAt: CFAbsoluteTime,
         sourceImageName: String? = nil,
         embedTextureVarianceThreshold: Double? = nil,
+        embedEmbeddingStrength: Double? = nil,
         embedVisited8x8BlockCount: Int? = nil,
         embedSmoothSkipped8x8BlockCount: Int? = nil
     ) async {
@@ -838,7 +847,8 @@ class WatermarkService: WatermarkServiceProtocol {
                 durationMs: durationMs,
                 embedVisited8x8BlockCount: embedVisited8x8BlockCount,
                 embedSmoothSkipped8x8BlockCount: embedSmoothSkipped8x8BlockCount,
-                embedTextureVarianceThreshold: embedTextureVarianceThreshold
+                embedTextureVarianceThreshold: embedTextureVarianceThreshold,
+                embedEmbeddingStrength: embedEmbeddingStrength
             )
             HistoryRecordService.insertAndSave(record, context: ctx)
         }
@@ -886,6 +896,10 @@ class WatermarkService: WatermarkServiceProtocol {
                 error: error,
                 durationMs: durationMs,
                 syncMatchCount: work?.offsetScanBestSyncBits,
+                extractDeskewAngleDegrees: work.map {
+                    Double($0.deskewAngleRadians) * 180.0 / .pi
+                },
+                extractDeskewScale: work.map { Double($0.deskewScale) },
                 extractGridOffsetXPx: work?.gridOffsetX,
                 extractGridOffsetYPx: work?.gridOffsetY,
                 extractMajoritySyncBits: work?.majorityBestSyncBits,

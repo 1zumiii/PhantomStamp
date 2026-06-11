@@ -27,8 +27,10 @@ struct WatermarkInsertView: View {
     /// Loupe mask threshold — decoupled from live slider drag to keep scrolling/dragging smooth.
     @State private var loupePreviewSigma: Double = 2.0
     @State private var sigmaLoupeDebounceTask: Task<Void, Never>?
-    /// Local UI state for the global embedding intensity (adaptive-Q multiplier), placeholder for now.
+    /// Local UI state for the global embedding intensity (adaptive-Q multiplier).
     @State private var advancedIntensity: Double = 10.0
+    @State private var loupePreviewIntensity: Double = 10.0
+    @State private var intensityLoupeDebounceTask: Task<Void, Never>?
     @State private var selectedAdvancedSubTab: AdvancedSubTab = .smoothBlock
 
     @State private var advancedCanvasVM = AdvancedModeCanvasViewModel()
@@ -311,12 +313,28 @@ struct WatermarkInsertView: View {
             : "Images only • Up to \(WatermarkInsertViewModel.maxSelectedImageCount) • Picks append"
     }
 
+    private var advancedVarianceThreshold: Float {
+        Float(advancedSigma * advancedSigma)
+    }
+
+    private var advancedCanvasVisualization: AdvancedCanvasVisualization {
+        switch selectedAdvancedSubTab {
+        case .smoothBlock:
+            return .smoothBlock(varianceThreshold: Float(loupePreviewSigma * loupePreviewSigma))
+        case .intensity:
+            return .embedIntensity(
+                varianceThreshold: advancedVarianceThreshold,
+                embeddingIntensity: Float(loupePreviewIntensity)
+            )
+        }
+    }
+
     /// Advanced-mode canvas: grid layout with custom reticle sliders (see `AdvancedModeCanvasView`).
     private func advancedCanvasViewport(for item: SelectedPhotoItem) -> some View {
         AdvancedModeCanvasView(
             viewModel: advancedCanvasVM,
             item: item,
-            varianceThreshold: Float(loupePreviewSigma * loupePreviewSigma),
+            visualization: advancedCanvasVisualization,
             watermarkService: watermarkService,
             isInteractionEnabled: !vm.isEmbedding && !vm.showSuccessOverlay,
             onRemovePhoto: {
@@ -384,23 +402,36 @@ struct WatermarkInsertView: View {
                 }
             case .intensity:
                 VStack(alignment: .leading, spacing: 10) {
-                    HStack(alignment: .firstTextBaseline) {
-                        Text("Global Embedding Intensity")
-                            .font(.subheadline.weight(.semibold))
-                            .foregroundStyle(.primary)
-                        Spacer()
-                        Text("\(advancedIntensity, specifier: "%.1f")×")
-                            .font(.caption.monospacedDigit().weight(.semibold))
-                            .foregroundStyle(.secondary)
-                    }
+                    Text("Global Embedding Intensity")
+                        .font(.subheadline.weight(.semibold))
+                        .foregroundStyle(.primary)
 
-                    Slider(value: $advancedIntensity, in: 0...10, step: 0.5)
-                        .tint(Color.orange)
-
-                    Text("Placeholder — multiplies the adaptive quantization step for this run only.")
-                        .font(.caption)
-                        .foregroundStyle(.secondary)
-                        .fixedSize(horizontal: false, vertical: true)
+                    EmbeddingIntensityControl(
+                        intensity: $advancedIntensity,
+                        baseQCache: advancedCanvasVM.baseQCache,
+                        varianceCache: advancedCanvasVM.varianceCache,
+                        varianceThreshold: advancedVarianceThreshold,
+                        isEnabled: !vm.isEmbedding && !vm.showSuccessOverlay,
+                        onLiveIntensityChange: { liveIntensity in
+                            guard !vm.isEmbedding, !vm.showSuccessOverlay else { return }
+                            intensityLoupeDebounceTask?.cancel()
+                            intensityLoupeDebounceTask = Task {
+                                try? await Task.sleep(for: .milliseconds(280))
+                                guard !Task.isCancelled else { return }
+                                await MainActor.run {
+                                    loupePreviewIntensity = liveIntensity
+                                }
+                            }
+                        },
+                        onEditingChanged: { editing in
+                            if editing {
+                                intensityLoupeDebounceTask?.cancel()
+                            } else {
+                                intensityLoupeDebounceTask?.cancel()
+                                loupePreviewIntensity = advancedIntensity
+                            }
+                        }
+                    )
                 }
             }
         }

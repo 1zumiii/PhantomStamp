@@ -204,7 +204,6 @@ private struct WatermarkHistoryCardRow: View {
                 thumbnail
 
                 VStack(alignment: .leading, spacing: 6) {
-                    
                     HStack(alignment: .firstTextBaseline) {
                         Text(OperationDetailDisplay.historyListTitleBase(for: record))
                             .font(.headline.weight(.semibold))
@@ -219,7 +218,6 @@ private struct WatermarkHistoryCardRow: View {
                             .lineLimit(1)
                     }
 
-                    
                     HStack(spacing: 8) {
                         statusTag
 
@@ -227,19 +225,28 @@ private struct WatermarkHistoryCardRow: View {
                             Text("•")
                                 .foregroundStyle(.secondary)
                                 .font(.caption)
-                            Text(HistoryViewModel.confidenceLabel(for: record))
-                                .font(.caption)
-                                .foregroundStyle(.secondary)
+                            if record.operationType == .embed,
+                               let summary = HistoryFormatters.embedSettingsSummary(
+                                   varianceThreshold: record.embedTextureVarianceThreshold,
+                                   embeddingStrength: record.embedEmbeddingStrength
+                               ) {
+                                Text(summary)
+                                    .font(.caption)
+                                    .foregroundStyle(.secondary)
+                            } else {
+                                Text(HistoryViewModel.confidenceLabel(for: record))
+                                    .font(.caption)
+                                    .foregroundStyle(.secondary)
+                            }
                         }
                     }
                     .padding(.top, 2)
 
                     Spacer(minLength: 0)
 
-                    
                     HStack(spacing: 12) {
                         Spacer()
-                        
+
                         if let onDelete {
                             Button(action: onDelete) {
                                 actionButton(icon: "trash", isDestructive: true)

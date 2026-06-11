@@ -2,7 +2,7 @@
 //  LoupeDisplayBuilder.swift
 //  PhantomStamp
 //
-//  Off-main-thread loupe crop + smooth-mask precompute for Advanced Mode.
+//  Off-main-thread loupe crop + overlay precompute for Advanced Mode.
 //
 
 import UIKit
@@ -13,15 +13,14 @@ enum LoupeDisplayBuilder {
         let maskOverlayImage: UIImage
         let originBlockX: Int
         let originBlockY: Int
-        let smoothLocalCells: [(x: Int, y: Int)]
         let activeLocalX: Int
         let activeLocalY: Int
     }
 
     struct Key: Hashable {
+        let mode: LoupeOverlayMode
         let reticleBlockX: Int
         let reticleBlockY: Int
-        let varianceThresholdBits: UInt32
         let maxBlocksX: Int
         let maxBlocksY: Int
         let imagePixelWidth: Int
@@ -30,20 +29,25 @@ enum LoupeDisplayBuilder {
         let loupePixelSize: Int
     }
 
+    enum LoupeOverlayMode: Hashable {
+        case smoothMask(varianceThresholdBits: UInt32)
+        case amplitudeHeatmap(varianceThresholdBits: UInt32, embeddingIntensityBits: UInt32)
+    }
+
     static func key(
+        mode: LoupeOverlayMode,
         image: UIImage,
         cache: MacroblockVarianceCache,
         reticleBlockX: Int,
         reticleBlockY: Int,
-        varianceThreshold: Float,
         gridSpan: Int,
         loupeSize: CGFloat,
         displayScale: CGFloat
     ) -> Key {
         Key(
+            mode: mode,
             reticleBlockX: reticleBlockX,
             reticleBlockY: reticleBlockY,
-            varianceThresholdBits: varianceThreshold.bitPattern,
             maxBlocksX: cache.maxBlocksX,
             maxBlocksY: cache.maxBlocksY,
             imagePixelWidth: Int(image.size.width * image.scale),
@@ -54,11 +58,12 @@ enum LoupeDisplayBuilder {
     }
 
     nonisolated static func build(
+        mode: LoupeOverlayMode,
         image: UIImage,
-        cache: MacroblockVarianceCache,
+        varianceCache: MacroblockVarianceCache,
+        baseQCache: MacroblockBaseQuantizationCache?,
         reticleBlockX: Int,
         reticleBlockY: Int,
-        varianceThreshold: Float,
         gridSpan: Int,
         loupeSize: CGFloat,
         displayScale: CGFloat
@@ -67,50 +72,90 @@ enum LoupeDisplayBuilder {
             from: image,
             reticleBlockX: reticleBlockX,
             reticleBlockY: reticleBlockY,
-            maxBlocksX: cache.maxBlocksX,
-            maxBlocksY: cache.maxBlocksY,
+            maxBlocksX: varianceCache.maxBlocksX,
+            maxBlocksY: varianceCache.maxBlocksY,
             gridSpan: gridSpan
         ) else { return nil }
 
         let originX = crop.originBlockX
         let originY = crop.originBlockY
-        var smoothLocalCells: [(x: Int, y: Int)] = []
-        smoothLocalCells.reserveCapacity(gridSpan * gridSpan / 2)
-
-        for localY in 0..<gridSpan {
-            for localX in 0..<gridSpan {
-                let blockX = originX + localX
-                let blockY = originY + localY
-                guard blockX < cache.maxBlocksX, blockY < cache.maxBlocksY else { continue }
-                if cache.variance(blockX: blockX, blockY: blockY) < varianceThreshold {
-                    smoothLocalCells.append((localX, localY))
-                }
-            }
-        }
-
         let activeLocalX = reticleBlockX - originX
         let activeLocalY = reticleBlockY - originY
         let pixelSize = max(1, Int((loupeSize * displayScale).rounded()))
-        let maskOverlayImage = renderMaskOverlay(
-            smoothLocalCells: smoothLocalCells,
-            activeLocalX: activeLocalX,
-            activeLocalY: activeLocalY,
-            gridSpan: gridSpan,
-            pixelSize: pixelSize
-        )
+
+        let maskOverlayImage: UIImage
+        switch mode {
+        case .smoothMask(let thresholdBits):
+            let threshold = Float(bitPattern: thresholdBits)
+            var smoothLocalCells: [(x: Int, y: Int)] = []
+            for localY in 0..<gridSpan {
+                for localX in 0..<gridSpan {
+                    let blockX = originX + localX
+                    let blockY = originY + localY
+                    guard blockX < varianceCache.maxBlocksX, blockY < varianceCache.maxBlocksY else { continue }
+                    if varianceCache.variance(blockX: blockX, blockY: blockY) < threshold {
+                        smoothLocalCells.append((localX, localY))
+                    }
+                }
+            }
+            maskOverlayImage = renderSmoothMaskOverlay(
+                smoothLocalCells: smoothLocalCells,
+                activeLocalX: activeLocalX,
+                activeLocalY: activeLocalY,
+                gridSpan: gridSpan,
+                pixelSize: pixelSize
+            )
+
+        case .amplitudeHeatmap(let thresholdBits, let intensityBits):
+            let threshold = Float(bitPattern: thresholdBits)
+            let intensity = Float(bitPattern: intensityBits)
+            guard let baseQCache else {
+                maskOverlayImage = renderSmoothMaskOverlay(
+                    smoothLocalCells: [],
+                    activeLocalX: activeLocalX,
+                    activeLocalY: activeLocalY,
+                    gridSpan: gridSpan,
+                    pixelSize: pixelSize
+                )
+                break
+            }
+            let normalizationCeiling = baseQCache.heatmapNormalizationCeiling
+            var amplitudes = [Float](repeating: 0, count: gridSpan * gridSpan)
+            for localY in 0..<gridSpan {
+                for localX in 0..<gridSpan {
+                    let blockX = originX + localX
+                    let blockY = originY + localY
+                    guard blockX < varianceCache.maxBlocksX, blockY < varianceCache.maxBlocksY else { continue }
+                    let amp = BlockEmbedAmplitude.targetAmplitude(
+                        baseAdaptiveQ: baseQCache.baseQ(blockX: blockX, blockY: blockY),
+                        variance: varianceCache.variance(blockX: blockX, blockY: blockY),
+                        varianceThreshold: threshold,
+                        embeddingIntensity: intensity
+                    )
+                    amplitudes[localY * gridSpan + localX] = amp
+                }
+            }
+            maskOverlayImage = renderAmplitudeHeatmapOverlay(
+                amplitudes: amplitudes,
+                gridSpan: gridSpan,
+                normalizationCeiling: normalizationCeiling,
+                activeLocalX: activeLocalX,
+                activeLocalY: activeLocalY,
+                pixelSize: pixelSize
+            )
+        }
 
         return Model(
             croppedImage: crop.image,
             maskOverlayImage: maskOverlayImage,
             originBlockX: originX,
             originBlockY: originY,
-            smoothLocalCells: smoothLocalCells,
             activeLocalX: activeLocalX,
             activeLocalY: activeLocalY
         )
     }
 
-    nonisolated private static func renderMaskOverlay(
+    nonisolated private static func renderSmoothMaskOverlay(
         smoothLocalCells: [(x: Int, y: Int)],
         activeLocalX: Int,
         activeLocalY: Int,
@@ -138,18 +183,70 @@ enum LoupeDisplayBuilder {
                     )
                 )
             }
-
-            guard (0..<gridSpan).contains(activeLocalX), (0..<gridSpan).contains(activeLocalY) else { return }
-
-            let highlight = CGRect(
-                x: CGFloat(activeLocalX) * cellSize,
-                y: CGFloat(activeLocalY) * cellSize,
-                width: cellSize,
-                height: cellSize
-            )
-            cg.setStrokeColor(UIColor.systemYellow.withAlphaComponent(0.95).cgColor)
-            cg.setLineWidth(1.25)
-            cg.stroke(highlight)
+            strokeActiveCell(cg: cg, activeLocalX: activeLocalX, activeLocalY: activeLocalY, gridSpan: gridSpan, cellSize: cellSize)
         }
+    }
+
+    nonisolated private static func renderAmplitudeHeatmapOverlay(
+        amplitudes: [Float],
+        gridSpan: Int,
+        normalizationCeiling: Float,
+        activeLocalX: Int,
+        activeLocalY: Int,
+        pixelSize: Int
+    ) -> UIImage {
+        let size = CGSize(width: pixelSize, height: pixelSize)
+        let format = UIGraphicsImageRendererFormat()
+        format.scale = 1
+        format.opaque = false
+
+        let renderer = UIGraphicsImageRenderer(size: size, format: format)
+        return renderer.image { rendererContext in
+            let cg = rendererContext.cgContext
+            let cellSize = CGFloat(pixelSize) / CGFloat(gridSpan)
+
+            for localY in 0..<gridSpan {
+                for localX in 0..<gridSpan {
+                    let index = localY * gridSpan + localX
+                    guard index < amplitudes.count else { continue }
+                    let amp = amplitudes[index]
+                    guard amp > 0 else { continue }
+                    cg.setFillColor(
+                        BlockEmbedAmplitude.heatmapUIColor(
+                            amplitude: amp,
+                            normalizationCeiling: normalizationCeiling
+                        ).cgColor
+                    )
+                    cg.fill(
+                        CGRect(
+                            x: CGFloat(localX) * cellSize,
+                            y: CGFloat(localY) * cellSize,
+                            width: cellSize,
+                            height: cellSize
+                        )
+                    )
+                }
+            }
+            strokeActiveCell(cg: cg, activeLocalX: activeLocalX, activeLocalY: activeLocalY, gridSpan: gridSpan, cellSize: cellSize)
+        }
+    }
+
+    nonisolated private static func strokeActiveCell(
+        cg: CGContext,
+        activeLocalX: Int,
+        activeLocalY: Int,
+        gridSpan: Int,
+        cellSize: CGFloat
+    ) {
+        guard (0..<gridSpan).contains(activeLocalX), (0..<gridSpan).contains(activeLocalY) else { return }
+        let highlight = CGRect(
+            x: CGFloat(activeLocalX) * cellSize,
+            y: CGFloat(activeLocalY) * cellSize,
+            width: cellSize,
+            height: cellSize
+        )
+        cg.setStrokeColor(UIColor.systemYellow.withAlphaComponent(0.95).cgColor)
+        cg.setLineWidth(1.25)
+        cg.stroke(highlight)
     }
 }

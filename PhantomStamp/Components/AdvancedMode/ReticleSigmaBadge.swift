@@ -7,8 +7,8 @@
 
 import SwiftUI
 
-/// Semi-transparent badge showing σ for the yellow-framed macroblock.
-struct ReticleSigmaBadge: View, Equatable {
+/// Semi-transparent HUD for the active macroblock metric (σ or embed amplitude).
+struct ReticleMetricBadge: View, Equatable {
     let label: String
 
     var body: some View {

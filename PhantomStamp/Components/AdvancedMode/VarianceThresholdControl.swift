@@ -19,8 +19,9 @@ enum SigmaTrackGeometry {
         max(1, totalWidth - thumbInset * 2)
     }
 
-    static func xPosition(forSigma sigma: Double, in totalWidth: CGFloat) -> CGFloat {
-        let t = CGFloat(min(sigmaMax, max(0, sigma)) / sigmaMax)
+    static func xPosition(forSigma sigma: Double, in totalWidth: CGFloat, domainMax: Double = sigmaMax) -> CGFloat {
+        let maxValue = max(0.001, domainMax)
+        let t = CGFloat(min(maxValue, max(0, sigma)) / maxValue)
         return thumbInset + t * trackWidth(in: totalWidth)
     }
 }

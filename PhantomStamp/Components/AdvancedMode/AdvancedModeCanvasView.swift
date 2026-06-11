@@ -12,7 +12,7 @@ struct AdvancedModeCanvasView: View {
     @Environment(\.displayScale) private var displayScale
     @Bindable var viewModel: AdvancedModeCanvasViewModel
     let item: SelectedPhotoItem
-    let varianceThreshold: Float
+    let visualization: AdvancedCanvasVisualization
     let watermarkService: any WatermarkServiceProtocol
     var isInteractionEnabled: Bool = true
     var onRemovePhoto: () -> Void
@@ -128,17 +128,18 @@ struct AdvancedModeCanvasView: View {
                     isCacheReady: viewModel.isCacheReady,
                     isBuilding: viewModel.isBuildingVarianceCache,
                     preview: viewModel.previewImage,
-                    cache: viewModel.varianceCache,
+                    varianceCache: viewModel.varianceCache,
+                    baseQCache: viewModel.baseQCache,
+                    visualization: visualization,
                     reticleBlockX: viewModel.reticleBlockX,
                     reticleBlockY: viewModel.reticleBlockY,
-                    varianceThreshold: varianceThreshold,
                     dodgeLeading: dodgeLeading,
                     displayScale: displayScale
                 )
                 .equatable()
 
-                ReticleSigmaBadgeHost(
-                    label: viewModel.reticleBlockSigmaLabel,
+                ReticleMetricBadgeHost(
+                    label: viewModel.reticleMetricLabel(for: visualization),
                     isVisible: viewModel.isCacheReady
                 )
                 .equatable()
@@ -254,13 +255,13 @@ private struct ReticleCrosshairHost: View, Equatable {
     }
 }
 
-private struct ReticleSigmaBadgeHost: View, Equatable {
+private struct ReticleMetricBadgeHost: View, Equatable {
     let label: String?
     let isVisible: Bool
 
     var body: some View {
         if isVisible, let label {
-            ReticleSigmaBadge(label: label)
+            ReticleMetricBadge(label: label)
                 .padding(10)
                 .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .bottomTrailing)
         }
@@ -284,31 +285,35 @@ private struct LoupeOverlayHost: View, Equatable {
     let isCacheReady: Bool
     let isBuilding: Bool
     let preview: UIImage?
-    let cache: MacroblockVarianceCache?
+    let varianceCache: MacroblockVarianceCache?
+    let baseQCache: MacroblockBaseQuantizationCache?
+    let visualization: AdvancedCanvasVisualization
     let reticleBlockX: Int
     let reticleBlockY: Int
-    let varianceThreshold: Float
     let dodgeLeading: Bool
     let displayScale: CGFloat
 
     static func == (lhs: Self, rhs: Self) -> Bool {
         lhs.isCacheReady == rhs.isCacheReady
             && lhs.isBuilding == rhs.isBuilding
+            && lhs.visualization == rhs.visualization
             && lhs.reticleBlockX == rhs.reticleBlockX
             && lhs.reticleBlockY == rhs.reticleBlockY
-            && lhs.varianceThreshold == rhs.varianceThreshold
             && lhs.dodgeLeading == rhs.dodgeLeading
             && lhs.displayScale == rhs.displayScale
             && Self.pairEquals(lhs.previewPixelSignature, rhs.previewPixelSignature)
             && Self.pairEquals(lhs.cacheSignature, rhs.cacheSignature)
+            && lhs.baseQReady == rhs.baseQReady
     }
+
+    private var baseQReady: Bool { baseQCache != nil }
 
     private var previewPixelSignature: (Int, Int)? {
         preview.map { (Int($0.size.width * $0.scale), Int($0.size.height * $0.scale)) }
     }
 
     private var cacheSignature: (Int, Int)? {
-        cache.map { ($0.maxBlocksX, $0.maxBlocksY) }
+        varianceCache.map { ($0.maxBlocksX, $0.maxBlocksY) }
     }
 
     private static func pairEquals(_ lhs: (Int, Int)?, _ rhs: (Int, Int)?) -> Bool {
@@ -321,13 +326,14 @@ private struct LoupeOverlayHost: View, Equatable {
 
     var body: some View {
         Group {
-            if isCacheReady, let preview, let cache {
+            if isCacheReady, let preview, let varianceCache {
                 AdvancedModeLoupeViewport(
                     image: preview,
-                    cache: cache,
+                    varianceCache: varianceCache,
+                    baseQCache: baseQCache,
+                    visualization: visualization,
                     reticleBlockX: reticleBlockX,
                     reticleBlockY: reticleBlockY,
-                    varianceThreshold: varianceThreshold,
                     gridSpan: AdvancedModeCanvasViewModel.loupeGridSpan,
                     loupeSize: AdvancedModeCanvasViewModel.loupeSize,
                     displayScale: displayScale

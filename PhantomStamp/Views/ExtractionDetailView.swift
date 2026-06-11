@@ -21,8 +21,7 @@ struct ExtractionDetailView: View {
                 heroCard
                 headerRow
                 messageCard
-                metricsGrid
-                algorithmDiagnosticsSection
+                OperationDiagnosticsTable(sections: display.diagnosticsSections)
                 failureCard
             }
             .padding(.horizontal, 20)
@@ -241,124 +240,6 @@ struct ExtractionDetailView: View {
         }
     }
 
-    private var metricsGrid: some View {
-        let sizeText: String = {
-            if let w = display.imagePixelWidth, let h = display.imagePixelHeight, w > 0, h > 0 {
-                return "\(w) × \(h)"
-            }
-            if let img = display.previewImage {
-                let w = Int(img.size.width * img.scale)
-                let h = Int(img.size.height * img.scale)
-                return "\(w) × \(h)"
-            }
-            return "—"
-        }()
-        let formatText: String = {
-            let ext = ((display.imageName as NSString).pathExtension).uppercased()
-            return ext.isEmpty ? "—" : ext
-        }()
-        let durationText: String = {
-            guard let ms = display.durationMs else { return "—" }
-            return String(format: "%.1fs", ms / 1000.0)
-        }()
-
-        return VStack(spacing: 12) {
-            HStack(spacing: 12) {
-                metricCard(title: "Processing", value: durationText, systemImage: "clock")
-                metricCard(title: "Format", value: formatText, systemImage: "doc")
-            }
-            metricCard(title: "Image size", value: sizeText, systemImage: "arrow.up.left.and.arrow.down.right")
-        }
-    }
-
-    @ViewBuilder
-    private var algorithmDiagnosticsSection: some View {
-        switch display.operationKind {
-        case .embed:
-            embedDiagnosticsContent
-        case .extract:
-            extractDiagnosticsContent
-        }
-    }
-
-    @ViewBuilder
-    private var embedDiagnosticsContent: some View {
-        let visited = display.embedVisited8x8BlockCount
-        let skipped = display.embedSmoothSkipped8x8BlockCount
-        let thr = display.embedTextureVarianceThreshold
-        if visited == nil, skipped == nil, thr == nil {
-            EmptyView()
-        } else {
-            VStack(alignment: .leading, spacing: 12) {
-                Text("EMBED DIAGNOSTICS")
-                    .font(.caption.weight(.semibold))
-                    .foregroundStyle(.secondary)
-
-                if let t = thr {
-                    metricCard(
-                        title: "Texture variance threshold",
-                        value: String(format: "%.1f", t),
-                        systemImage: "dial.low"
-                    )
-                }
-                if let v = visited {
-                    metricCard(title: "8×8 blocks scanned", value: "\(v)", systemImage: "square.grid.3x3")
-                }
-                if let s = skipped {
-                    metricCard(title: "Smooth blocks protected", value: "\(s)", systemImage: "wind")
-                }
-                if let v = visited, v > 0 {
-                    let s = skipped ?? 0
-                    let embedded = max(0, v - s)
-                    let pct = 100.0 * Double(embedded) / Double(v)
-                    metricCard(
-                        title: "Effective embed rate",
-                        value: String(format: "%.1f%% (%d / %d)", pct, embedded, v),
-                        systemImage: "percent"
-                    )
-                }
-            }
-        }
-    }
-
-    @ViewBuilder
-    private var extractDiagnosticsContent: some View {
-        let hasAny = display.syncMatchCount != nil
-            || display.extractGridOffsetXPx != nil
-            || display.extractGridOffsetYPx != nil
-            || display.extractMajoritySyncBits != nil
-            || display.extractMacroTileWidth != nil
-            || display.extractRawBitGridRows != nil
-            || display.extractRawBitGridCols != nil
-        if !hasAny {
-            EmptyView()
-        } else {
-            VStack(alignment: .leading, spacing: 12) {
-                Text("EXTRACT DIAGNOSTICS")
-                    .font(.caption.weight(.semibold))
-                    .foregroundStyle(.secondary)
-
-                if let sync = display.syncMatchCount {
-                    metricCard(title: "Offset scan sync (best /32)", value: "\(sync) / 32", systemImage: "scope")
-                }
-                if display.extractGridOffsetXPx != nil || display.extractGridOffsetYPx != nil {
-                    let xStr = display.extractGridOffsetXPx.map(String.init) ?? "—"
-                    let yStr = display.extractGridOffsetYPx.map(String.init) ?? "—"
-                    metricCard(title: "Pixel grid offset", value: "(\(xStr), \(yStr))", systemImage: "arrow.up.left")
-                }
-                if let rows = display.extractRawBitGridRows, let cols = display.extractRawBitGridCols {
-                    metricCard(title: "Raw bit grid", value: "\(rows) × \(cols)", systemImage: "square.grid.2x2")
-                }
-                if let maj = display.extractMajoritySyncBits {
-                    metricCard(title: "Majority vote sync (best /32)", value: "\(maj) / 32", systemImage: "checkmark.circle")
-                }
-                if let w = display.extractMacroTileWidth {
-                    metricCard(title: "Macro tile width W", value: "\(w)", systemImage: "rectangle.split.3x3")
-                }
-            }
-        }
-    }
-
     @ViewBuilder
     private var failureCard: some View {
         if display.status == .failed {
@@ -389,28 +270,6 @@ struct ExtractionDetailView: View {
         }
     }
 
-    private func metricCard(title: String, value: String, systemImage: String) -> some View {
-        VStack(alignment: .leading, spacing: 8) {
-            HStack(spacing: 6) {
-                Image(systemName: systemImage)
-                    .foregroundStyle(.secondary)
-                    .font(.subheadline)
-                Text(title)
-                    .font(.subheadline)
-                    .foregroundStyle(.secondary)
-            }
-
-            Text(value)
-                .font(.headline.weight(.semibold))
-                .foregroundStyle(.primary)
-        }
-        .frame(maxWidth: .infinity, alignment: .leading)
-        .padding(16)
-        .background {
-            RoundedRectangle(cornerRadius: 12, style: .continuous)
-                .fill(Color(uiColor: .secondarySystemGroupedBackground))
-        }
-    }
 }
 
 extension ExtractionDetailView {

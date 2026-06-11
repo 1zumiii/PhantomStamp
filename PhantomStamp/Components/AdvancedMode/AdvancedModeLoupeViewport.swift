@@ -6,27 +6,39 @@
 import SwiftUI
 import UIKit
 
-/// Floating magnifier: zoomed preview crop + smooth-block mask from the variance cache.
-/// Heavy crop/mask work runs off the main thread and is keyed so scroll does not re-render each frame.
+/// Floating magnifier: zoomed preview crop + overlay (smooth mask or amplitude heatmap).
 struct AdvancedModeLoupeViewport: View {
     let image: UIImage
-    let cache: MacroblockVarianceCache
+    let varianceCache: MacroblockVarianceCache
+    let baseQCache: MacroblockBaseQuantizationCache?
+    let visualization: AdvancedCanvasVisualization
     let reticleBlockX: Int
     let reticleBlockY: Int
-    let varianceThreshold: Float
     let gridSpan: Int
     let loupeSize: CGFloat
     let displayScale: CGFloat
 
     @State private var displayModel: LoupeDisplayBuilder.Model?
 
+    private var overlayMode: LoupeDisplayBuilder.LoupeOverlayMode {
+        switch visualization {
+        case .smoothBlock(let varianceThreshold):
+            return .smoothMask(varianceThresholdBits: varianceThreshold.bitPattern)
+        case .embedIntensity(let varianceThreshold, let embeddingIntensity):
+            return .amplitudeHeatmap(
+                varianceThresholdBits: varianceThreshold.bitPattern,
+                embeddingIntensityBits: embeddingIntensity.bitPattern
+            )
+        }
+    }
+
     private var cacheKey: LoupeDisplayBuilder.Key {
         LoupeDisplayBuilder.key(
+            mode: overlayMode,
             image: image,
-            cache: cache,
+            cache: varianceCache,
             reticleBlockX: reticleBlockX,
             reticleBlockY: reticleBlockY,
-            varianceThreshold: varianceThreshold,
             gridSpan: gridSpan,
             loupeSize: loupeSize,
             displayScale: displayScale
@@ -67,13 +79,15 @@ struct AdvancedModeLoupeViewport: View {
         .accessibilityHidden(true)
         .task(id: cacheKey) {
             let key = cacheKey
+            let mode = overlayMode
             let built = await Task.detached(priority: .utility) {
                 LoupeDisplayBuilder.build(
+                    mode: mode,
                     image: image,
-                    cache: cache,
+                    varianceCache: varianceCache,
+                    baseQCache: baseQCache,
                     reticleBlockX: key.reticleBlockX,
                     reticleBlockY: key.reticleBlockY,
-                    varianceThreshold: Float(bitPattern: key.varianceThresholdBits),
                     gridSpan: key.gridSpan,
                     loupeSize: loupeSize,
                     displayScale: displayScale

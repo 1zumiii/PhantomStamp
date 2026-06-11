@@ -38,6 +38,7 @@ final class AdvancedModeCanvasViewModel {
 
     private(set) var previewImage: UIImage?
     private(set) var varianceCache: MacroblockVarianceCache?
+    private(set) var baseQCache: MacroblockBaseQuantizationCache?
     private(set) var varianceHistogram: VarianceHistogramSummary?
     private(set) var isBuildingVarianceCache = false
     /// Human-readable status for on-screen debug (DEBUG) and support.
@@ -83,6 +84,59 @@ final class AdvancedModeCanvasViewModel {
         return String(format: "σ: %.2f", sigma)
     }
 
+    func blockAmplitude(
+        blockX: Int,
+        blockY: Int,
+        varianceThreshold: Float,
+        embeddingIntensity: Float
+    ) -> Float? {
+        guard let varianceCache, let baseQCache else { return nil }
+        return BlockEmbedAmplitude.targetAmplitude(
+            baseAdaptiveQ: baseQCache.baseQ(blockX: blockX, blockY: blockY),
+            variance: varianceCache.variance(blockX: blockX, blockY: blockY),
+            varianceThreshold: varianceThreshold,
+            embeddingIntensity: embeddingIntensity
+        )
+    }
+
+    func reticleBlockAmplitudeLabel(
+        varianceThreshold: Float,
+        embeddingIntensity: Float
+    ) -> String? {
+        guard let amp = blockAmplitude(
+            blockX: reticleBlockX,
+            blockY: reticleBlockY,
+            varianceThreshold: varianceThreshold,
+            embeddingIntensity: embeddingIntensity
+        ) else { return nil }
+        return String(format: "A: %.1f", amp)
+    }
+
+    func reticleMetricLabel(for visualization: AdvancedCanvasVisualization) -> String? {
+        switch visualization {
+        case .smoothBlock:
+            return reticleBlockSigmaLabel
+        case .embedIntensity(let varianceThreshold, let embeddingIntensity):
+            return reticleBlockAmplitudeLabel(
+                varianceThreshold: varianceThreshold,
+                embeddingIntensity: embeddingIntensity
+            )
+        }
+    }
+
+    func amplitudeHistogram(
+        varianceThreshold: Float,
+        embeddingIntensity: Float
+    ) -> AmplitudeHistogramSummary? {
+        guard let baseQCache, let varianceCache else { return nil }
+        return AmplitudeHistogramSummary.build(
+            baseQ: baseQCache,
+            variance: varianceCache,
+            varianceThreshold: varianceThreshold,
+            embeddingIntensity: embeddingIntensity
+        )
+    }
+
     /// True when the crosshair center overlaps the default bottom-trailing loupe slot.
     func shouldDodgeLoupe(canvasSize: CGSize) -> Bool {
         guard canvasSize.width > 0, canvasSize.height > 0,
@@ -111,6 +165,7 @@ final class AdvancedModeCanvasViewModel {
         activePhotoID = photoID
         previewImage = nil
         varianceCache = nil
+        baseQCache = nil
         varianceHistogram = nil
         isBuildingVarianceCache = false
         lastBuiltLayoutSize = nil
@@ -203,9 +258,14 @@ final class AdvancedModeCanvasViewModel {
                 ) ?? sourceImage
             }
 
-            let cache = await Task.detached(priority: .userInitiated) {
-                service.buildMacroblockVarianceCache(from: preview)
+            let caches = await Task.detached(priority: .userInitiated) {
+                (
+                    service.buildMacroblockVarianceCache(from: preview),
+                    service.buildMacroblockBaseQuantizationCache(from: preview)
+                )
             }.value
+            let cache = caches.0
+            let baseQ = caches.1
 
             await MainActor.run { [weak self] in
                 guard let self else { return }
@@ -224,6 +284,7 @@ final class AdvancedModeCanvasViewModel {
 
                 self.previewImage = preview
                 self.varianceCache = cache
+                self.baseQCache = baseQ
                 self.varianceHistogram = cache.map { VarianceHistogramSummary.build(from: $0) }
                 self.lastPreviewPixelSize = CGSize(
                     width: preview.size.width * preview.scale,
@@ -270,6 +331,7 @@ final class AdvancedModeCanvasViewModel {
         buildToken = UUID()
         previewImage = nil
         varianceCache = nil
+        baseQCache = nil
         varianceHistogram = nil
         activePhotoID = nil
         lastBuiltLayoutSize = nil

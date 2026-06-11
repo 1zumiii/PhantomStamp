@@ -134,6 +134,7 @@ enum HistoryRecordService {
         embedVisited8x8BlockCount: Int? = nil,
         embedSmoothSkipped8x8BlockCount: Int? = nil,
         embedTextureVarianceThreshold: Double? = nil,
+        embedEmbeddingStrength: Double? = nil,
         thumbnailJPEGQuality: CGFloat = 0.5
     ) -> WatermarkHistoryRecord {
         let dims = pixelWidthHeight(of: sourceImageForThumbnail)
@@ -158,7 +159,8 @@ enum HistoryRecordService {
                 syncMatchCount: nil,
                 embedVisited8x8BlockCount: embedVisited8x8BlockCount,
                 embedSmoothSkipped8x8BlockCount: embedSmoothSkipped8x8BlockCount,
-                embedTextureVarianceThreshold: embedTextureVarianceThreshold
+                embedTextureVarianceThreshold: embedTextureVarianceThreshold,
+                embedEmbeddingStrength: embedEmbeddingStrength
             )
         }
         return WatermarkHistoryRecord(
@@ -175,7 +177,8 @@ enum HistoryRecordService {
             syncMatchCount: nil,
             embedVisited8x8BlockCount: embedVisited8x8BlockCount,
             embedSmoothSkipped8x8BlockCount: embedSmoothSkipped8x8BlockCount,
-            embedTextureVarianceThreshold: embedTextureVarianceThreshold
+            embedTextureVarianceThreshold: embedTextureVarianceThreshold,
+            embedEmbeddingStrength: embedEmbeddingStrength
         )
     }
 
@@ -188,6 +191,8 @@ enum HistoryRecordService {
         error: Error?,
         durationMs: Double,
         syncMatchCount: Int? = nil,
+        extractDeskewAngleDegrees: Double? = nil,
+        extractDeskewScale: Double? = nil,
         extractGridOffsetXPx: Int? = nil,
         extractGridOffsetYPx: Int? = nil,
         extractMajoritySyncBits: Int? = nil,
@@ -216,6 +221,8 @@ enum HistoryRecordService {
                 imageHeight: dims.height,
                 processingDurationMs: durationMs,
                 syncMatchCount: syncMatchCount,
+                extractDeskewAngleDegrees: extractDeskewAngleDegrees,
+                extractDeskewScale: extractDeskewScale,
                 extractGridOffsetXPx: extractGridOffsetXPx,
                 extractGridOffsetYPx: extractGridOffsetYPx,
                 extractMajoritySyncBits: extractMajoritySyncBits,
@@ -236,6 +243,8 @@ enum HistoryRecordService {
             imageHeight: dims.height,
             processingDurationMs: durationMs,
             syncMatchCount: syncMatchCount,
+            extractDeskewAngleDegrees: extractDeskewAngleDegrees,
+            extractDeskewScale: extractDeskewScale,
             extractGridOffsetXPx: extractGridOffsetXPx,
             extractGridOffsetYPx: extractGridOffsetYPx,
             extractMajoritySyncBits: extractMajoritySyncBits,
