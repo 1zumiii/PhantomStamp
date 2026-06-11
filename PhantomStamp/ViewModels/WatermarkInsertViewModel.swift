@@ -9,6 +9,16 @@
 import Observation
 import UIKit
 
+/// One-shot parameter overrides coming from the Advanced Mode panel (local view state).
+/// Applied to the live settings store only for the duration of a single embed run, then restored —
+/// the user's persisted global settings are never contaminated by advanced-mode tuning.
+struct AdvancedEmbedOverrides {
+    /// Physical variance (σ²) for the smooth-block threshold of the embed pipeline.
+    let varianceThreshold: Double
+    /// Global adaptive-Q multiplier for this run.
+    let embeddingIntensity: Double
+}
+
 @MainActor
 @Observable
 final class WatermarkInsertViewModel {
@@ -80,6 +90,12 @@ final class WatermarkInsertViewModel {
         selectedPhotoItems.removeAll { $0.id == id }
     }
 
+    /// Advanced mode is a single-image pipeline: keep only the first pick when switching in.
+    func keepOnlyFirstPhoto() {
+        guard selectedPhotoItems.count > 1 else { return }
+        selectedPhotoItems = Array(selectedPhotoItems.prefix(1))
+    }
+
     /// Clears selection and payload (toolbar reset).
     func resetDraft() {
         selectedPhotoItems = []
@@ -93,15 +109,34 @@ final class WatermarkInsertViewModel {
         selectedPhotoItems = []
     }
 
-    func embedWatermark() async {
+    func embedWatermark(advancedOverrides: AdvancedEmbedOverrides? = nil) async {
         guard canStartEmbed else { return }
 
         let text = trimmedPayload
         isEmbedding = true
         defer { isEmbedding = false }
 
-        let images = selectedPhotoItems.map(\.image)
-        let names = selectedPhotoItems.map(\.displayName)
+        // Advanced mode is single-image by contract; the view also enforces this at pick time.
+        let items = advancedOverrides == nil ? selectedPhotoItems : Array(selectedPhotoItems.prefix(1))
+        let images = items.map(\.image)
+        let names = items.map(\.displayName)
+
+        // Temporarily map the advanced-mode local parameters onto the live settings store
+        // (the embed pipeline snapshots them at start), then restore the persisted values.
+        var restoreSettings: (() -> Void)?
+        if let overrides = advancedOverrides,
+           let svc = watermarkService as? WatermarkService,
+           let store = svc.settingsStore {
+            let savedThreshold = store.textureVarianceThreshold
+            let savedStrength = store.embeddingStrength
+            store.textureVarianceThreshold = overrides.varianceThreshold
+            store.embeddingStrength = overrides.embeddingIntensity
+            restoreSettings = {
+                store.textureVarianceThreshold = savedThreshold
+                store.embeddingStrength = savedStrength
+            }
+        }
+        defer { restoreSettings?() }
 
         do {
             let outputs: [UIImage]

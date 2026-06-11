@@ -20,6 +20,22 @@ struct WatermarkInsertView: View {
     @State private var isAdvancedOptionsExpanded: Bool = false
     @State private var showAdvancedOptionsInfo: Bool = false
 
+    // Advanced Mode — parameters are LOCAL view state, deliberately isolated from the global
+    // `UserSettingsStore` until the sparkle button executes (no settings contamination while tuning).
+    @State private var isAdvancedMode: Bool = false
+    /// Local UI state for σ (0...10 gray levels); mapped to variance (σ²) only at execution.
+    @State private var advancedSigma: Double = 2.0
+    /// Local UI state for the global embedding intensity (adaptive-Q multiplier), placeholder for now.
+    @State private var advancedIntensity: Double = 10.0
+    @State private var selectedAdvancedSubTab: AdvancedSubTab = .smoothBlock
+
+    @State private var advancedCanvasVM = AdvancedModeCanvasViewModel()
+
+    private enum AdvancedSubTab {
+        case smoothBlock
+        case intensity
+    }
+
     init(watermarkService: any WatermarkServiceProtocol, settingsStore: UserSettingsStore) {
         self.watermarkService = watermarkService
         self.settingsStore = settingsStore
@@ -33,7 +49,11 @@ struct WatermarkInsertView: View {
                     header
                     uploadCard
                     inputCard
-                    advancedOptionsCard
+                    // The global (persisted) smooth-block slider belongs to Adaptive mode only;
+                    // in Advanced mode it lives in the local Smooth Block sub-panel instead.
+                    if !isAdvancedMode {
+                        advancedOptionsCard
+                    }
                     Spacer(minLength: 12)
                 }
                 .padding(.horizontal, 20)
@@ -70,6 +90,27 @@ struct WatermarkInsertView: View {
         }
         .onChange(of: vm.selectedPhotoItems.count) { _, count in
             if count == 0 { showOverflowSheet = false }
+        }
+        .onChange(of: isAdvancedMode) { _, advanced in
+            // Advanced mode is single-image: drop extra picks when switching in.
+            if advanced {
+                vm.keepOnlyFirstPhoto()
+                if let item = vm.selectedPhotoItems.first,
+                   let service = watermarkService as? WatermarkService {
+                    advancedCanvasVM.scheduleVarianceCacheBuild(for: item, service: service)
+                }
+            } else {
+                advancedCanvasVM.clear()
+            }
+        }
+        .onChange(of: vm.selectedPhotoItems.first?.id) { _, _ in
+            guard isAdvancedMode, let item = vm.selectedPhotoItems.first else {
+                advancedCanvasVM.clear()
+                return
+            }
+            if let service = watermarkService as? WatermarkService {
+                advancedCanvasVM.scheduleVarianceCacheBuild(for: item, service: service)
+            }
         }
         .onChange(of: photoPickerItems) { _, items in
             guard !items.isEmpty else { return }
@@ -175,65 +216,46 @@ struct WatermarkInsertView: View {
         let shape = RoundedRectangle(cornerRadius: 18, style: .continuous)
 
         return VStack(alignment: .leading, spacing: 12) {
+            // Mode toggle lives at the very top of the card.
+            Picker("Embedding mode", selection: $isAdvancedMode.animation(.easeInOut(duration: 0.2))) {
+                Text("Adaptive").tag(false)
+                Text("Advanced").tag(true)
+            }
+            .pickerStyle(.segmented)
+            .disabled(vm.isEmbedding || vm.showSuccessOverlay)
+
             Label("Upload", systemImage: "arrow.up.doc")
                 .font(.subheadline.weight(.semibold))
                 .foregroundStyle(.secondary)
 
-            PhotosPicker(
-                selection: $photoPickerItems,
-                maxSelectionCount: vm.isAtImageLimit ? 1 : vm.remainingImageSlots,
-                matching: ImagePickerSupport.imagesOnlyFilter,
-                preferredItemEncoding: .automatic,
-                label: {
-                    ZStack {
-                        RoundedRectangle(cornerRadius: 22, style: .continuous)
-                            .fill(Color(uiColor: .secondarySystemGroupedBackground))
-
-                        RoundedRectangle(cornerRadius: 22, style: .continuous)
-                            .strokeBorder(
-                                Color.primary.opacity(0.28),
-                                style: StrokeStyle(lineWidth: 2, lineCap: .round, dash: [8, 7])
-                            )
-
-                        VStack(spacing: 10) {
-                            Image(systemName: "photo.badge.plus")
-                                .font(.title2)
-                                .foregroundStyle(Color.accentColor)
-                            Text("Tap to choose photos")
-                                .font(.headline.weight(.semibold))
-                                .foregroundStyle(.primary)
-                            Text(vm.isAtImageLimit
-                                ? "Maximum \(WatermarkInsertViewModel.maxSelectedImageCount) photos reached"
-                                : "Images only • Up to \(WatermarkInsertViewModel.maxSelectedImageCount) • Picks append")
-                                .font(.caption)
-                                .foregroundStyle(.secondary)
-                                .multilineTextAlignment(.center)
-                        }
-                        .padding(.horizontal, 18)
-                    }
-                    .frame(maxWidth: .infinity)
-                    .frame(height: 180)
-                    .contentShape(Rectangle())
-                }
-            )
-            .buttonStyle(.plain)
-            .disabled(vm.isEmbedding || vm.showSuccessOverlay || vm.isAtImageLimit)
+            // Middle viewport: in Advanced mode an uploaded photo takes over the dashed
+            // container entirely and becomes the canvas for future visual overlays.
+            if isAdvancedMode, let canvasItem = vm.selectedPhotoItems.first {
+                advancedCanvasViewport(for: canvasItem)
+            } else {
+                photoPickerArea
+            }
 
             Divider()
                 .opacity(0.35)
 
-            HStack(alignment: .center, spacing: 10) {
-                Label("Uploaded", systemImage: "rectangle.stack")
-                    .font(.caption.weight(.semibold))
-                    .foregroundStyle(.secondary)
-                Spacer()
-                Text(uploadedCountLabel)
-                    .font(.caption)
-                    .foregroundStyle(.secondary)
-            }
+            // Bottom panel: multi-image grid (Adaptive) vs parameter sub-tabs (Advanced).
+            if isAdvancedMode {
+                advancedControlPanel
+            } else {
+                HStack(alignment: .center, spacing: 10) {
+                    Label("Uploaded", systemImage: "rectangle.stack")
+                        .font(.caption.weight(.semibold))
+                        .foregroundStyle(.secondary)
+                    Spacer()
+                    Text(uploadedCountLabel)
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
+                }
 
-            uploadedThumbnailsRow
-                .frame(maxWidth: .infinity, alignment: .leading)
+                uploadedThumbnailsRow
+                    .frame(maxWidth: .infinity, alignment: .leading)
+            }
         }
         .padding(18)
         .background {
@@ -248,6 +270,127 @@ struct WatermarkInsertView: View {
                 uploadSuccessOverlay
             }
         }
+    }
+
+    /// Dashed PhotosPicker container. In Advanced mode the picker enforces a single photo.
+    private var photoPickerArea: some View {
+        PhotosPicker(
+            selection: $photoPickerItems,
+            maxSelectionCount: isAdvancedMode ? 1 : (vm.isAtImageLimit ? 1 : vm.remainingImageSlots),
+            matching: ImagePickerSupport.imagesOnlyFilter,
+            preferredItemEncoding: .automatic,
+            label: {
+                ZStack {
+                    RoundedRectangle(cornerRadius: 22, style: .continuous)
+                        .fill(Color(uiColor: .secondarySystemGroupedBackground))
+
+                    RoundedRectangle(cornerRadius: 22, style: .continuous)
+                        .strokeBorder(
+                            Color.primary.opacity(0.28),
+                            style: StrokeStyle(lineWidth: 2, lineCap: .round, dash: [8, 7])
+                        )
+
+                    VStack(spacing: 10) {
+                        Image(systemName: "photo.badge.plus")
+                            .font(.title2)
+                            .foregroundStyle(Color.accentColor)
+                        Text(isAdvancedMode ? "Tap to choose a photo" : "Tap to choose photos")
+                            .font(.headline.weight(.semibold))
+                            .foregroundStyle(.primary)
+                        Text(pickerCaption)
+                            .font(.caption)
+                            .foregroundStyle(.secondary)
+                            .multilineTextAlignment(.center)
+                    }
+                    .padding(.horizontal, 18)
+                }
+                .frame(maxWidth: .infinity)
+                .frame(height: 180)
+                .contentShape(Rectangle())
+            }
+        )
+        .buttonStyle(.plain)
+        .disabled(vm.isEmbedding || vm.showSuccessOverlay || (!isAdvancedMode && vm.isAtImageLimit))
+    }
+
+    private var pickerCaption: String {
+        if isAdvancedMode {
+            return "Single image • Fills the canvas viewport"
+        }
+        return vm.isAtImageLimit
+            ? "Maximum \(WatermarkInsertViewModel.maxSelectedImageCount) photos reached"
+            : "Images only • Up to \(WatermarkInsertViewModel.maxSelectedImageCount) • Picks append"
+    }
+
+    /// Advanced-mode canvas: grid layout with custom reticle sliders (see `AdvancedModeCanvasView`).
+    private func advancedCanvasViewport(for item: SelectedPhotoItem) -> some View {
+        AdvancedModeCanvasView(
+            viewModel: advancedCanvasVM,
+            item: item,
+            varianceThreshold: Float(advancedSigma * advancedSigma),
+            watermarkService: watermarkService,
+            isInteractionEnabled: !vm.isEmbedding && !vm.showSuccessOverlay,
+            onRemovePhoto: {
+                vm.removePhoto(id: item.id)
+                advancedCanvasVM.clear()
+            }
+        )
+    }
+
+    /// Advanced-mode bottom panel: nested sub-tab picker + per-parameter sliders.
+    /// Sliders bind ONLY to local @State — nothing is written to `UserSettingsStore` here.
+    private var advancedControlPanel: some View {
+        VStack(alignment: .leading, spacing: 12) {
+            Picker("Parameter", selection: $selectedAdvancedSubTab) {
+                Text("Smooth Block").tag(AdvancedSubTab.smoothBlock)
+                Text("Embedding Intensity").tag(AdvancedSubTab.intensity)
+            }
+            .pickerStyle(.segmented)
+
+            switch selectedAdvancedSubTab {
+            case .smoothBlock:
+                VStack(alignment: .leading, spacing: 10) {
+                    HStack(alignment: .firstTextBaseline) {
+                        Text("Texture Variance Threshold")
+                            .font(.subheadline.weight(.semibold))
+                            .foregroundStyle(.primary)
+                        Spacer()
+                        Text("σ \(advancedSigma, specifier: "%.1f")")
+                            .font(.caption.monospacedDigit().weight(.semibold))
+                            .foregroundStyle(.secondary)
+                    }
+
+                    Slider(value: $advancedSigma, in: 0...10, step: 0.1)
+                        .tint(Color.orange)
+
+                    Text("Gray-level standard deviation σ; blocks below σ² embed at reduced energy.")
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
+                        .fixedSize(horizontal: false, vertical: true)
+                }
+            case .intensity:
+                VStack(alignment: .leading, spacing: 10) {
+                    HStack(alignment: .firstTextBaseline) {
+                        Text("Global Embedding Intensity")
+                            .font(.subheadline.weight(.semibold))
+                            .foregroundStyle(.primary)
+                        Spacer()
+                        Text("\(advancedIntensity, specifier: "%.1f")×")
+                            .font(.caption.monospacedDigit().weight(.semibold))
+                            .foregroundStyle(.secondary)
+                    }
+
+                    Slider(value: $advancedIntensity, in: 0...10, step: 0.5)
+                        .tint(Color.orange)
+
+                    Text("Placeholder — multiplies the adaptive quantization step for this run only.")
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
+                        .fixedSize(horizontal: false, vertical: true)
+                }
+            }
+        }
+        .disabled(vm.isEmbedding || vm.showSuccessOverlay)
     }
 
     /// Blurred overlay after a successful embed; offers “Insert more” to reset upload state.
@@ -580,7 +723,17 @@ struct WatermarkInsertView: View {
 
                 Button {
                     guard vm.canStartEmbed else { return }
-                    Task { await vm.embedWatermark() }
+                    if isAdvancedMode {
+                        // Map local σ back to physical variance (σ²) and hand the local intensity
+                        // to the single-image pipeline; global settings are restored after the run.
+                        let overrides = AdvancedEmbedOverrides(
+                            varianceThreshold: advancedSigma * advancedSigma,
+                            embeddingIntensity: advancedIntensity
+                        )
+                        Task { await vm.embedWatermark(advancedOverrides: overrides) }
+                    } else {
+                        Task { await vm.embedWatermark() }
+                    }
                 } label: {
                     Image(systemName: vm.isEmbedding ? "hourglass" : "sparkles")
                         .font(.body.weight(.semibold))
