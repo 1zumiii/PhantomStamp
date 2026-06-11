@@ -8,14 +8,34 @@
 import SwiftUI
 import UIKit
 
+// MARK: - Track geometry (histogram line ↔ UISlider thumb)
+
+/// Maps σ to horizontal position using the same inset UISlider reserves for its thumb.
+enum SigmaTrackGeometry {
+    static let thumbInset: CGFloat = 15.5
+    static let sigmaMax = VarianceHistogramSummary.sigmaMax
+
+    static func trackWidth(in totalWidth: CGFloat) -> CGFloat {
+        max(1, totalWidth - thumbInset * 2)
+    }
+
+    static func xPosition(forSigma sigma: Double, in totalWidth: CGFloat) -> CGFloat {
+        let t = CGFloat(min(sigmaMax, max(0, sigma)) / sigmaMax)
+        return thumbInset + t * trackWidth(in: totalWidth)
+    }
+}
+
+// MARK: - UISlider
+
 /// UISlider wrapper — avoids SwiftUI `Slider` release glitches inside `ScrollView`.
 private struct SnappingSigmaSlider: UIViewRepresentable {
-    @Binding var value: Double
+    @Binding var liveSigma: Double
     var isEnabled: Bool
+    var onCommit: ((Double) -> Void)?
     var onEditingChanged: ((Bool) -> Void)?
 
     private let step = 0.1
-    private let range: ClosedRange<Double> = 0...VarianceHistogramSummary.sigmaMax
+    private let range: ClosedRange<Double> = 0...SigmaTrackGeometry.sigmaMax
 
     func makeCoordinator() -> Coordinator {
         Coordinator(parent: self)
@@ -47,12 +67,11 @@ private struct SnappingSigmaSlider: UIViewRepresentable {
 
     func updateUIView(_ slider: UISlider, context: Context) {
         context.coordinator.parent = self
-        // While dragging, UISlider owns thumb position — don't fight it from stale binding.
         guard !context.coordinator.isDragging else {
             slider.isEnabled = isEnabled
             return
         }
-        let snapped = snap(value)
+        let snapped = snap(liveSigma)
         if abs(Double(slider.value) - snapped) > 0.001 {
             slider.setValue(Float(snapped), animated: false)
         }
@@ -68,37 +87,12 @@ private struct SnappingSigmaSlider: UIViewRepresentable {
         var parent: SnappingSigmaSlider
         var isDragging = false
 
-        private var lastEmitTime: CFAbsoluteTime = 0
-        private var pendingEmit: DispatchWorkItem?
-        private let throttleInterval: TimeInterval = 0.1
-
         init(parent: SnappingSigmaSlider) {
             self.parent = parent
         }
 
         @objc func valueChanged(_ sender: UISlider) {
-            let snapped = parent.snap(Double(sender.value))
-            let now = CFAbsoluteTimeGetCurrent()
-
-            if now - lastEmitTime >= throttleInterval {
-                emit(snapped)
-                lastEmitTime = now
-                pendingEmit?.cancel()
-                pendingEmit = nil
-            } else {
-                pendingEmit?.cancel()
-                let work = DispatchWorkItem { [weak self] in
-                    guard let self else { return }
-                    self.emit(snapped)
-                    self.lastEmitTime = CFAbsoluteTimeGetCurrent()
-                    self.pendingEmit = nil
-                }
-                pendingEmit = work
-                DispatchQueue.main.asyncAfter(
-                    deadline: .now() + throttleInterval,
-                    execute: work
-                )
-            }
+            parent.liveSigma = parent.snap(Double(sender.value))
         }
 
         @objc func touchDown(_ sender: UISlider) {
@@ -107,19 +101,80 @@ private struct SnappingSigmaSlider: UIViewRepresentable {
         }
 
         @objc func touchUp(_ sender: UISlider) {
-            pendingEmit?.cancel()
-            pendingEmit = nil
             let snapped = parent.snap(Double(sender.value))
             sender.setValue(Float(snapped), animated: false)
-            emit(snapped)
-            lastEmitTime = CFAbsoluteTimeGetCurrent()
+            parent.liveSigma = snapped
             isDragging = false
+            parent.onCommit?(snapped)
             parent.onEditingChanged?(false)
         }
+    }
+}
 
-        private func emit(_ snapped: Double) {
-            parent.value = snapped
+// MARK: - Histogram
+
+/// Static σ-bin bars — does not depend on the current threshold.
+private struct VarianceHistogramBars: View, Equatable {
+    let summary: VarianceHistogramSummary
+
+    static func == (lhs: Self, rhs: Self) -> Bool {
+        lhs.summary.totalBlocks == rhs.summary.totalBlocks
+            && lhs.summary.maxBinCount == rhs.summary.maxBinCount
+    }
+
+    var body: some View {
+        Canvas { context, canvasSize in
+            guard summary.maxBinCount > 0 else { return }
+
+            let inset = SigmaTrackGeometry.thumbInset
+            let trackWidth = SigmaTrackGeometry.trackWidth(in: canvasSize.width)
+            let barSlot = trackWidth / CGFloat(VarianceHistogramSummary.binCount)
+            let maxCount = CGFloat(summary.maxBinCount)
+            let drawableHeight = canvasSize.height - 4
+
+            for (index, count) in summary.binCounts.enumerated() {
+                guard count > 0 else { continue }
+                let normalized = sqrt(CGFloat(count) / maxCount)
+                let barHeight = max(4, normalized * drawableHeight * 0.96)
+                let rect = CGRect(
+                    x: inset + CGFloat(index) * barSlot + barSlot * 0.06,
+                    y: canvasSize.height - barHeight - 2,
+                    width: max(1.2, barSlot * 0.88),
+                    height: barHeight
+                )
+                context.fill(
+                    Path(roundedRect: rect, cornerRadius: 1.5),
+                    with: .color(Color.primary.opacity(0.18))
+                )
+            }
         }
+        .allowsHitTesting(false)
+    }
+}
+
+/// Threshold overlay — shaded region + dashed cut line, tracks live σ.
+private struct VarianceHistogramThresholdOverlay: View {
+    let sigma: Double
+
+    var body: some View {
+        Canvas { context, canvasSize in
+            let inset = SigmaTrackGeometry.thumbInset
+            let thresholdX = SigmaTrackGeometry.xPosition(forSigma: sigma, in: canvasSize.width)
+
+            var shaded = Path()
+            shaded.addRect(CGRect(x: inset, y: 0, width: max(0, thresholdX - inset), height: canvasSize.height))
+            context.fill(shaded, with: .color(Color.blue.opacity(0.07)))
+
+            var cutLine = Path()
+            cutLine.move(to: CGPoint(x: thresholdX, y: 2))
+            cutLine.addLine(to: CGPoint(x: thresholdX, y: canvasSize.height - 2))
+            context.stroke(
+                cutLine,
+                with: .color(Color.orange.opacity(0.6)),
+                style: StrokeStyle(lineWidth: 1.5, dash: [4, 3])
+            )
+        }
+        .allowsHitTesting(false)
     }
 }
 
@@ -129,49 +184,14 @@ struct VarianceHistogramSparkline: View {
     let sigma: Double
 
     var body: some View {
-        GeometryReader { geo in
-            Canvas { context, canvasSize in
-                guard summary.maxBinCount > 0 else { return }
-
-                let barSlot = canvasSize.width / CGFloat(VarianceHistogramSummary.binCount)
-                let maxCount = CGFloat(summary.maxBinCount)
-                let drawableHeight = canvasSize.height - 4
-
-                for (index, count) in summary.binCounts.enumerated() {
-                    guard count > 0 else { continue }
-                    // Sqrt scale so low-count bins stay visible against a dominant peak.
-                    let normalized = sqrt(CGFloat(count) / maxCount)
-                    let barHeight = max(4, normalized * drawableHeight * 0.96)
-                    let rect = CGRect(
-                        x: CGFloat(index) * barSlot + barSlot * 0.06,
-                        y: canvasSize.height - barHeight - 2,
-                        width: max(1.2, barSlot * 0.88),
-                        height: barHeight
-                    )
-                    context.fill(
-                        Path(roundedRect: rect, cornerRadius: 1.5),
-                        with: .color(Color.primary.opacity(0.18))
-                    )
-                }
-
-                let thresholdX = CGFloat(sigma / VarianceHistogramSummary.sigmaMax) * canvasSize.width
-                var cutLine = Path()
-                cutLine.move(to: CGPoint(x: thresholdX, y: 2))
-                cutLine.addLine(to: CGPoint(x: thresholdX, y: canvasSize.height - 2))
-                context.stroke(
-                    cutLine,
-                    with: .color(Color.orange.opacity(0.6)),
-                    style: StrokeStyle(lineWidth: 1.5, dash: [4, 3])
-                )
-
-                var shaded = Path()
-                shaded.addRect(CGRect(x: 0, y: 0, width: thresholdX, height: canvasSize.height))
-                context.fill(shaded, with: .color(Color.blue.opacity(0.07)))
-            }
+        ZStack {
+            VarianceHistogramBars(summary: summary)
+            VarianceHistogramThresholdOverlay(sigma: sigma)
         }
-        .allowsHitTesting(false)
     }
 }
+
+// MARK: - Stats
 
 /// Stats row shown beneath the σ slider.
 struct VarianceThresholdStats: View {
@@ -229,38 +249,66 @@ struct VarianceThresholdStats: View {
     }
 }
 
+// MARK: - Control
+
 /// σ slider with histogram track and stats below the control.
 struct VarianceThresholdControl: View {
     @Binding var sigma: Double
     let histogram: VarianceHistogramSummary?
     var isEnabled: Bool = true
+    /// Fired on every σ change while dragging (for debounced Loupe preview only).
+    var onLiveSigmaChange: ((Double) -> Void)?
     var onEditingChanged: ((Bool) -> Void)?
+
+    @State private var liveSigma: Double = 2.0
 
     private static let histogramHeight: CGFloat = 56
 
     var body: some View {
         VStack(alignment: .leading, spacing: 8) {
             if let histogram {
-                VarianceHistogramSparkline(summary: histogram, sigma: sigma)
+                VarianceHistogramSparkline(summary: histogram, sigma: liveSigma)
                     .frame(height: Self.histogramHeight)
-                    .padding(.horizontal, 2)
-            }
 
-            SnappingSigmaSlider(
-                value: $sigma,
-                isEnabled: isEnabled,
-                onEditingChanged: onEditingChanged
-            )
-            .frame(height: 28)
+                SnappingSigmaSlider(
+                    liveSigma: $liveSigma,
+                    isEnabled: isEnabled,
+                    onCommit: { committed in
+                        sigma = committed
+                    },
+                    onEditingChanged: onEditingChanged
+                )
+                .frame(height: 28)
 
-            if let histogram {
-                VarianceThresholdStats(summary: histogram, sigma: sigma)
+                VarianceThresholdStats(summary: histogram, sigma: liveSigma)
             } else {
+                SnappingSigmaSlider(
+                    liveSigma: $liveSigma,
+                    isEnabled: isEnabled,
+                    onCommit: { committed in
+                        sigma = committed
+                    },
+                    onEditingChanged: onEditingChanged
+                )
+                .frame(height: 28)
+
                 Text("Load a photo to see the variance distribution for this image.")
                     .font(.caption)
                     .foregroundStyle(.secondary)
                     .fixedSize(horizontal: false, vertical: true)
             }
+        }
+        .onAppear {
+            liveSigma = sigma
+        }
+        .onChange(of: sigma) { _, newValue in
+            // External writes (e.g. reset) — don't fight an active drag.
+            if abs(liveSigma - newValue) > 0.001 {
+                liveSigma = newValue
+            }
+        }
+        .onChange(of: liveSigma) { _, newValue in
+            onLiveSigmaChange?(newValue)
         }
     }
 }
