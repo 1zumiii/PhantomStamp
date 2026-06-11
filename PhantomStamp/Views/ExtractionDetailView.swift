@@ -286,7 +286,8 @@ struct ExtractionDetailView: View {
         let visited = display.embedVisited8x8BlockCount
         let skipped = display.embedSmoothSkipped8x8BlockCount
         let thr = display.embedTextureVarianceThreshold
-        if visited == nil, skipped == nil, thr == nil {
+        let intensity = display.embedEmbeddingStrength
+        if visited == nil, skipped == nil, thr == nil, intensity == nil {
             EmptyView()
         } else {
             VStack(alignment: .leading, spacing: 12) {
@@ -295,10 +296,22 @@ struct ExtractionDetailView: View {
                     .foregroundStyle(.secondary)
 
                 if let t = thr {
+                    let sigmaValue: String = {
+                        if t < 0 { return "All" }
+                        guard let sigma = HistoryFormatters.textureSigma(fromVarianceThreshold: t) else { return "—" }
+                        return String(format: "%.1f", sigma)
+                    }()
                     metricCard(
-                        title: "Texture variance threshold",
-                        value: String(format: "%.1f", t),
+                        title: "Texture σ threshold",
+                        value: sigmaValue,
                         systemImage: "dial.low"
+                    )
+                }
+                if let intensityLabel = HistoryFormatters.formatEmbeddingStrength(intensity) {
+                    metricCard(
+                        title: "Embedding intensity",
+                        value: intensityLabel,
+                        systemImage: "flame"
                     )
                 }
                 if let v = visited {

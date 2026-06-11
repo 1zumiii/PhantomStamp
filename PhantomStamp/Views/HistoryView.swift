@@ -227,9 +227,19 @@ private struct WatermarkHistoryCardRow: View {
                             Text("•")
                                 .foregroundStyle(.secondary)
                                 .font(.caption)
-                            Text(HistoryViewModel.confidenceLabel(for: record))
-                                .font(.caption)
-                                .foregroundStyle(.secondary)
+                            if record.operationType == .embed,
+                               let summary = HistoryFormatters.embedSettingsSummary(
+                                   varianceThreshold: record.embedTextureVarianceThreshold,
+                                   embeddingStrength: record.embedEmbeddingStrength
+                               ) {
+                                Text(summary)
+                                    .font(.caption)
+                                    .foregroundStyle(.secondary)
+                            } else {
+                                Text(HistoryViewModel.confidenceLabel(for: record))
+                                    .font(.caption)
+                                    .foregroundStyle(.secondary)
+                            }
                         }
                     }
                     .padding(.top, 2)

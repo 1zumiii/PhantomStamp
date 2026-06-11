@@ -89,4 +89,42 @@ enum HistoryFormatters {
         }
         return String(format: "%.1fs", ms / 1000)
     }
+
+    // MARK: Embed parameters
+
+    /// Converts stored physical variance (σ²) to UI σ (gray-level standard deviation).
+    static func textureSigma(fromVarianceThreshold variance: Double) -> Double? {
+        guard variance >= 0 else { return nil }
+        return sqrt(variance)
+    }
+
+    /// Display label for smooth-block threshold, e.g. `σ: 6.0`.
+    static func formatTextureSigma(fromVarianceThreshold variance: Double?) -> String? {
+        guard let variance else { return nil }
+        if variance < 0 { return "σ: all" }
+        guard let sigma = textureSigma(fromVarianceThreshold: variance) else { return nil }
+        return String(format: "σ: %.1f", sigma)
+    }
+
+    /// Display label for global embed intensity, e.g. `5.5×`.
+    static func formatEmbeddingStrength(_ strength: Double?) -> String? {
+        guard let strength else { return nil }
+        let normalized = AppConstants.normalizedEmbeddingStrength(strength)
+        return String(format: "%.1f×", normalized)
+    }
+
+    /// Compact embed settings line for history list cards, e.g. `σ: 6.0 · 5.5×`.
+    static func embedSettingsSummary(
+        varianceThreshold: Double?,
+        embeddingStrength: Double?
+    ) -> String? {
+        var parts: [String] = []
+        if let sigma = formatTextureSigma(fromVarianceThreshold: varianceThreshold) {
+            parts.append(sigma)
+        }
+        if let intensity = formatEmbeddingStrength(embeddingStrength) {
+            parts.append(intensity)
+        }
+        return parts.isEmpty ? nil : parts.joined(separator: " · ")
+    }
 }

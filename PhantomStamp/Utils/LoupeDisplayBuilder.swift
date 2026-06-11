@@ -119,7 +119,7 @@ enum LoupeDisplayBuilder {
                 )
                 break
             }
-            let baselineMaxAmplitude = baseQCache.imageBaselineMaxAmplitude
+            let normalizationCeiling = baseQCache.heatmapNormalizationCeiling
             var amplitudes = [Float](repeating: 0, count: gridSpan * gridSpan)
             for localY in 0..<gridSpan {
                 for localX in 0..<gridSpan {
@@ -138,7 +138,7 @@ enum LoupeDisplayBuilder {
             maskOverlayImage = renderAmplitudeHeatmapOverlay(
                 amplitudes: amplitudes,
                 gridSpan: gridSpan,
-                baselineMaxAmplitude: baselineMaxAmplitude,
+                normalizationCeiling: normalizationCeiling,
                 activeLocalX: activeLocalX,
                 activeLocalY: activeLocalY,
                 pixelSize: pixelSize
@@ -190,7 +190,7 @@ enum LoupeDisplayBuilder {
     nonisolated private static func renderAmplitudeHeatmapOverlay(
         amplitudes: [Float],
         gridSpan: Int,
-        baselineMaxAmplitude: Float,
+        normalizationCeiling: Float,
         activeLocalX: Int,
         activeLocalY: Int,
         pixelSize: Int
@@ -214,7 +214,7 @@ enum LoupeDisplayBuilder {
                     cg.setFillColor(
                         BlockEmbedAmplitude.heatmapUIColor(
                             amplitude: amp,
-                            baselineMaxAmplitude: baselineMaxAmplitude
+                            normalizationCeiling: normalizationCeiling
                         ).cgColor
                     )
                     cg.fill(

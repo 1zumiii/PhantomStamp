@@ -18,16 +18,21 @@ struct MacroblockBaseQuantizationCache: Sendable {
         return grid[blockY][blockX]
     }
 
-    /// Reference ceiling at global intensity `1.0×` (full-strength block, no smooth attenuation).
-    /// Used as a fixed color-map denominator so slider changes affect heatmap saturation.
-    var imageBaselineMaxAmplitude: Float {
+    /// Color-map ceiling: peak texture block at slider maximum (`10.0×`).
+    /// Denominator is tied to intensity range so mid-slider values keep visible gradients.
+    var heatmapNormalizationCeiling: Float {
         var peakBaseQ: Float = 0
         for row in grid {
             for baseQ in row {
                 peakBaseQ = max(peakBaseQ, baseQ)
             }
         }
-        return max(peakBaseQ * BlockEmbedAmplitude.payloadStrength, 0.001)
+        return max(
+            peakBaseQ
+                * BlockEmbedAmplitude.payloadStrength
+                * Float(BlockEmbedAmplitude.intensityMax),
+            0.001
+        )
     }
 }
 

@@ -342,6 +342,7 @@ class WatermarkService: WatermarkServiceProtocol {
                 startedAt: historyStarted,
                 sourceImageName: sourceImageName,
                 embedTextureVarianceThreshold: thresholdSnapshot,
+                embedEmbeddingStrength: embeddingStrengthSnapshot,
                 embedVisited8x8BlockCount: embedVisited8x8Blocks,
                 embedSmoothSkipped8x8BlockCount: embedSmoothSkipped8x8Blocks
             )
@@ -364,6 +365,7 @@ class WatermarkService: WatermarkServiceProtocol {
                 startedAt: historyStarted,
                 sourceImageName: sourceImageName,
                 embedTextureVarianceThreshold: thresholdSnapshot,
+                embedEmbeddingStrength: embeddingStrengthSnapshot,
                 embedVisited8x8BlockCount: nil,
                 embedSmoothSkipped8x8BlockCount: nil
             )
@@ -806,6 +808,7 @@ class WatermarkService: WatermarkServiceProtocol {
         startedAt: CFAbsoluteTime,
         sourceImageName: String? = nil,
         embedTextureVarianceThreshold: Double? = nil,
+        embedEmbeddingStrength: Double? = nil,
         embedVisited8x8BlockCount: Int? = nil,
         embedSmoothSkipped8x8BlockCount: Int? = nil
     ) async {
@@ -838,7 +841,8 @@ class WatermarkService: WatermarkServiceProtocol {
                 durationMs: durationMs,
                 embedVisited8x8BlockCount: embedVisited8x8BlockCount,
                 embedSmoothSkipped8x8BlockCount: embedSmoothSkipped8x8BlockCount,
-                embedTextureVarianceThreshold: embedTextureVarianceThreshold
+                embedTextureVarianceThreshold: embedTextureVarianceThreshold,
+                embedEmbeddingStrength: embedEmbeddingStrength
             )
             HistoryRecordService.insertAndSave(record, context: ctx)
         }
