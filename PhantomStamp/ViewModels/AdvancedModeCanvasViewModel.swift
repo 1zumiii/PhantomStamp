@@ -8,6 +8,18 @@
 import Observation
 import UIKit
 
+#if DEBUG
+enum AdvancedCanvasDebug {
+    static func log(_ message: String) {
+        print("[AdvancedCanvas] \(message)")
+    }
+}
+#else
+enum AdvancedCanvasDebug {
+    static func log(_ message: String) {}
+}
+#endif
+
 @MainActor
 @Observable
 final class AdvancedModeCanvasViewModel {
@@ -15,96 +27,179 @@ final class AdvancedModeCanvasViewModel {
     static let loupeSize: CGFloat = 132
     static let loupeGridSpan = 15
     static let loupeDodgeFraction = 0.8
-    static let axisSliderThickness: CGFloat = 28
+    static let axisSliderThickness: CGFloat = 18
+    static let gridSpacing: CGFloat = 4
 
     var reticleBlockX: Int = 0
     var reticleBlockY: Int = 0
 
+    private(set) var previewImage: UIImage?
     private(set) var varianceCache: MacroblockVarianceCache?
     private(set) var isBuildingVarianceCache = false
+    /// Human-readable status for on-screen debug (DEBUG) and support.
+    private(set) var lastDebugStatus: String = "idle"
 
     private var buildToken: UUID?
-    private var loadingPhotoID: UUID?
+    private var activePhotoID: UUID?
+    private var lastBuiltLayoutSize: CGSize?
 
-    var isCacheReady: Bool { varianceCache != nil }
+    var isCacheReady: Bool { varianceCache != nil && previewImage != nil }
 
-    func maxBlocksX(fallbackImageWidth: Int) -> Int {
-        varianceCache?.maxBlocksX ?? max(1, fallbackImageWidth / DCTMatrix8x8.side)
+    var maxBlocksX: Int {
+        varianceCache?.maxBlocksX ?? 1
     }
 
-    func maxBlocksY(fallbackImageHeight: Int) -> Int {
-        varianceCache?.maxBlocksY ?? max(1, fallbackImageHeight / DCTMatrix8x8.side)
+    var maxBlocksY: Int {
+        varianceCache?.maxBlocksY ?? 1
     }
 
-    func xSliderUpperBound(fallbackImageWidth: Int) -> Double {
-        Double(max(0, maxBlocksX(fallbackImageWidth: fallbackImageWidth) - 1))
+    var xSliderUpperBound: Double {
+        Double(max(0, maxBlocksX - 1))
     }
 
-    func ySliderUpperBound(fallbackImageHeight: Int) -> Double {
-        Double(max(0, maxBlocksY(fallbackImageHeight: fallbackImageHeight) - 1))
+    var ySliderUpperBound: Double {
+        Double(max(0, maxBlocksY - 1))
     }
 
-    func showsHorizontalSlider(fallbackImageWidth: Int) -> Bool {
-        maxBlocksX(fallbackImageWidth: fallbackImageWidth) > 1
-    }
+    var showsHorizontalSlider: Bool { maxBlocksX > 1 }
+    var showsVerticalSlider: Bool { maxBlocksY > 1 }
 
-    func showsVerticalSlider(fallbackImageHeight: Int) -> Bool {
-        maxBlocksY(fallbackImageHeight: fallbackImageHeight) > 1
-    }
-
-    func shouldDodgeLoupe(fallbackImageWidth: Int, fallbackImageHeight: Int) -> Bool {
-        let maxX = maxBlocksX(fallbackImageWidth: fallbackImageWidth)
-        let maxY = maxBlocksY(fallbackImageHeight: fallbackImageHeight)
-        guard maxX > 1, maxY > 1 else { return false }
-        let nx = CGFloat(reticleBlockX) / CGFloat(maxX - 1)
-        let ny = CGFloat(reticleBlockY) / CGFloat(maxY - 1)
+    func shouldDodgeLoupe() -> Bool {
+        guard maxBlocksX > 1, maxBlocksY > 1 else { return false }
+        let nx = CGFloat(reticleBlockX) / CGFloat(maxBlocksX - 1)
+        let ny = CGFloat(reticleBlockY) / CGFloat(maxBlocksY - 1)
         return nx >= Self.loupeDodgeFraction && ny >= Self.loupeDodgeFraction
     }
 
-    func scheduleVarianceCacheBuild(for item: SelectedPhotoItem, service: WatermarkService) {
+    /// Binds the canvas to a photo. Call once when the photo identity changes.
+    func bindPhoto(_ photoID: UUID) {
+        guard activePhotoID != photoID else { return }
+        buildToken = UUID()
+        activePhotoID = photoID
+        previewImage = nil
+        varianceCache = nil
+        isBuildingVarianceCache = false
+        lastBuiltLayoutSize = nil
+        reticleBlockX = 0
+        reticleBlockY = 0
+        lastDebugStatus = "bound photo \(photoID.uuidString.prefix(8))"
+        AdvancedCanvasDebug.log("bindPhoto \(photoID.uuidString.prefix(8))")
+    }
+
+    func updateLayout(
+        containerSize: CGSize,
+        item: SelectedPhotoItem,
+        service: WatermarkService
+    ) {
+        guard containerSize.width > 1, containerSize.height > 1 else {
+            lastDebugStatus = "skip layout — size too small \(containerSize)"
+            AdvancedCanvasDebug.log(lastDebugStatus)
+            return
+        }
+
+        if activePhotoID == nil {
+            activePhotoID = item.id
+            AdvancedCanvasDebug.log("activePhotoID was nil; auto-bound \(item.id.uuidString.prefix(8))")
+        }
+
+        guard item.id == activePhotoID else {
+            lastDebugStatus = "skip layout — photo mismatch"
+            AdvancedCanvasDebug.log("\(lastDebugStatus) active=\(activePhotoID?.uuidString.prefix(8) ?? "nil") item=\(item.id.uuidString.prefix(8))")
+            return
+        }
+
+        let rounded = CGSize(
+            width: containerSize.width.rounded(.toNearestOrAwayFromZero),
+            height: containerSize.height.rounded(.toNearestOrAwayFromZero)
+        )
+
+        if let lastBuiltLayoutSize,
+           lastBuiltLayoutSize == rounded,
+           previewImage != nil,
+           varianceCache != nil {
+            lastDebugStatus = "cache hit \(Int(rounded.width))×\(Int(rounded.height))"
+            return
+        }
+
+        if isBuildingVarianceCache,
+           lastBuiltLayoutSize == rounded {
+            lastDebugStatus = "build in flight for \(Int(rounded.width))×\(Int(rounded.height))"
+            AdvancedCanvasDebug.log(lastDebugStatus)
+            return
+        }
+
+        lastBuiltLayoutSize = rounded
+        scheduleBuild(item: item, containerSize: rounded, service: service)
+    }
+
+    private func scheduleBuild(
+        item: SelectedPhotoItem,
+        containerSize: CGSize,
+        service: WatermarkService
+    ) {
         let token = UUID()
         buildToken = token
-        loadingPhotoID = item.id
-        varianceCache = nil
         isBuildingVarianceCache = true
+        lastDebugStatus = "building \(Int(containerSize.width))×\(Int(containerSize.height))…"
+        AdvancedCanvasDebug.log("scheduleBuild token=\(token.uuidString.prefix(8)) size=\(containerSize)")
 
         let photoID = item.id
-        let image = item.image
+        let sourceImage = item.image
+        let layoutSize = containerSize
 
-        Task.detached(priority: .userInitiated) {
-            let cache = service.buildMacroblockVarianceCache(from: image)
+        Task { [weak self] in
+            let preview = await MainActor.run {
+                CanvasPreviewMapping.cropScaledToFillPreview(
+                    from: sourceImage,
+                    containerSize: layoutSize
+                ) ?? sourceImage
+            }
+
+            let cache = await Task.detached(priority: .userInitiated) {
+                service.buildMacroblockVarianceCache(from: preview)
+            }.value
+
             await MainActor.run { [weak self] in
-                guard let self,
-                      self.buildToken == token,
-                      self.loadingPhotoID == photoID else { return }
-                self.isBuildingVarianceCache = false
+                guard let self else { return }
+                defer { self.isBuildingVarianceCache = false }
+
+                guard self.buildToken == token else {
+                    self.lastDebugStatus = "stale token — discarded"
+                    AdvancedCanvasDebug.log("\(self.lastDebugStatus) expected=\(token.uuidString.prefix(8))")
+                    return
+                }
+                guard self.activePhotoID == photoID else {
+                    self.lastDebugStatus = "stale photo — discarded"
+                    AdvancedCanvasDebug.log(self.lastDebugStatus)
+                    return
+                }
+
+                self.previewImage = preview
                 self.varianceCache = cache
+
                 if let cache {
                     self.reticleBlockX = min(self.reticleBlockX, max(0, cache.maxBlocksX - 1))
                     self.reticleBlockY = min(self.reticleBlockY, max(0, cache.maxBlocksY - 1))
+                    self.lastDebugStatus = "ready \(cache.maxBlocksX)×\(cache.maxBlocksY) blocks"
+                    AdvancedCanvasDebug.log("build done blocks=\(cache.maxBlocksX)×\(cache.maxBlocksY) preview=\(Int(preview.size.width))×\(Int(preview.size.height))")
+                } else {
+                    self.lastDebugStatus = "build failed — cache nil"
+                    AdvancedCanvasDebug.log(self.lastDebugStatus)
                 }
             }
         }
     }
 
-    func loadIfNeeded(for item: SelectedPhotoItem, service: WatermarkService) {
-        guard varianceCache == nil, !isBuildingVarianceCache else { return }
-        scheduleVarianceCacheBuild(for: item, service: service)
-    }
-
     func clear() {
+        buildToken = UUID()
+        previewImage = nil
         varianceCache = nil
-        buildToken = nil
-        loadingPhotoID = nil
+        activePhotoID = nil
+        lastBuiltLayoutSize = nil
         isBuildingVarianceCache = false
         reticleBlockX = 0
         reticleBlockY = 0
-    }
-
-    func clampReticle(for item: SelectedPhotoItem) {
-        let maxX = maxBlocksX(fallbackImageWidth: item.width)
-        let maxY = maxBlocksY(fallbackImageHeight: item.height)
-        reticleBlockX = min(reticleBlockX, max(0, maxX - 1))
-        reticleBlockY = min(reticleBlockY, max(0, maxY - 1))
+        lastDebugStatus = "cleared"
+        AdvancedCanvasDebug.log("clear")
     }
 }

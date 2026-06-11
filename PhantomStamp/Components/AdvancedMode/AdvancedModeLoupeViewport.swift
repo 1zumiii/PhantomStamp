@@ -6,7 +6,7 @@
 import SwiftUI
 import UIKit
 
-/// Floating magnifier: zoomed image crop + 15×15 smooth-block mask from the variance cache.
+/// Floating magnifier: zoomed preview crop + 15×15 smooth-block mask from the variance cache.
 struct AdvancedModeLoupeViewport: View {
     let image: UIImage
     let cache: MacroblockVarianceCache
@@ -99,7 +99,7 @@ struct AdvancedModeLoupeViewport: View {
 
         Image(uiImage: image)
             .resizable()
-            .scaledToFill()
+            .aspectRatio(contentMode: .fill)
             .frame(width: fullPixelWidth * zoomScale, height: fullPixelHeight * zoomScale)
             .offset(
                 x: -pixelOrigin.x * zoomScale,

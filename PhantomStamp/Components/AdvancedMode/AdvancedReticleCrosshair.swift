@@ -16,8 +16,16 @@ struct AdvancedReticleCrosshair: View {
         Canvas { context, size in
             guard maxBlocksX > 0, maxBlocksY > 0 else { return }
 
-            let centerX = blockCenterCoordinate(index: blockX, blockCount: maxBlocksX, canvasLength: size.width)
-            let centerY = blockCenterCoordinate(index: blockY, blockCount: maxBlocksY, canvasLength: size.height)
+            let centerX = ReticleBlockGeometry.blockCenterPosition(
+                index: blockX,
+                blockCount: maxBlocksX,
+                trackLength: size.width
+            )
+            let centerY = ReticleBlockGeometry.blockCenterPosition(
+                index: blockY,
+                blockCount: maxBlocksY,
+                trackLength: size.height
+            )
             let blockW = size.width / CGFloat(maxBlocksX)
             let blockH = size.height / CGFloat(maxBlocksY)
 
@@ -29,10 +37,11 @@ struct AdvancedReticleCrosshair: View {
             vertical.move(to: CGPoint(x: centerX, y: 0))
             vertical.addLine(to: CGPoint(x: centerX, y: size.height))
 
-            context.stroke(horizontal, with: .color(.black.opacity(0.45)), lineWidth: 1.25)
-            context.stroke(vertical, with: .color(.black.opacity(0.45)), lineWidth: 1.25)
-            context.stroke(horizontal, with: .color(.white.opacity(0.88)), lineWidth: 0.75)
-            context.stroke(vertical, with: .color(.white.opacity(0.88)), lineWidth: 0.75)
+            // Dark outline for contrast on bright regions (e.g. sky).
+            context.stroke(horizontal, with: .color(.black.opacity(0.72)), lineWidth: 2.25)
+            context.stroke(vertical, with: .color(.black.opacity(0.72)), lineWidth: 2.25)
+            context.stroke(horizontal, with: .color(.orange.opacity(0.95)), lineWidth: 1.1)
+            context.stroke(vertical, with: .color(.orange.opacity(0.95)), lineWidth: 1.1)
 
             let frame = CGRect(
                 x: centerX - blockW * 0.5,
@@ -42,21 +51,15 @@ struct AdvancedReticleCrosshair: View {
             )
             context.stroke(
                 Path(frame),
-                with: .color(.yellow.opacity(0.95)),
-                style: StrokeStyle(lineWidth: 1.5)
+                with: .color(.yellow.opacity(0.98)),
+                style: StrokeStyle(lineWidth: 1.75)
             )
             context.stroke(
                 Path(frame.insetBy(dx: 0.75, dy: 0.75)),
-                with: .color(.black.opacity(0.35)),
-                style: StrokeStyle(lineWidth: 0.5)
+                with: .color(.black.opacity(0.5)),
+                style: StrokeStyle(lineWidth: 0.75)
             )
         }
         .allowsHitTesting(false)
-    }
-
-    private func blockCenterCoordinate(index: Int, blockCount: Int, canvasLength: CGFloat) -> CGFloat {
-        guard blockCount > 1 else { return canvasLength * 0.5 }
-        let normalized = (CGFloat(index) + 0.5) / CGFloat(blockCount)
-        return normalized * canvasLength
     }
 }

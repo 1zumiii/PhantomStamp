@@ -95,21 +95,14 @@ struct WatermarkInsertView: View {
             // Advanced mode is single-image: drop extra picks when switching in.
             if advanced {
                 vm.keepOnlyFirstPhoto()
-                if let item = vm.selectedPhotoItems.first,
-                   let service = watermarkService as? WatermarkService {
-                    advancedCanvasVM.scheduleVarianceCacheBuild(for: item, service: service)
-                }
             } else {
                 advancedCanvasVM.clear()
             }
         }
         .onChange(of: vm.selectedPhotoItems.first?.id) { _, _ in
-            guard isAdvancedMode, let item = vm.selectedPhotoItems.first else {
+            guard isAdvancedMode, vm.selectedPhotoItems.first != nil else {
                 advancedCanvasVM.clear()
                 return
-            }
-            if let service = watermarkService as? WatermarkService {
-                advancedCanvasVM.scheduleVarianceCacheBuild(for: item, service: service)
             }
         }
         .onChange(of: photoPickerItems) { _, items in

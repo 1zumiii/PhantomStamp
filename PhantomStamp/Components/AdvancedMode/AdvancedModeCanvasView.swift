@@ -18,53 +18,35 @@ struct AdvancedModeCanvasView: View {
 
     private let shape = RoundedRectangle(cornerRadius: 22, style: .continuous)
 
+    /// Reserve slider gutters from source image dimensions so grid layout stays stable
+    /// before/after the variance cache loads (prevents width oscillation rebuild loops).
+    private var layoutShowsX: Bool { item.width / DCTMatrix8x8.side > 1 }
+    private var layoutShowsY: Bool { item.height / DCTMatrix8x8.side > 1 }
+
     var body: some View {
-        let maxBlocksX = viewModel.maxBlocksX(fallbackImageWidth: item.width)
-        let maxBlocksY = viewModel.maxBlocksY(fallbackImageHeight: item.height)
-        let showsX = viewModel.showsHorizontalSlider(fallbackImageWidth: item.width)
-        let showsY = viewModel.showsVerticalSlider(fallbackImageHeight: item.height)
         let sliderEnabled = viewModel.isCacheReady && isInteractionEnabled
-        let dodgeLeading = viewModel.shouldDodgeLoupe(
-            fallbackImageWidth: item.width,
-            fallbackImageHeight: item.height
-        )
+        let dodgeLeading = viewModel.shouldDodgeLoupe()
 
-        Grid(horizontalSpacing: 8, verticalSpacing: 8) {
+        Grid(
+            horizontalSpacing: AdvancedModeCanvasViewModel.gridSpacing,
+            verticalSpacing: AdvancedModeCanvasViewModel.gridSpacing
+        ) {
             GridRow(alignment: .top) {
-                imageCanvas(
-                    maxBlocksX: maxBlocksX,
-                    maxBlocksY: maxBlocksY,
-                    dodgeLeading: dodgeLeading
-                )
-                .frame(maxWidth: .infinity)
-                .frame(height: AdvancedModeCanvasViewModel.canvasHeight)
+                imageCanvas(dodgeLeading: dodgeLeading)
+                    .frame(maxWidth: .infinity)
+                    .frame(height: AdvancedModeCanvasViewModel.canvasHeight)
 
-                if showsY {
-                    ReticleAxisSlider(
-                        value: reticleYBinding(upperBound: viewModel.ySliderUpperBound(fallbackImageHeight: item.height)),
-                        range: 0...viewModel.ySliderUpperBound(fallbackImageHeight: item.height),
-                        axis: .vertical,
-                        isEnabled: sliderEnabled
-                    )
-                    .frame(
-                        width: AdvancedModeCanvasViewModel.axisSliderThickness,
-                        height: AdvancedModeCanvasViewModel.canvasHeight
-                    )
+                if layoutShowsY {
+                    sliderSlot(axis: .vertical, sliderEnabled: sliderEnabled)
                 }
             }
 
-            if showsX {
+            if layoutShowsX {
                 GridRow {
-                    ReticleAxisSlider(
-                        value: reticleXBinding(upperBound: viewModel.xSliderUpperBound(fallbackImageWidth: item.width)),
-                        range: 0...viewModel.xSliderUpperBound(fallbackImageWidth: item.width),
-                        axis: .horizontal,
-                        isEnabled: sliderEnabled
-                    )
-                    .frame(height: AdvancedModeCanvasViewModel.axisSliderThickness)
-                    .frame(maxWidth: .infinity)
+                    sliderSlot(axis: .horizontal, sliderEnabled: sliderEnabled)
+                        .frame(maxWidth: .infinity)
 
-                    if showsY {
+                    if layoutShowsY {
                         Color.clear
                             .frame(
                                 width: AdvancedModeCanvasViewModel.axisSliderThickness,
@@ -76,14 +58,63 @@ struct AdvancedModeCanvasView: View {
         }
         .frame(maxWidth: .infinity)
         .onAppear {
-            loadCacheIfPossible()
+            viewModel.bindPhoto(item.id)
         }
+        .onChange(of: item.id) { _, newID in
+            viewModel.bindPhoto(newID)
+        }
+        #if DEBUG
+        .overlay(alignment: .bottomLeading) {
+            Text(viewModel.lastDebugStatus)
+                .font(.system(size: 9, design: .monospaced))
+                .foregroundStyle(.white)
+                .padding(4)
+                .background(.black.opacity(0.55), in: RoundedRectangle(cornerRadius: 4))
+                .padding(6)
+                .allowsHitTesting(false)
+        }
+        #endif
     }
 
     @ViewBuilder
-    private func imageCanvas(maxBlocksX: Int, maxBlocksY: Int, dodgeLeading: Bool) -> some View {
+    private func sliderSlot(axis: ReticleSliderAxis, sliderEnabled: Bool) -> some View {
+        Group {
+            if viewModel.isCacheReady {
+                switch axis {
+                case .horizontal:
+                    ReticleAxisSlider(
+                        value: reticleXBinding,
+                        range: 0...viewModel.xSliderUpperBound,
+                        blockCount: viewModel.maxBlocksX,
+                        axis: .horizontal,
+                        isEnabled: sliderEnabled
+                    )
+                case .vertical:
+                    ReticleAxisSlider(
+                        value: reticleYBinding,
+                        range: 0...viewModel.ySliderUpperBound,
+                        blockCount: viewModel.maxBlocksY,
+                        axis: .vertical,
+                        isEnabled: sliderEnabled
+                    )
+                }
+            } else {
+                // Placeholder keeps grid geometry identical while cache builds.
+                Color.clear
+            }
+        }
+        .frame(
+            width: axis == .vertical ? AdvancedModeCanvasViewModel.axisSliderThickness : nil,
+            height: axis == .horizontal ? AdvancedModeCanvasViewModel.axisSliderThickness : AdvancedModeCanvasViewModel.canvasHeight
+        )
+    }
+
+    @ViewBuilder
+    private func imageCanvas(dodgeLeading: Bool) -> some View {
         GeometryReader { geo in
-            Image(uiImage: item.image)
+            let displayImage = viewModel.previewImage ?? item.image
+
+            Image(uiImage: displayImage)
                 .resizable()
                 .scaledToFill()
                 .frame(width: geo.size.width, height: geo.size.height)
@@ -94,8 +125,8 @@ struct AdvancedModeCanvasView: View {
                         AdvancedReticleCrosshair(
                             blockX: viewModel.reticleBlockX,
                             blockY: viewModel.reticleBlockY,
-                            maxBlocksX: maxBlocksX,
-                            maxBlocksY: maxBlocksY
+                            maxBlocksX: viewModel.maxBlocksX,
+                            maxBlocksY: viewModel.maxBlocksY
                         )
                         .clipShape(shape)
                     }
@@ -127,13 +158,23 @@ struct AdvancedModeCanvasView: View {
         }
         .frame(maxWidth: .infinity)
         .frame(height: AdvancedModeCanvasViewModel.canvasHeight)
+        .onGeometryChange(for: CGSize.self, of: { proxy in
+            CGSize(
+                width: proxy.size.width.rounded(.toNearestOrAwayFromZero),
+                height: proxy.size.height.rounded(.toNearestOrAwayFromZero)
+            )
+        }, action: { size in
+            reportLayout(size)
+        })
     }
 
     @ViewBuilder
     private var loupeOverlay: some View {
-        if viewModel.isCacheReady, let cache = viewModel.varianceCache {
+        if viewModel.isCacheReady,
+           let cache = viewModel.varianceCache,
+           let preview = viewModel.previewImage {
             AdvancedModeLoupeViewport(
-                image: item.image,
+                image: preview,
                 cache: cache,
                 reticleBlockX: viewModel.reticleBlockX,
                 reticleBlockY: viewModel.reticleBlockY,
@@ -149,22 +190,31 @@ struct AdvancedModeCanvasView: View {
         }
     }
 
-    private func reticleXBinding(upperBound: Double) -> Binding<Double> {
+    private var reticleXBinding: Binding<Double> {
         Binding(
             get: { Double(viewModel.reticleBlockX) },
-            set: { viewModel.reticleBlockX = Int(min(max($0, 0), upperBound).rounded()) }
+            set: {
+                let upper = viewModel.xSliderUpperBound
+                viewModel.reticleBlockX = Int(min(max($0, 0), upper).rounded())
+            }
         )
     }
 
-    private func reticleYBinding(upperBound: Double) -> Binding<Double> {
+    private var reticleYBinding: Binding<Double> {
         Binding(
             get: { Double(viewModel.reticleBlockY) },
-            set: { viewModel.reticleBlockY = Int(min(max($0, 0), upperBound).rounded()) }
+            set: {
+                let upper = viewModel.ySliderUpperBound
+                viewModel.reticleBlockY = Int(min(max($0, 0), upper).rounded())
+            }
         )
     }
 
-    private func loadCacheIfPossible() {
-        guard let service = watermarkService as? WatermarkService else { return }
-        viewModel.loadIfNeeded(for: item, service: service)
+    private func reportLayout(_ size: CGSize) {
+        guard let service = watermarkService as? WatermarkService else {
+            AdvancedCanvasDebug.log("reportLayout aborted — watermarkService is not WatermarkService")
+            return
+        }
+        viewModel.updateLayout(containerSize: size, item: item, service: service)
     }
 }
