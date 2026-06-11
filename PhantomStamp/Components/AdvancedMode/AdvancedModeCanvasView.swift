@@ -24,34 +24,15 @@ struct AdvancedModeCanvasView: View {
     private var layoutShowsX: Bool { item.width / DCTMatrix8x8.side > 1 }
     private var layoutShowsY: Bool { item.height / DCTMatrix8x8.side > 1 }
 
-    private var fractionX: String {
-        guard viewModel.maxBlocksX > 0 else { return "–" }
-        let f = ReticleBlockGeometry.blockCenterFraction(
-            index: viewModel.reticleBlockX,
-            blockCount: viewModel.maxBlocksX
-        )
-        return String(format: "%.2f", f)
-    }
-
-    private var fractionY: String {
-        guard viewModel.maxBlocksY > 0 else { return "–" }
-        let f = ReticleBlockGeometry.blockCenterFraction(
-            index: viewModel.reticleBlockY,
-            blockCount: viewModel.maxBlocksY
-        )
-        return String(format: "%.2f", f)
-    }
-
     var body: some View {
         let sliderEnabled = viewModel.isCacheReady && isInteractionEnabled
-        let dodgeLeading = viewModel.shouldDodgeLoupe()
 
         Grid(
             horizontalSpacing: AdvancedModeCanvasViewModel.gridSpacing,
             verticalSpacing: AdvancedModeCanvasViewModel.gridSpacing
         ) {
             GridRow(alignment: .top) {
-                imageCanvas(dodgeLeading: dodgeLeading)
+                imageCanvas
                     .frame(maxWidth: .infinity)
                     .frame(height: AdvancedModeCanvasViewModel.canvasHeight)
 
@@ -82,26 +63,6 @@ struct AdvancedModeCanvasView: View {
         .onChange(of: item.id) { _, newID in
             viewModel.bindPhoto(newID)
         }
-        #if DEBUG
-        .overlay(alignment: .bottomLeading) {
-            VStack(alignment: .leading, spacing: 2) {
-                Text(viewModel.lastDebugStatus)
-                Text(
-                    "reticle block (\(viewModel.reticleBlockX),\(viewModel.reticleBlockY)) " +
-                    "frac (\(fractionX),\(fractionY))"
-                )
-                Text(
-                    "preview px \(Int(viewModel.lastPreviewPixelSize.width))×\(Int(viewModel.lastPreviewPixelSize.height))"
-                )
-            }
-            .font(.system(size: 9, design: .monospaced))
-            .foregroundStyle(.white)
-            .padding(4)
-            .background(.black.opacity(0.55), in: RoundedRectangle(cornerRadius: 4))
-            .padding(6)
-            .allowsHitTesting(false)
-        }
-        #endif
     }
 
     @ViewBuilder
@@ -138,8 +99,9 @@ struct AdvancedModeCanvasView: View {
     }
 
     @ViewBuilder
-    private func imageCanvas(dodgeLeading: Bool) -> some View {
+    private var imageCanvas: some View {
         GeometryReader { geo in
+            let dodgeLeading = viewModel.shouldDodgeLoupe(canvasSize: geo.size)
             let displayImage = viewModel.previewImage ?? item.image
 
             Image(uiImage: displayImage)
@@ -165,9 +127,14 @@ struct AdvancedModeCanvasView: View {
                         style: StrokeStyle(lineWidth: 2, lineCap: .round, dash: [8, 7])
                     )
                 }
-                .overlay(alignment: dodgeLeading ? .bottomLeading : .bottomTrailing) {
+                .overlay {
                     loupeOverlay
-                        .padding(10)
+                        .padding(AdvancedModeCanvasViewModel.loupeCanvasPadding)
+                        .frame(
+                            maxWidth: .infinity,
+                            maxHeight: .infinity,
+                            alignment: dodgeLeading ? .bottomLeading : .bottomTrailing
+                        )
                         .animation(.easeInOut(duration: 0.22), value: dodgeLeading)
                 }
                 .overlay(alignment: .topTrailing) {

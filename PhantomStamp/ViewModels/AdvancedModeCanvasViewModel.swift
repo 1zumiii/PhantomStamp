@@ -26,7 +26,8 @@ final class AdvancedModeCanvasViewModel {
     static let canvasHeight: CGFloat = 260
     static let loupeSize: CGFloat = 132
     static let loupeGridSpan = 15
-    static let loupeDodgeFraction = 0.8
+    /// Padding around the loupe inside the image canvas overlay.
+    static let loupeCanvasPadding: CGFloat = 10
     static let axisSliderThickness: CGFloat = 18
     static let gridSpacing: CGFloat = 4
 
@@ -65,11 +66,25 @@ final class AdvancedModeCanvasViewModel {
     var showsHorizontalSlider: Bool { maxBlocksX > 1 }
     var showsVerticalSlider: Bool { maxBlocksY > 1 }
 
-    func shouldDodgeLoupe() -> Bool {
-        guard maxBlocksX > 1, maxBlocksY > 1 else { return false }
-        let nx = CGFloat(reticleBlockX) / CGFloat(maxBlocksX - 1)
-        let ny = CGFloat(reticleBlockY) / CGFloat(maxBlocksY - 1)
-        return nx >= Self.loupeDodgeFraction && ny >= Self.loupeDodgeFraction
+    /// True when the crosshair center overlaps the default bottom-trailing loupe slot.
+    func shouldDodgeLoupe(canvasSize: CGSize) -> Bool {
+        guard canvasSize.width > 0, canvasSize.height > 0,
+              maxBlocksX > 1, maxBlocksY > 1 else { return false }
+
+        let crossX = ReticleBlockGeometry.blockCenterFraction(
+            index: reticleBlockX,
+            blockCount: maxBlocksX
+        ) * canvasSize.width
+        let crossY = ReticleBlockGeometry.blockCenterFraction(
+            index: reticleBlockY,
+            blockCount: maxBlocksY
+        ) * canvasSize.height
+
+        let loupeFootprint = Self.loupeSize + Self.loupeCanvasPadding * 2
+        let loupeMinX = canvasSize.width - loupeFootprint
+        let loupeMinY = canvasSize.height - loupeFootprint
+
+        return crossX >= loupeMinX && crossY >= loupeMinY
     }
 
     /// Binds the canvas to a photo. Call once when the photo identity changes.
