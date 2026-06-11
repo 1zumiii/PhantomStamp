@@ -23,6 +23,14 @@ struct MinHeap<Element> {
     var isEmpty: Bool { storage.isEmpty }
     var count: Int { storage.count }
 
+    func peekMin() -> Element? {
+        storage.first
+    }
+
+    func contains(where predicate: (Element) -> Bool) -> Bool {
+        storage.contains(where: predicate)
+    }
+
     mutating func removeAll(keepingCapacity: Bool) {
         storage.removeAll(keepingCapacity: keepingCapacity)
     }

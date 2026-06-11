@@ -20,8 +20,6 @@ struct WatermarkInsertView: View {
     @State private var isAdvancedOptionsExpanded: Bool = false
     @State private var showAdvancedOptionsInfo: Bool = false
 
-    private let thumbnailStripMaxVisible = 6
-
     init(watermarkService: any WatermarkServiceProtocol, settingsStore: UserSettingsStore) {
         self.watermarkService = watermarkService
         self.settingsStore = settingsStore
@@ -42,6 +40,9 @@ struct WatermarkInsertView: View {
                 .padding(.vertical, 10)
             }
             .scrollDismissesKeyboard(.interactively)
+            .simultaneousGesture(
+                TapGesture().onEnded { dismissPayloadKeyboardIfNeeded() }
+            )
             .navigationTitle("Embed Watermark")
             .scrollIndicators(.hidden)
             .background(Color(uiColor: .systemGroupedBackground))
@@ -87,6 +88,12 @@ struct WatermarkInsertView: View {
         })
     }
 
+    private var uploadedCountLabel: String {
+        let max = WatermarkInsertViewModel.maxSelectedImageCount
+        if vm.selectedPhotoItems.isEmpty { return "None yet" }
+        return "\(vm.selectedPhotoItems.count) / \(max) photo(s)"
+    }
+
     private var embedErrorBinding: Binding<Bool> {
         Binding(
             get: { vm.showEmbedErrorAlert },
@@ -105,6 +112,11 @@ struct WatermarkInsertView: View {
                 }
             }
         )
+    }
+
+    private func dismissPayloadKeyboardIfNeeded() {
+        guard isPayloadFocused else { return }
+        isPayloadFocused = false
     }
 
     private func applyDefaultPayloadIfAppropriate() {
@@ -137,7 +149,7 @@ struct WatermarkInsertView: View {
 
     private var header: some View {
         VStack(alignment: .leading, spacing: 8) {
-            Text("Embed flow")
+            Text("Embedding Flow")
                 .font(.caption.weight(.semibold))
                 .foregroundStyle(.secondary)
                 .padding(.horizontal, 10)
@@ -169,7 +181,7 @@ struct WatermarkInsertView: View {
 
             PhotosPicker(
                 selection: $photoPickerItems,
-                maxSelectionCount: nil,
+                maxSelectionCount: vm.isAtImageLimit ? 1 : vm.remainingImageSlots,
                 matching: ImagePickerSupport.imagesOnlyFilter,
                 preferredItemEncoding: .automatic,
                 label: {
@@ -190,7 +202,9 @@ struct WatermarkInsertView: View {
                             Text("Tap to choose photos")
                                 .font(.headline.weight(.semibold))
                                 .foregroundStyle(.primary)
-                            Text("Images only • Added picks append to the strip")
+                            Text(vm.isAtImageLimit
+                                ? "Maximum \(WatermarkInsertViewModel.maxSelectedImageCount) photos reached"
+                                : "Images only • Up to \(WatermarkInsertViewModel.maxSelectedImageCount) • Picks append")
                                 .font(.caption)
                                 .foregroundStyle(.secondary)
                                 .multilineTextAlignment(.center)
@@ -203,7 +217,7 @@ struct WatermarkInsertView: View {
                 }
             )
             .buttonStyle(.plain)
-            .disabled(vm.isEmbedding || vm.showSuccessOverlay)
+            .disabled(vm.isEmbedding || vm.showSuccessOverlay || vm.isAtImageLimit)
 
             Divider()
                 .opacity(0.35)
@@ -213,12 +227,13 @@ struct WatermarkInsertView: View {
                     .font(.caption.weight(.semibold))
                     .foregroundStyle(.secondary)
                 Spacer()
-                Text(vm.selectedPhotoItems.isEmpty ? "None yet" : "\(vm.selectedPhotoItems.count) photo(s)")
+                Text(uploadedCountLabel)
                     .font(.caption)
                     .foregroundStyle(.secondary)
             }
 
             uploadedThumbnailsRow
+                .frame(maxWidth: .infinity, alignment: .leading)
         }
         .padding(18)
         .background {
@@ -296,86 +311,20 @@ struct WatermarkInsertView: View {
 
     /// Fixed strip height so the Uploaded section keeps layout before any picks arrive.
     private var uploadedThumbnailsRow: some View {
-        let items = vm.selectedPhotoItems
-        let visible = Array(items.prefix(thumbnailStripMaxVisible))
-        let count = items.count
-        let manageEnabled = count > 0 && !vm.isEmbedding && !vm.showSuccessOverlay
-
-        return ScrollView(.horizontal) {
-            HStack(spacing: 10) {
-                ForEach(visible) { item in
-                    thumbnailCell(for: item.image)
-                }
-
-                // Always show the gallery/manage affordance; disabled when there is nothing to manage.
-                Button {
-                    guard manageEnabled else { return }
-                    showOverflowSheet = true
-                } label: {
-                    manageUploadedChip(totalCount: count)
-                }
-                .buttonStyle(.plain)
-                .disabled(!manageEnabled)
-                .opacity(manageEnabled ? 1 : 0.42)
-                .accessibilityLabel(count > 0 ? "View all \(count) uploads" : "Manage uploads, no photos selected")
-            }
-            .padding(.vertical, 4)
-            .frame(minHeight: thumbnailStripMinHeight, alignment: .center)
-        }
-        .scrollIndicators(.hidden)
-        .frame(minHeight: thumbnailStripMinHeight + 8)
-    }
-
-    private var thumbnailStripMinHeight: CGFloat { 62 }
-
-    private func manageUploadedChip(totalCount: Int) -> some View {
-        RoundedRectangle(cornerRadius: 14, style: .continuous)
-            .fill(Color(uiColor: .tertiarySystemGroupedBackground))
-            .overlay {
-                RoundedRectangle(cornerRadius: 14, style: .continuous)
-                    .strokeBorder(Color.primary.opacity(0.12), lineWidth: 1)
-            }
-            .frame(width: 58, height: 58)
-            .overlay {
-                Image(systemName: "square.grid.2x2.fill")
-                    .font(.body.weight(.semibold))
-                    .foregroundStyle(.secondary)
-            }
-            .overlay(alignment: .topTrailing) {
-                if totalCount > 0 {
-                    Text("\(totalCount)")
-                        .font(.caption2.weight(.bold))
-                        .foregroundStyle(.white)
-                        .padding(4)
-                        .background(Circle().fill(Color.accentColor))
-                        .offset(x: 4, y: -4)
-                }
-            }
-    }
-
-    private func thumbnailCell(for uiImage: UIImage) -> some View {
-        Image(uiImage: uiImage)
-            .resizable()
-            .scaledToFill()
-            .frame(width: 58, height: 58)
-            .clipShape(RoundedRectangle(cornerRadius: 14, style: .continuous))
-            .overlay {
-                RoundedRectangle(cornerRadius: 14, style: .continuous)
-                    .strokeBorder(Color.primary.opacity(0.08), lineWidth: 1)
-            }
+        UploadedThumbnailStrip(
+            items: vm.selectedPhotoItems,
+            isManageEnabled: !vm.selectedPhotoItems.isEmpty && !vm.isEmbedding && !vm.showSuccessOverlay,
+            onManage: { showOverflowSheet = true }
+        )
     }
 
     private var inputCard: some View {
         VStack(alignment: .leading, spacing: 14) {
-            Label("Payload", systemImage: "character.cursor.ibeam")
+            Label("Watermark Payload", systemImage: "character.cursor.ibeam")
                 .font(.subheadline.weight(.semibold))
                 .foregroundStyle(.secondary)
 
             VStack(alignment: .leading, spacing: 10) {
-                Text("Watermark text")
-                    .font(.caption.weight(.semibold))
-                    .foregroundStyle(.secondary)
-
                 // Inline character budget on the trailing edge of the field.
                 HStack(spacing: 10) {
                     TextField(
@@ -422,12 +371,6 @@ struct WatermarkInsertView: View {
         .overlay {
             RoundedRectangle(cornerRadius: 18, style: .continuous)
                 .strokeBorder(Color.primary.opacity(0.05), lineWidth: 1)
-        }
-        .toolbar {
-            ToolbarItemGroup(placement: .keyboard) {
-                Spacer()
-                Button("Done") { isPayloadFocused = false }
-            }
         }
     }
 
@@ -662,6 +605,142 @@ struct WatermarkInsertView: View {
                 )
             }
         }
+    }
+}
+
+// MARK: - Uploaded thumbnail strip
+
+private struct UploadedThumbnailStrip: View {
+    let items: [SelectedPhotoItem]
+    let isManageEnabled: Bool
+    var onManage: () -> Void
+
+    private static let thumbSize: CGFloat = 58
+    private static let spacing: CGFloat = 10
+    private static let separatorWidth: CGFloat = 1
+    private static let separatorLeadingPadding: CGFloat = 10
+    private static let stripMinHeight: CGFloat = 62
+    private static let scrollableMinCount = 5
+    private static let scrollFadeWidth: CGFloat = 6
+    private static let cardBackground = Color(uiColor: .secondarySystemGroupedBackground)
+
+    var body: some View {
+        Group {
+            if items.count < Self.scrollableMinCount {
+                inlineLayout
+            } else {
+                scrollableLayout
+            }
+        }
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .frame(minHeight: Self.stripMinHeight + 8)
+    }
+
+    /// ≤4 photos: thumbnails and manage chip in one plain row.
+    private var inlineLayout: some View {
+        HStack(spacing: Self.spacing) {
+            ForEach(items) { item in
+                thumbnailCell(for: item.image)
+            }
+            manageButton
+        }
+        .padding(.vertical, 4)
+        .frame(minHeight: Self.stripMinHeight, alignment: .center)
+    }
+
+    /// >4 photos: scrollable thumbnails + fixed separator + manage entry.
+    private var scrollableLayout: some View {
+        HStack(spacing: Self.separatorLeadingPadding) {
+            ScrollView(.horizontal) {
+                HStack(spacing: Self.spacing) {
+                    ForEach(items) { item in
+                        thumbnailCell(for: item.image)
+                    }
+                }
+                .padding(.vertical, 4)
+                .padding(.trailing, Self.scrollFadeWidth / 2)
+                .frame(minHeight: Self.stripMinHeight, alignment: .center)
+            }
+            .scrollIndicators(.hidden)
+            .frame(maxWidth: .infinity, alignment: .leading)
+            .overlay(alignment: .trailing) {
+                scrollTrailingFade
+            }
+
+            Rectangle()
+                .fill(Color.primary.opacity(0.12))
+                .frame(width: Self.separatorWidth, height: Self.thumbSize)
+
+            manageButton
+                .padding(.vertical, 4)
+        }
+        .frame(minHeight: Self.stripMinHeight, alignment: .center)
+    }
+
+    private var scrollTrailingFade: some View {
+        LinearGradient(
+            colors: [
+                Self.cardBackground.opacity(0),
+                Self.cardBackground.opacity(0.68),
+                Self.cardBackground,
+            ],
+            startPoint: .leading,
+            endPoint: .trailing
+        )
+        .frame(width: Self.scrollFadeWidth)
+        .allowsHitTesting(false)
+    }
+
+    private var manageButton: some View {
+        Button {
+            guard isManageEnabled else { return }
+            onManage()
+        } label: {
+            manageUploadedChip(totalCount: items.count)
+        }
+        .buttonStyle(.plain)
+        .disabled(!isManageEnabled)
+        .opacity(isManageEnabled ? 1 : 0.42)
+        .accessibilityLabel(
+            items.isEmpty ? "Manage uploads, no photos selected" : "View all \(items.count) uploads"
+        )
+    }
+
+    private func manageUploadedChip(totalCount: Int) -> some View {
+        RoundedRectangle(cornerRadius: 14, style: .continuous)
+            .fill(Color(uiColor: .tertiarySystemGroupedBackground))
+            .overlay {
+                RoundedRectangle(cornerRadius: 14, style: .continuous)
+                    .strokeBorder(Color.primary.opacity(0.12), lineWidth: 1)
+            }
+            .frame(width: Self.thumbSize, height: Self.thumbSize)
+            .overlay {
+                Image(systemName: "square.grid.2x2.fill")
+                    .font(.body.weight(.semibold))
+                    .foregroundStyle(.secondary)
+            }
+            .overlay(alignment: .topTrailing) {
+                if totalCount > 0 {
+                    Text("\(totalCount)")
+                        .font(.caption2.weight(.bold))
+                        .foregroundStyle(.white)
+                        .padding(4)
+                        .background(Circle().fill(Color.accentColor))
+                        .offset(x: 4, y: -4)
+                }
+            }
+    }
+
+    private func thumbnailCell(for uiImage: UIImage) -> some View {
+        Image(uiImage: uiImage)
+            .resizable()
+            .scaledToFill()
+            .frame(width: Self.thumbSize, height: Self.thumbSize)
+            .clipShape(RoundedRectangle(cornerRadius: 14, style: .continuous))
+            .overlay {
+                RoundedRectangle(cornerRadius: 14, style: .continuous)
+                    .strokeBorder(Color.primary.opacity(0.08), lineWidth: 1)
+            }
     }
 }
 

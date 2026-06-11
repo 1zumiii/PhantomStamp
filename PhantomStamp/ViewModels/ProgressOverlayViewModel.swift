@@ -18,6 +18,72 @@ import SwiftUI
 @MainActor
 @Observable
 final class FullScreenWatermarkProgressOverlayViewModel {
+    // Pump tuning — three tiers: live (readable steps), moderate (mild backlog), catch-up (deep backlog only).
+    private static let catchUpBacklogThreshold = 10
+    private static let completionHoldNanoseconds: UInt64 = 1_000_000_000
+
+    // Embed strip phase (matches WatermarkService colorEnd…stripsEnd budget).
+    private static let embedStripsPhaseStart = 0.20
+    private static let embedStripsPhaseEnd = 0.70
+    private static let stripHeavyBacklogThreshold = 8
+    private static let stripMilestoneAdvance = 0.15
+
+    private enum PumpPacing {
+        case live
+        case moderate
+        case catchUp
+
+        var minIntervalSeconds: Double {
+            switch self {
+            case .live: 0.05
+            case .moderate: 0.03
+            case .catchUp: 0.015
+            }
+        }
+
+        var maxIntervalSeconds: Double {
+            switch self {
+            case .live: 0.55
+            case .moderate: 0.42
+            case .catchUp: 0.28
+            }
+        }
+
+        var intervalDeltaMultiplier: Double {
+            switch self {
+            case .live: 7.0
+            case .moderate: 6.0
+            case .catchUp: 4.5
+            }
+        }
+
+        func animationDuration(delta: Double) -> Double {
+            switch self {
+            case .live:
+                return min(max(0.22, 0.28 + delta * 0.75), 0.55)
+            case .moderate:
+                return min(max(0.16, 0.20 + delta * 0.55), 0.34)
+            case .catchUp:
+                return 0.13
+            }
+        }
+
+        static func resolve(backlogCount: Int, isFinishing: Bool, inStripPhase: Bool) -> PumpPacing {
+            if inStripPhase {
+                // Strip embedding is the longest stage — never rush or skip to catch-up pacing.
+                if backlogCount > 0 || isFinishing { return .moderate }
+                return .live
+            }
+            if backlogCount >= FullScreenWatermarkProgressOverlayViewModel.catchUpBacklogThreshold - 1 {
+                return .catchUp
+            }
+            if backlogCount > 0 || isFinishing {
+                return .moderate
+            }
+            return .live
+        }
+    }
+
     var title: String = "Watermark"
     var detail: String = AppConstants.WatermarkStep.preparation.rawValue
     var progress: Double = 0
@@ -230,7 +296,7 @@ final class FullScreenWatermarkProgressOverlayViewModel {
         hideTask?.cancel()
         hideTask = Task { @MainActor [weak self] in
             // Keep visible briefly at completion.
-            try? await Task.sleep(nanoseconds: 1_250_000_000)
+            try? await Task.sleep(nanoseconds: Self.completionHoldNanoseconds)
             guard !Task.isCancelled, let self else { return }
             withAnimation(.easeOut(duration: 0.18)) {
                 self.state = .hidden
@@ -318,6 +384,120 @@ final class FullScreenWatermarkProgressOverlayViewModel {
         pumpSignal.signal()
     }
 
+    private func isProcessingStripsEvent(_ item: QueuedProgress) -> Bool {
+        item.step == .processingStrips
+    }
+
+    private func isInEmbedStripsPhase(_ percentage: Double) -> Bool {
+        percentage >= Self.embedStripsPhaseStart - 1e-9 && percentage < Self.embedStripsPhaseEnd - 1e-9
+    }
+
+    private func pendingQueueHasStripWork() -> Bool {
+        pendingProgress.contains { isProcessingStripsEvent($0) }
+    }
+
+    private func isInStripPlaybackPhase(for next: QueuedProgress) -> Bool {
+        isProcessingStripsEvent(next)
+            || isInEmbedStripsPhase(progress)
+            || pendingQueueHasStripWork()
+    }
+
+    private func shouldCoalescePendingProgress() -> Bool {
+        guard pendingProgress.count >= Self.catchUpBacklogThreshold else { return false }
+        // Never merge strip-phase ticks — that stage should remain visible on the bar.
+        if pendingQueueHasStripWork() || isInEmbedStripsPhase(progress) { return false }
+        return true
+    }
+
+    /// When strip ticks pile up, play ~15% milestones instead of every strip completion or one big jump.
+    private func popProgressEvent() -> QueuedProgress? {
+        guard let first = pendingProgress.popMin() else { return nil }
+
+        let heavyStripBacklog = pendingProgress.count >= Self.stripHeavyBacklogThreshold - 1
+            && isProcessingStripsEvent(first)
+        guard heavyStripBacklog else { return first }
+
+        var chosen = first
+        let milestoneTarget = min(chosen.percentage + Self.stripMilestoneAdvance, Self.embedStripsPhaseEnd)
+
+        while let item = pendingProgress.popMin() {
+            if isProcessingStripsEvent(item) {
+                chosen = item
+                if item.percentage >= milestoneTarget - 1e-9 || item.percentage >= Self.embedStripsPhaseEnd - 1e-9 {
+                    break
+                }
+            } else {
+                pendingProgress.insert(item)
+                break
+            }
+        }
+        return chosen
+    }
+
+    /// Collapse the queue to a single highest-percentage event (latest detail wins ties).
+    private func coalescePendingProgress() -> QueuedProgress? {
+        var best: QueuedProgress?
+        while let item = pendingProgress.popMin() {
+            guard let current = best else {
+                best = item
+                continue
+            }
+            if item.percentage > current.percentage + 1e-9 {
+                best = item
+            } else if abs(item.percentage - current.percentage) <= 1e-9, item.enqueuedAt >= current.enqueuedAt {
+                best = item
+            }
+        }
+        return best
+    }
+
+    private var isFinishing: Bool {
+        if case .finishing = state { return true }
+        return false
+    }
+
+    private func applyProgressUpdate(_ next: QueuedProgress, clock: ContinuousClock) async {
+        let backlogCount = pendingProgress.count
+        let inStripPhase = isInStripPlaybackPhase(for: next)
+        let pacing = PumpPacing.resolve(
+            backlogCount: backlogCount,
+            isFinishing: isFinishing,
+            inStripPhase: inStripPhase
+        )
+
+        let deltaForInterval = abs(next.percentage - progress)
+        let intervalSeconds = min(
+            max(deltaForInterval * pacing.intervalDeltaMultiplier, pacing.minIntervalSeconds),
+            pacing.maxIntervalSeconds
+        )
+        if let last = lastProgressApplyInstant {
+            let elapsed = last.duration(to: clock.now)
+            let wait = Duration.seconds(intervalSeconds)
+            if elapsed < wait {
+                try? await clock.sleep(for: wait - elapsed)
+            }
+        }
+
+        detail = next.detailOverride ?? next.step.rawValue
+
+        let target = next.percentage
+        if target < progress - 1e-9 {
+            return
+        }
+
+        var tNoAnim = Transaction()
+        tNoAnim.animation = nil
+        withTransaction(tNoAnim) {
+            progressTextValue = target
+        }
+
+        let animDuration = pacing.animationDuration(delta: deltaForInterval)
+        withAnimation(.easeInOut(duration: animDuration)) {
+            progress = target
+        }
+        lastProgressApplyInstant = clock.now
+    }
+
     private func ensureProgressPump() {
         guard progressPumpTask == nil else { return }
         progressPumpTask = Task { @MainActor in
@@ -360,48 +540,16 @@ final class FullScreenWatermarkProgressOverlayViewModel {
                     continue
                 }
 
-                // Priority queue behavior: always take the smallest progress first.
-                guard let next = pendingProgress.popMin() else {
+                if shouldCoalescePendingProgress() {
+                    guard let merged = coalescePendingProgress() else { continue }
+                    await applyProgressUpdate(merged, clock: clock)
                     continue
                 }
 
-                // Enforce minimum time between *applied* updates (adaptive + fast-forward under backlog).
-                let qCount = pendingProgress.count
-                let dynamicMinInterval = qCount > 2 ? 0.01 : 0.05
-
-                let deltaForInterval = abs(next.percentage - progress)
-                let intervalSeconds = min(max(deltaForInterval * 10.0, dynamicMinInterval), 1.00)
-                if let last = lastProgressApplyInstant {
-                    let elapsed = last.duration(to: clock.now)
-                    let minInterval = Duration.seconds(intervalSeconds)
-                    if elapsed < minInterval {
-                        try? await clock.sleep(for: (minInterval - elapsed))
-                    }
-                }
-
-                detail = next.detailOverride ?? next.step.rawValue
-
-                let target = next.percentage
-                // Drop stale regressions (can happen with concurrent notifications arriving out of order).
-                if target < progress - 1e-9 {
+                guard let next = popProgressEvent() else {
                     continue
                 }
-
-                // Update the percent label without animation (avoid "counting" feel).
-                var tNoAnim = Transaction()
-                tNoAnim.animation = nil
-                withTransaction(tNoAnim) {
-                    progressTextValue = target
-                }
-
-                // Animation duration should also adapt to backlog.
-                let dynamicAnimDuration = qCount > 2
-                    ? 0.10
-                    : min(max(0.20, 0.25 + deltaForInterval * 0.7), 0.90)
-                withAnimation(.easeInOut(duration: dynamicAnimDuration)) {
-                    progress = target
-                }
-                lastProgressApplyInstant = clock.now
+                await applyProgressUpdate(next, clock: clock)
             }
         }
     }

@@ -44,13 +44,8 @@ struct RobustnessTestingView: View {
         } message: {
             Text(vm.alertMessage)
         }
-        .sheet(item: $vm.manipResultSheet) { model in
-            ManipResultSheet(model: model) {
-                vm.dismissManipResultSheet()
-            }
-            .presentationDetents([.medium])
-            .presentationDragIndicator(.visible)
-        }
+        .sensoryFeedback(.success, trigger: vm.manipJpegFeedbackTrigger)
+        .sensoryFeedback(.success, trigger: vm.manipResizeFeedbackTrigger)
         .onChange(of: vm.manipPickerItem) { _, newItem in
             Task { await vm.loadManipSourceImage(from: newItem) }
         }
@@ -332,15 +327,14 @@ struct RobustnessTestingView: View {
 
             HStack {
                 Spacer()
-                Button {
+                ManipSaveButton(
+                    title: "Compress & Save",
+                    prominent: true,
+                    isRunning: vm.manipJpegRunning,
+                    feedback: vm.manipJpegFeedback
+                ) {
                     Task { await vm.runManipJpegCompress() }
-                } label: {
-                    Text("Compress & Save")
-                        .font(.callout.weight(.semibold))
-                        .padding(.horizontal, 12)
                 }
-                .buttonStyle(.borderedProminent)
-                .controlSize(.small)
                 .disabled(vm.isLoading || vm.manipSourceImage == nil)
             }
         }
@@ -377,15 +371,14 @@ struct RobustnessTestingView: View {
 
             HStack {
                 Spacer()
-                Button {
+                ManipSaveButton(
+                    title: "Resize & Save",
+                    prominent: false,
+                    isRunning: vm.manipResizeRunning,
+                    feedback: vm.manipResizeFeedback
+                ) {
                     Task { await vm.runManipResize() }
-                } label: {
-                    Text("Resize & Save")
-                        .font(.callout.weight(.semibold))
-                        .padding(.horizontal, 12)
                 }
-                .buttonStyle(.bordered)
-                .controlSize(.small)
                 .disabled(vm.isLoading || vm.manipSourceImage == nil || vm.manipResizePreviewSize == nil)
             }
         }
@@ -489,87 +482,53 @@ struct RobustnessTestingView: View {
     }
 }
 
-// MARK: - Image tools result sheet
+// MARK: - Image tools save button
 
-private struct ManipResultSheet: View {
-    let model: RobustnessTestingViewModel.ManipResultSheetModel
-    var onDismiss: () -> Void
+private struct ManipSaveButton: View {
+    let title: String
+    let prominent: Bool
+    let isRunning: Bool
+    let feedback: RobustnessTestingViewModel.ManipSaveFeedback
+    var action: () -> Void
+
+    private var isSuccess: Bool { feedback == .success }
 
     var body: some View {
-        VStack(spacing: 0) {
-            Capsule()
-                .fill(Color.primary.opacity(0.18))
-                .frame(width: 36, height: 5)
-                .padding(.top, 10)
-                .padding(.bottom, 18)
-
-            VStack(spacing: 14) {
-                Image(systemName: model.isSuccess ? "checkmark.circle.fill" : "exclamationmark.triangle.fill")
-                    .font(.system(size: 52))
-                    .foregroundStyle(
-                        model.isSuccess ? .green : .orange,
-                        Color.primary.opacity(0.12)
-                    )
-                    .symbolRenderingMode(.palette)
-
-                VStack(spacing: 6) {
-                    Text(model.title)
-                        .font(.title3.weight(.semibold))
-                        .multilineTextAlignment(.center)
-                    Text(model.subtitle)
-                        .font(.subheadline)
-                        .foregroundStyle(.secondary)
-                        .multilineTextAlignment(.center)
-                        .fixedSize(horizontal: false, vertical: true)
-                }
-                .padding(.horizontal, 8)
-
-                if !model.details.isEmpty {
-                    VStack(spacing: 0) {
-                        ForEach(Array(model.details.enumerated()), id: \.element.id) { index, row in
-                            HStack {
-                                Text(row.label)
-                                    .font(.subheadline)
-                                    .foregroundStyle(.secondary)
-                                Spacer()
-                                Text(row.value)
-                                    .font(.subheadline.monospacedDigit().weight(.semibold))
-                                    .foregroundStyle(.primary)
-                            }
-                            .padding(.horizontal, 16)
-                            .padding(.vertical, 12)
-
-                            if index < model.details.count - 1 {
-                                Divider().padding(.leading, 16)
-                            }
-                        }
-                    }
-                    .background {
-                        RoundedRectangle(cornerRadius: 14, style: .continuous)
-                            .fill(Color(uiColor: .secondarySystemGroupedBackground))
-                    }
-                    .overlay {
-                        RoundedRectangle(cornerRadius: 14, style: .continuous)
-                            .strokeBorder(Color.primary.opacity(0.06), lineWidth: 1)
-                    }
-                }
+        Group {
+            if prominent {
+                Button(action: action) { label }
+                    .buttonStyle(.borderedProminent)
+            } else {
+                Button(action: action) { label }
+                    .buttonStyle(.bordered)
             }
-            .padding(.horizontal, 22)
-
-            Spacer(minLength: 12)
-
-            Button(action: onDismiss) {
-                Text("Done")
-                    .font(.body.weight(.semibold))
-                    .frame(maxWidth: .infinity)
-                    .padding(.vertical, 14)
-            }
-            .buttonStyle(.borderedProminent)
-            .padding(.horizontal, 22)
-            .padding(.bottom, 12)
         }
-        .frame(maxWidth: .infinity, maxHeight: .infinity)
-        .background(Color(uiColor: .systemGroupedBackground))
+        .tint(isSuccess ? .green : nil)
+        .controlSize(.small)
+        .scaleEffect(isSuccess ? 1.03 : 1.0)
+        .animation(.easeInOut(duration: 0.35), value: isRunning)
+        .animation(.spring(response: 0.45, dampingFraction: 0.78), value: isSuccess)
+    }
+
+    private var label: some View {
+        HStack(spacing: 6) {
+            Group {
+                if isRunning {
+                    ProgressView()
+                        .controlSize(.small)
+                } else if isSuccess {
+                    Image(systemName: "checkmark")
+                        .font(.callout.weight(.bold))
+                }
+            }
+            .frame(width: isRunning || isSuccess ? 16 : 0)
+            .opacity(isRunning || isSuccess ? 1 : 0)
+
+            Text(isSuccess ? "Saved" : title)
+                .font(.callout.weight(.semibold))
+                .contentTransition(.interpolate)
+        }
+        .padding(.horizontal, 12)
     }
 }
 
