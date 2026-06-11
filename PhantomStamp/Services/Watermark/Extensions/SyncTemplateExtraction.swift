@@ -7,7 +7,7 @@
 //  Companion to `SyncTemplateEmbedding.swift`.
 //
 //  The embed pipeline tiles a deterministic 512×512 spatial wave on top of the host Y-channel.
-//  By construction (see Python generator inside `DSP_Assets/sync_template_512.bin`), the DFT of
+//  By construction (see Python generator inside `Assets/DSP_Assets/sync_template_512.bin`), the DFT of
 //  that wave has exactly 4 sharp peaks sitting at radius=100, angles ±π/4 around DC. Those peaks
 //  are the geometric "lighthouses" the extractor uses to undo any rotation / scale attack the
 //  attacker may have performed before saving the image back to disk.

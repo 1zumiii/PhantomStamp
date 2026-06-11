@@ -6,6 +6,10 @@
 
 ## 1. Project Overview
 
+<p align="center">
+  <img src="PhantomStamp/Assets/Docs/PhantomStampPreview.png" alt="Compression Sweep Respaced Results" width="75%">
+</p>
+
 **PhantomStamp** is an iOS application designed for digital artists, photographers, and content creators. It utilizes the Discrete Cosine Transform (DCT) to embed invisible copyright information into the frequency domain of an image. Unlike traditional watermarks, PhantomStamp's blind watermarking solution provides highly robust copyright protection without compromising the aesthetic value of the original artwork.
 
 ## 2. Problem Statement
@@ -65,7 +69,7 @@ The extraction algorithm operates entirely blindly (requires no original image):
 PhantomStamp employs a rigorous, automated **Smart Step Boundary Scan** to evaluate the hybrid architecture's absolute physical limits under severe geometric attacks. By differentiating between algorithmic failures and theoretical DSP boundaries, the system is calibrated to the Pareto-Optimal point.
 
 <p align="center">
-  <img src="PhantomStamp/Testing/phantomstamp_boundary_scan_v3.png" alt="Hybrid Architecture Boundary Scan" width="70%">
+  <img src="PhantomStamp/Assets/Docs/phantomstamp_boundary_scan_v3.png" alt="Hybrid Architecture Boundary Scan" width="70%">
   <br>
   <em>Figure 1: Boundary scan results revealing the 1/f² compensation and the Bilinear Death Valley.</em>
 </p>
@@ -90,7 +94,7 @@ Through high-granularity fuzzing, we identified and mitigated two critical DSP p
 To map the absolute breakdown boundaries under extreme lossy channel conditions, an automated 19-case non-uniform quality sweep was executed on a high-resolution **4032x3024** pixel asset. Under full-block saturation (`textureVarianceThreshold = -1.0`), the architecture establishes a highly robust survival profile against aggressive quantization.
 
 <p align="center">
-  <img src="PhantomStamp/Testing/compression_sweep_respaced.png" alt="Compression Sweep Respaced Results" width="75%">
+  <img src="PhantomStamp/Assets/Docs/compression_sweep_respaced.png" alt="Compression Sweep Respaced Results" width="75%">
   <br>
   <em>Figure 2: Non-uniform quality sweep revealing the compression asymptote and step aliasing inversion.</em>
 </p>
@@ -104,7 +108,7 @@ To map the absolute breakdown boundaries under extreme lossy channel conditions,
 To evaluate the grid-tracking resilience and redundant block spatial alignment under extreme surface destruction, a 59-case segmented boundary sweep was executed by progressively shaving pixels from the right margin of a **4032x3024** image asset (`identity = PASS`).
 
 <p align="center">
-  <img src="PhantomStamp/Testing/crop_sweep_sampled.png" alt="Crop Sweep Sampled Results" width="75%">
+  <img src="PhantomStamp/Assets/Docs/crop_sweep_sampled.png" alt="Crop Sweep Sampled Results" width="75%">
   <br>
   <em>Figure 3: Segmented crop sweep illustrating the 136px physical payload period boundary and abrupt decoding collapse.</em>
 </p>

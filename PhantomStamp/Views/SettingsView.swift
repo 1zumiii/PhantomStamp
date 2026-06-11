@@ -83,7 +83,6 @@ struct SettingsView: View {
     private var watermarkDefaultsSection: some View {
         Section {
             watermarkTextFieldRow
-            embeddingStrengthRow
             exportQualityRow
         } header: {
             sectionHeader(
