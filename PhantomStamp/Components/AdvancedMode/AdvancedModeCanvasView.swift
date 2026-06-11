@@ -101,55 +101,63 @@ struct AdvancedModeCanvasView: View {
     @ViewBuilder
     private var imageCanvas: some View {
         GeometryReader { geo in
-            let dodgeLeading = viewModel.shouldDodgeLoupe(canvasSize: geo.size)
+            let canvasSize = geo.size
+            let dodgeLeading = viewModel.shouldDodgeLoupe(canvasSize: canvasSize)
             let displayImage = viewModel.previewImage ?? item.image
 
-            Image(uiImage: displayImage)
-                .resizable()
-                .scaledToFill()
-                .frame(width: geo.size.width, height: geo.size.height)
-                .clipped()
-                .clipShape(shape)
-                .overlay {
-                    if viewModel.isCacheReady {
-                        AdvancedReticleCrosshair(
-                            blockX: viewModel.reticleBlockX,
-                            blockY: viewModel.reticleBlockY,
-                            maxBlocksX: viewModel.maxBlocksX,
-                            maxBlocksY: viewModel.maxBlocksY
-                        )
-                        .clipShape(shape)
-                    }
+            ZStack {
+                CanvasPhotoFill(
+                    image: displayImage,
+                    width: canvasSize.width,
+                    height: canvasSize.height
+                )
+                .equatable()
+
+                ReticleCrosshairHost(
+                    isVisible: viewModel.isCacheReady,
+                    blockX: viewModel.reticleBlockX,
+                    blockY: viewModel.reticleBlockY,
+                    maxBlocksX: viewModel.maxBlocksX,
+                    maxBlocksY: viewModel.maxBlocksY
+                )
+                .equatable()
+
+                CanvasChromeBorder(shape: shape)
+
+                LoupeOverlayHost(
+                    isCacheReady: viewModel.isCacheReady,
+                    isBuilding: viewModel.isBuildingVarianceCache,
+                    preview: viewModel.previewImage,
+                    cache: viewModel.varianceCache,
+                    reticleBlockX: viewModel.reticleBlockX,
+                    reticleBlockY: viewModel.reticleBlockY,
+                    varianceThreshold: varianceThreshold,
+                    dodgeLeading: dodgeLeading,
+                    displayScale: displayScale
+                )
+                .equatable()
+
+                ReticleSigmaBadgeHost(
+                    label: viewModel.reticleBlockSigmaLabel,
+                    isVisible: viewModel.isCacheReady
+                )
+                .equatable()
+            }
+            .compositingGroup()
+            .clipShape(shape)
+            .overlay(alignment: .topTrailing) {
+                Button(action: onRemovePhoto) {
+                    Image(systemName: "xmark.circle.fill")
+                        .font(.title3)
+                        .symbolRenderingMode(.palette)
+                        .foregroundStyle(.white, .black.opacity(0.45))
+                        .padding(8)
+                        .contentShape(Rectangle())
                 }
-                .overlay {
-                    shape.strokeBorder(
-                        Color.primary.opacity(0.28),
-                        style: StrokeStyle(lineWidth: 2, lineCap: .round, dash: [8, 7])
-                    )
-                }
-                .overlay {
-                    loupeOverlay
-                        .padding(AdvancedModeCanvasViewModel.loupeCanvasPadding)
-                        .frame(
-                            maxWidth: .infinity,
-                            maxHeight: .infinity,
-                            alignment: dodgeLeading ? .bottomLeading : .bottomTrailing
-                        )
-                        .animation(.easeInOut(duration: 0.22), value: dodgeLeading)
-                }
-                .overlay(alignment: .topTrailing) {
-                    Button(action: onRemovePhoto) {
-                        Image(systemName: "xmark.circle.fill")
-                            .font(.title3)
-                            .symbolRenderingMode(.palette)
-                            .foregroundStyle(.white, .black.opacity(0.45))
-                            .padding(8)
-                            .contentShape(Rectangle())
-                    }
-                    .buttonStyle(.plain)
-                    .disabled(!isInteractionEnabled)
-                    .accessibilityLabel("Remove photo")
-                }
+                .buttonStyle(.plain)
+                .disabled(!isInteractionEnabled)
+                .accessibilityLabel("Remove photo")
+            }
         }
         .frame(maxWidth: .infinity)
         .frame(height: AdvancedModeCanvasViewModel.canvasHeight)
@@ -161,28 +169,6 @@ struct AdvancedModeCanvasView: View {
         }, action: { size in
             reportLayout(size)
         })
-    }
-
-    @ViewBuilder
-    private var loupeOverlay: some View {
-        if viewModel.isCacheReady,
-           let cache = viewModel.varianceCache,
-           let preview = viewModel.previewImage {
-            AdvancedModeLoupeViewport(
-                image: preview,
-                cache: cache,
-                reticleBlockX: viewModel.reticleBlockX,
-                reticleBlockY: viewModel.reticleBlockY,
-                varianceThreshold: varianceThreshold,
-                gridSpan: AdvancedModeCanvasViewModel.loupeGridSpan,
-                loupeSize: AdvancedModeCanvasViewModel.loupeSize
-            )
-        } else if viewModel.isBuildingVarianceCache {
-            ProgressView()
-                .controlSize(.small)
-                .padding(12)
-                .background(.ultraThinMaterial, in: RoundedRectangle(cornerRadius: 10, style: .continuous))
-        }
     }
 
     private var reticleXBinding: Binding<Double> {
@@ -216,5 +202,152 @@ struct AdvancedModeCanvasView: View {
             item: item,
             service: service
         )
+    }
+}
+
+// MARK: - Performance-isolated canvas layers
+
+/// Photo fill — `Equatable` so scroll passes skip bitmap re-layout when inputs are stable.
+private struct CanvasPhotoFill: View, Equatable {
+    let image: UIImage
+    let width: CGFloat
+    let height: CGFloat
+    private let imagePixelWidth: Int
+    private let imagePixelHeight: Int
+
+    init(image: UIImage, width: CGFloat, height: CGFloat) {
+        self.image = image
+        self.width = width
+        self.height = height
+        imagePixelWidth = Int(image.size.width * image.scale)
+        imagePixelHeight = Int(image.size.height * image.scale)
+    }
+
+    var body: some View {
+        Image(uiImage: image)
+            .resizable()
+            .scaledToFill()
+            .frame(width: width, height: height)
+            .clipped()
+    }
+}
+
+private struct ReticleCrosshairHost: View, Equatable {
+    let isVisible: Bool
+    let blockX: Int
+    let blockY: Int
+    let maxBlocksX: Int
+    let maxBlocksY: Int
+
+    private static let canvasClipShape = RoundedRectangle(cornerRadius: 22, style: .continuous)
+
+    var body: some View {
+        if isVisible {
+            AdvancedReticleCrosshair(
+                blockX: blockX,
+                blockY: blockY,
+                maxBlocksX: maxBlocksX,
+                maxBlocksY: maxBlocksY
+            )
+            .clipShape(Self.canvasClipShape)
+        }
+    }
+}
+
+private struct ReticleSigmaBadgeHost: View, Equatable {
+    let label: String?
+    let isVisible: Bool
+
+    var body: some View {
+        if isVisible, let label {
+            ReticleSigmaBadge(label: label)
+                .padding(10)
+                .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .bottomTrailing)
+        }
+    }
+}
+
+private struct CanvasChromeBorder: View {
+    let shape: RoundedRectangle
+
+    var body: some View {
+        shape.strokeBorder(
+            Color.primary.opacity(0.28),
+            style: StrokeStyle(lineWidth: 2, lineCap: .round, dash: [8, 7])
+        )
+        .allowsHitTesting(false)
+    }
+}
+
+/// Loupe slot — isolates magnifier updates from the main photo layer during scroll.
+private struct LoupeOverlayHost: View, Equatable {
+    let isCacheReady: Bool
+    let isBuilding: Bool
+    let preview: UIImage?
+    let cache: MacroblockVarianceCache?
+    let reticleBlockX: Int
+    let reticleBlockY: Int
+    let varianceThreshold: Float
+    let dodgeLeading: Bool
+    let displayScale: CGFloat
+
+    static func == (lhs: Self, rhs: Self) -> Bool {
+        lhs.isCacheReady == rhs.isCacheReady
+            && lhs.isBuilding == rhs.isBuilding
+            && lhs.reticleBlockX == rhs.reticleBlockX
+            && lhs.reticleBlockY == rhs.reticleBlockY
+            && lhs.varianceThreshold == rhs.varianceThreshold
+            && lhs.dodgeLeading == rhs.dodgeLeading
+            && lhs.displayScale == rhs.displayScale
+            && Self.pairEquals(lhs.previewPixelSignature, rhs.previewPixelSignature)
+            && Self.pairEquals(lhs.cacheSignature, rhs.cacheSignature)
+    }
+
+    private var previewPixelSignature: (Int, Int)? {
+        preview.map { (Int($0.size.width * $0.scale), Int($0.size.height * $0.scale)) }
+    }
+
+    private var cacheSignature: (Int, Int)? {
+        cache.map { ($0.maxBlocksX, $0.maxBlocksY) }
+    }
+
+    private static func pairEquals(_ lhs: (Int, Int)?, _ rhs: (Int, Int)?) -> Bool {
+        switch (lhs, rhs) {
+        case (nil, nil): true
+        case let (left?, right?): left == right
+        default: false
+        }
+    }
+
+    var body: some View {
+        Group {
+            if isCacheReady, let preview, let cache {
+                AdvancedModeLoupeViewport(
+                    image: preview,
+                    cache: cache,
+                    reticleBlockX: reticleBlockX,
+                    reticleBlockY: reticleBlockY,
+                    varianceThreshold: varianceThreshold,
+                    gridSpan: AdvancedModeCanvasViewModel.loupeGridSpan,
+                    loupeSize: AdvancedModeCanvasViewModel.loupeSize,
+                    displayScale: displayScale
+                )
+                .padding(AdvancedModeCanvasViewModel.loupeCanvasPadding)
+                .frame(
+                    maxWidth: .infinity,
+                    maxHeight: .infinity,
+                    alignment: dodgeLeading ? .bottomLeading : .bottomTrailing
+                )
+            } else if isBuilding {
+                ProgressView()
+                    .controlSize(.small)
+                    .padding(12)
+                    .background(.ultraThinMaterial, in: RoundedRectangle(cornerRadius: 10, style: .continuous))
+                    .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .bottomTrailing)
+                    .padding(AdvancedModeCanvasViewModel.loupeCanvasPadding)
+            }
+        }
+        .frame(maxWidth: .infinity, maxHeight: .infinity)
+        .allowsHitTesting(false)
     }
 }

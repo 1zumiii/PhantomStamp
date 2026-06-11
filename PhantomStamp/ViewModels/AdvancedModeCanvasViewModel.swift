@@ -70,6 +70,19 @@ final class AdvancedModeCanvasViewModel {
     var showsHorizontalSlider: Bool { maxBlocksX > 1 }
     var showsVerticalSlider: Bool { maxBlocksY > 1 }
 
+    /// Population σ (√variance) for the 8×8 block under the reticle yellow frame.
+    var reticleBlockSigma: Double? {
+        guard let cache = varianceCache else { return nil }
+        let variance = cache.variance(blockX: reticleBlockX, blockY: reticleBlockY)
+        guard variance.isFinite, variance >= 0 else { return nil }
+        return Double(sqrt(variance))
+    }
+
+    var reticleBlockSigmaLabel: String? {
+        guard let sigma = reticleBlockSigma else { return nil }
+        return String(format: "σ: %.2f", sigma)
+    }
+
     /// True when the crosshair center overlaps the default bottom-trailing loupe slot.
     func shouldDodgeLoupe(canvasSize: CGSize) -> Bool {
         guard canvasSize.width > 0, canvasSize.height > 0,
@@ -122,6 +135,9 @@ final class AdvancedModeCanvasViewModel {
 
         if activePhotoID == nil {
             activePhotoID = item.id
+            shouldApplyDefaultReticle = true
+            reticleBlockX = 0
+            reticleBlockY = 0
             AdvancedCanvasDebug.log("activePhotoID was nil; auto-bound \(item.id.uuidString.prefix(8))")
         }
 
@@ -139,7 +155,8 @@ final class AdvancedModeCanvasViewModel {
         if let lastBuiltLayoutSize,
            lastBuiltLayoutSize == rounded,
            previewImage != nil,
-           varianceCache != nil {
+           let cache = varianceCache {
+            applyReticlePosition(using: cache)
             lastDebugStatus = "cache hit \(Int(rounded.width))×\(Int(rounded.height))"
             return
         }
@@ -214,20 +231,7 @@ final class AdvancedModeCanvasViewModel {
                 )
 
                 if let cache {
-                    if self.shouldApplyDefaultReticle {
-                        self.reticleBlockX = ReticleBlockGeometry.defaultBlockIndex(
-                            blockCount: cache.maxBlocksX,
-                            marginFraction: Self.defaultReticleMarginFraction
-                        )
-                        self.reticleBlockY = ReticleBlockGeometry.defaultBlockIndex(
-                            blockCount: cache.maxBlocksY,
-                            marginFraction: Self.defaultReticleMarginFraction
-                        )
-                        self.shouldApplyDefaultReticle = false
-                    } else {
-                        self.reticleBlockX = min(self.reticleBlockX, max(0, cache.maxBlocksX - 1))
-                        self.reticleBlockY = min(self.reticleBlockY, max(0, cache.maxBlocksY - 1))
-                    }
+                    self.applyReticlePosition(using: cache)
                     self.lastDebugStatus = "ready \(cache.maxBlocksX)×\(cache.maxBlocksY) · r(\(self.reticleBlockX),\(self.reticleBlockY))"
                     AdvancedCanvasDebug.log(
                         "build done blocks=\(cache.maxBlocksX)×\(cache.maxBlocksY) " +
@@ -239,6 +243,26 @@ final class AdvancedModeCanvasViewModel {
                     AdvancedCanvasDebug.log(self.lastDebugStatus)
                 }
             }
+        }
+    }
+
+    private func applyReticlePosition(using cache: MacroblockVarianceCache) {
+        if shouldApplyDefaultReticle {
+            reticleBlockX = ReticleBlockGeometry.defaultBlockIndex(
+                blockCount: cache.maxBlocksX,
+                marginFraction: Self.defaultReticleMarginFraction
+            )
+            reticleBlockY = ReticleBlockGeometry.defaultBlockIndex(
+                blockCount: cache.maxBlocksY,
+                marginFraction: Self.defaultReticleMarginFraction
+            )
+            shouldApplyDefaultReticle = false
+            AdvancedCanvasDebug.log(
+                "default reticle @ \(Int(Self.defaultReticleMarginFraction * 100))% → r(\(reticleBlockX),\(reticleBlockY))"
+            )
+        } else {
+            reticleBlockX = min(reticleBlockX, max(0, cache.maxBlocksX - 1))
+            reticleBlockY = min(reticleBlockY, max(0, cache.maxBlocksY - 1))
         }
     }
 

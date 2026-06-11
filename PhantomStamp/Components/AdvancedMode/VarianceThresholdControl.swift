@@ -271,7 +271,7 @@ struct VarianceThresholdControl: View {
                 SnappingSigmaSlider(
                     liveSigma: $liveSigma,
                     isEnabled: isEnabled,
-                    onEditingChanged: onEditingChanged
+                    onEditingChanged: { handleEditingChanged($0) }
                 )
                 .frame(height: 28)
 
@@ -280,7 +280,7 @@ struct VarianceThresholdControl: View {
                 SnappingSigmaSlider(
                     liveSigma: $liveSigma,
                     isEnabled: isEnabled,
-                    onEditingChanged: onEditingChanged
+                    onEditingChanged: { handleEditingChanged($0) }
                 )
                 .frame(height: 28)
 
@@ -300,8 +300,14 @@ struct VarianceThresholdControl: View {
             }
         }
         .onChange(of: liveSigma) { _, newValue in
-            sigma = newValue
             onLiveSigmaChange?(newValue)
         }
+    }
+
+    private func handleEditingChanged(_ editing: Bool) {
+        if !editing {
+            sigma = liveSigma
+        }
+        onEditingChanged?(editing)
     }
 }

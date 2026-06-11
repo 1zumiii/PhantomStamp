@@ -6,7 +6,8 @@
 import SwiftUI
 import UIKit
 
-/// Floating magnifier: zoomed preview crop + 15×15 smooth-block mask from the variance cache.
+/// Floating magnifier: zoomed preview crop + smooth-block mask from the variance cache.
+/// Heavy crop/mask work runs off the main thread and is keyed so scroll does not re-render each frame.
 struct AdvancedModeLoupeViewport: View {
     let image: UIImage
     let cache: MacroblockVarianceCache
@@ -15,64 +16,36 @@ struct AdvancedModeLoupeViewport: View {
     let varianceThreshold: Float
     let gridSpan: Int
     let loupeSize: CGFloat
+    let displayScale: CGFloat
 
-    var body: some View {
-        let crop = CanvasPreviewMapping.cropLoupeRegion(
-            from: image,
+    @State private var displayModel: LoupeDisplayBuilder.Model?
+
+    private var cacheKey: LoupeDisplayBuilder.Key {
+        LoupeDisplayBuilder.key(
+            image: image,
+            cache: cache,
             reticleBlockX: reticleBlockX,
             reticleBlockY: reticleBlockY,
-            maxBlocksX: cache.maxBlocksX,
-            maxBlocksY: cache.maxBlocksY,
-            gridSpan: gridSpan
+            varianceThreshold: varianceThreshold,
+            gridSpan: gridSpan,
+            loupeSize: loupeSize,
+            displayScale: displayScale
         )
-        let origin = (crop?.originBlockX ?? 0, crop?.originBlockY ?? 0)
-        let cellSize = loupeSize / CGFloat(gridSpan)
+    }
 
+    var body: some View {
         ZStack {
-            if let crop {
-                Image(uiImage: crop.image)
+            if let displayModel {
+                Image(uiImage: displayModel.croppedImage)
+                    .resizable()
+                    .interpolation(.none)
+                    .frame(width: loupeSize, height: loupeSize)
+
+                Image(uiImage: displayModel.maskOverlayImage)
                     .resizable()
                     .interpolation(.none)
                     .frame(width: loupeSize, height: loupeSize)
             }
-
-            Canvas { context, size in
-                let threshold = varianceThreshold
-                for localY in 0..<gridSpan {
-                    for localX in 0..<gridSpan {
-                        let blockX = origin.0 + localX
-                        let blockY = origin.1 + localY
-                        guard blockX < cache.maxBlocksX, blockY < cache.maxBlocksY else { continue }
-                        guard cache.variance(blockX: blockX, blockY: blockY) < threshold else { continue }
-
-                        let rect = CGRect(
-                            x: CGFloat(localX) * cellSize,
-                            y: CGFloat(localY) * cellSize,
-                            width: cellSize,
-                            height: cellSize
-                        )
-                        context.fill(Path(rect), with: .color(.blue.opacity(0.35)))
-                    }
-                }
-
-                let activeLocalX = reticleBlockX - origin.0
-                let activeLocalY = reticleBlockY - origin.1
-                if (0..<gridSpan).contains(activeLocalX), (0..<gridSpan).contains(activeLocalY) {
-                    let highlight = CGRect(
-                        x: CGFloat(activeLocalX) * cellSize,
-                        y: CGFloat(activeLocalY) * cellSize,
-                        width: cellSize,
-                        height: cellSize
-                    )
-                    context.stroke(
-                        Path(highlight),
-                        with: .color(.yellow.opacity(0.95)),
-                        style: StrokeStyle(lineWidth: 1.25)
-                    )
-                }
-            }
-            .frame(width: loupeSize, height: loupeSize)
-            .allowsHitTesting(false)
         }
         .frame(width: loupeSize, height: loupeSize)
         .background {
@@ -92,5 +65,21 @@ struct AdvancedModeLoupeViewport: View {
         .shadow(color: .black.opacity(0.22), radius: 6, x: 0, y: 3)
         .allowsHitTesting(false)
         .accessibilityHidden(true)
+        .task(id: cacheKey) {
+            let key = cacheKey
+            let built = await Task.detached(priority: .utility) {
+                LoupeDisplayBuilder.build(
+                    image: image,
+                    cache: cache,
+                    reticleBlockX: key.reticleBlockX,
+                    reticleBlockY: key.reticleBlockY,
+                    varianceThreshold: Float(bitPattern: key.varianceThresholdBits),
+                    gridSpan: key.gridSpan,
+                    loupeSize: loupeSize,
+                    displayScale: displayScale
+                )
+            }.value
+            displayModel = built
+        }
     }
 }

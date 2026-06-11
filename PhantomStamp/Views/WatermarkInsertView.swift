@@ -671,6 +671,7 @@ struct WatermarkInsertView: View {
         Button {
             guard vm.canStartEmbed else { return }
             if isAdvancedMode {
+                // `advancedSigma` commits on σ-slider release; embed uses the last committed value.
                 let overrides = AdvancedEmbedOverrides(
                     varianceThreshold: advancedSigma * advancedSigma,
                     embeddingIntensity: advancedIntensity
