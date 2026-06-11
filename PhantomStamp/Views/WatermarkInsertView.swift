@@ -25,6 +25,9 @@ struct WatermarkInsertView: View {
     @State private var isAdvancedMode: Bool = false
     /// Local UI state for σ (0...10 gray levels); mapped to variance (σ²) only at execution.
     @State private var advancedSigma: Double = 2.0
+    /// Loupe mask threshold — decoupled from live slider drag to keep scrolling/dragging smooth.
+    @State private var loupePreviewSigma: Double = 2.0
+    @State private var sigmaLoupeDebounceTask: Task<Void, Never>?
     /// Local UI state for the global embedding intensity (adaptive-Q multiplier), placeholder for now.
     @State private var advancedIntensity: Double = 10.0
     @State private var selectedAdvancedSubTab: AdvancedSubTab = .smoothBlock
@@ -320,7 +323,7 @@ struct WatermarkInsertView: View {
         AdvancedModeCanvasView(
             viewModel: advancedCanvasVM,
             item: item,
-            varianceThreshold: Float(advancedSigma * advancedSigma),
+            varianceThreshold: Float(loupePreviewSigma * loupePreviewSigma),
             watermarkService: watermarkService,
             isInteractionEnabled: !vm.isEmbedding && !vm.showSuccessOverlay,
             onRemovePhoto: {
@@ -343,23 +346,34 @@ struct WatermarkInsertView: View {
             switch selectedAdvancedSubTab {
             case .smoothBlock:
                 VStack(alignment: .leading, spacing: 10) {
-                    HStack(alignment: .firstTextBaseline) {
-                        Text("Texture Variance Threshold")
-                            .font(.subheadline.weight(.semibold))
-                            .foregroundStyle(.primary)
-                        Spacer()
-                        Text("σ \(advancedSigma, specifier: "%.1f")")
-                            .font(.caption.monospacedDigit().weight(.semibold))
-                            .foregroundStyle(.secondary)
+                    Text("Texture Variance Threshold")
+                        .font(.subheadline.weight(.semibold))
+                        .foregroundStyle(.primary)
+
+                    VarianceThresholdControl(
+                        sigma: $advancedSigma,
+                        histogram: advancedCanvasVM.varianceHistogram,
+                        isEnabled: !vm.isEmbedding && !vm.showSuccessOverlay,
+                        onEditingChanged: { editing in
+                            if editing {
+                                sigmaLoupeDebounceTask?.cancel()
+                            } else {
+                                sigmaLoupeDebounceTask?.cancel()
+                                loupePreviewSigma = advancedSigma
+                            }
+                        }
+                    )
+                    .onChange(of: advancedSigma) { _, newSigma in
+                        guard !vm.isEmbedding, !vm.showSuccessOverlay else { return }
+                        sigmaLoupeDebounceTask?.cancel()
+                        sigmaLoupeDebounceTask = Task {
+                            try? await Task.sleep(for: .milliseconds(150))
+                            guard !Task.isCancelled else { return }
+                            await MainActor.run {
+                                loupePreviewSigma = newSigma
+                            }
+                        }
                     }
-
-                    Slider(value: $advancedSigma, in: 0...10, step: 0.1)
-                        .tint(Color.orange)
-
-                    Text("Gray-level standard deviation σ; blocks below σ² embed at reduced energy.")
-                        .font(.caption)
-                        .foregroundStyle(.secondary)
-                        .fixedSize(horizontal: false, vertical: true)
                 }
             case .intensity:
                 VStack(alignment: .leading, spacing: 10) {

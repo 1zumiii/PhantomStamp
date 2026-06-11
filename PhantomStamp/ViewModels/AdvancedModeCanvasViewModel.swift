@@ -38,6 +38,7 @@ final class AdvancedModeCanvasViewModel {
 
     private(set) var previewImage: UIImage?
     private(set) var varianceCache: MacroblockVarianceCache?
+    private(set) var varianceHistogram: VarianceHistogramSummary?
     private(set) var isBuildingVarianceCache = false
     /// Human-readable status for on-screen debug (DEBUG) and support.
     private(set) var lastDebugStatus: String = "idle"
@@ -97,6 +98,7 @@ final class AdvancedModeCanvasViewModel {
         activePhotoID = photoID
         previewImage = nil
         varianceCache = nil
+        varianceHistogram = nil
         isBuildingVarianceCache = false
         lastBuiltLayoutSize = nil
         shouldApplyDefaultReticle = true
@@ -205,6 +207,7 @@ final class AdvancedModeCanvasViewModel {
 
                 self.previewImage = preview
                 self.varianceCache = cache
+                self.varianceHistogram = cache.map { VarianceHistogramSummary.build(from: $0) }
                 self.lastPreviewPixelSize = CGSize(
                     width: preview.size.width * preview.scale,
                     height: preview.size.height * preview.scale
@@ -243,6 +246,7 @@ final class AdvancedModeCanvasViewModel {
         buildToken = UUID()
         previewImage = nil
         varianceCache = nil
+        varianceHistogram = nil
         activePhotoID = nil
         lastBuiltLayoutSize = nil
         isBuildingVarianceCache = false
