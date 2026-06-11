@@ -204,7 +204,6 @@ private struct WatermarkHistoryCardRow: View {
                 thumbnail
 
                 VStack(alignment: .leading, spacing: 6) {
-                    
                     HStack(alignment: .firstTextBaseline) {
                         Text(OperationDetailDisplay.historyListTitleBase(for: record))
                             .font(.headline.weight(.semibold))
@@ -219,7 +218,6 @@ private struct WatermarkHistoryCardRow: View {
                             .lineLimit(1)
                     }
 
-                    
                     HStack(spacing: 8) {
                         statusTag
 
@@ -246,10 +244,9 @@ private struct WatermarkHistoryCardRow: View {
 
                     Spacer(minLength: 0)
 
-                    
                     HStack(spacing: 12) {
                         Spacer()
-                        
+
                         if let onDelete {
                             Button(action: onDelete) {
                                 actionButton(icon: "trash", isDestructive: true)

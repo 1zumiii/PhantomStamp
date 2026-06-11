@@ -68,6 +68,10 @@ final class WatermarkHistoryRecord {
 
     // MARK: Extract diagnostics (optional)
 
+    /// Detected rotation applied during deskew (degrees, clockwise-positive visual convention).
+    var extractDeskewAngleDegrees: Double?
+    /// Detected isotropic scale applied during deskew (1.0 = identity).
+    var extractDeskewScale: Double?
     /// Chosen physical pixel offset of the 8×8 grid (sub-block alignment).
     var extractGridOffsetXPx: Int?
     var extractGridOffsetYPx: Int?
@@ -97,6 +101,8 @@ final class WatermarkHistoryRecord {
         embedSmoothSkipped8x8BlockCount: Int? = nil,
         embedTextureVarianceThreshold: Double? = nil,
         embedEmbeddingStrength: Double? = nil,
+        extractDeskewAngleDegrees: Double? = nil,
+        extractDeskewScale: Double? = nil,
         extractGridOffsetXPx: Int? = nil,
         extractGridOffsetYPx: Int? = nil,
         extractMajoritySyncBits: Int? = nil,
@@ -121,6 +127,8 @@ final class WatermarkHistoryRecord {
         self.embedSmoothSkipped8x8BlockCount = embedSmoothSkipped8x8BlockCount
         self.embedTextureVarianceThreshold = embedTextureVarianceThreshold
         self.embedEmbeddingStrength = embedEmbeddingStrength
+        self.extractDeskewAngleDegrees = extractDeskewAngleDegrees
+        self.extractDeskewScale = extractDeskewScale
         self.extractGridOffsetXPx = extractGridOffsetXPx
         self.extractGridOffsetYPx = extractGridOffsetYPx
         self.extractMajoritySyncBits = extractMajoritySyncBits

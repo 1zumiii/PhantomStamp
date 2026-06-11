@@ -127,4 +127,26 @@ enum HistoryFormatters {
         }
         return parts.isEmpty ? nil : parts.joined(separator: " · ")
     }
+
+    // MARK: Extract parameters
+
+    /// Deskew rotation for display, e.g. `+3.2°`.
+    static func formatDeskewAngle(degrees: Double?) -> String? {
+        guard let degrees else { return nil }
+        return String(format: "%+.2f°", degrees)
+    }
+
+    /// Deskew scale for display, e.g. `1.045×`.
+    static func formatDeskewScale(_ scale: Double?) -> String? {
+        guard let scale else { return nil }
+        return String(format: "%.3f×", scale)
+    }
+
+    /// Whether detected transform is effectively identity (deskew skipped).
+    static func deskewWasApplied(angleDegrees: Double?, scale: Double?) -> Bool {
+        guard let angleDegrees, let scale else { return false }
+        let angleRad = angleDegrees * .pi / 180.0
+        return abs(angleRad) >= 5e-3 || abs(scale - 1.0) >= 5e-4
+    }
+
 }
