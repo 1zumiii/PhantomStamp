@@ -16,33 +16,32 @@ struct AdvancedModeLoupeViewport: View {
     let gridSpan: Int
     let loupeSize: CGFloat
 
-    private var halfSpan: Int { gridSpan / 2 }
-
     var body: some View {
-        let origin = subGridOrigin()
-        let pixelOrigin = CGPoint(x: origin.blockX * DCTMatrix8x8.side, y: origin.blockY * DCTMatrix8x8.side)
-        let pixelSpan = gridSpan * DCTMatrix8x8.side
-        let imagePixelWidth = max(1, Int(image.size.width * image.scale))
-        let imagePixelHeight = max(1, Int(image.size.height * image.scale))
-        let cropWidth = min(pixelSpan, max(1, imagePixelWidth - Int(pixelOrigin.x)))
-        let cropHeight = min(pixelSpan, max(1, imagePixelHeight - Int(pixelOrigin.y)))
+        let crop = CanvasPreviewMapping.cropLoupeRegion(
+            from: image,
+            reticleBlockX: reticleBlockX,
+            reticleBlockY: reticleBlockY,
+            maxBlocksX: cache.maxBlocksX,
+            maxBlocksY: cache.maxBlocksY,
+            gridSpan: gridSpan
+        )
+        let origin = (crop?.originBlockX ?? 0, crop?.originBlockY ?? 0)
         let cellSize = loupeSize / CGFloat(gridSpan)
 
         ZStack {
-            loupeImageCrop(
-                pixelOrigin: pixelOrigin,
-                cropWidth: cropWidth,
-                cropHeight: cropHeight
-            )
-            .frame(width: loupeSize, height: loupeSize)
-            .clipped()
+            if let crop {
+                Image(uiImage: crop.image)
+                    .resizable()
+                    .interpolation(.none)
+                    .frame(width: loupeSize, height: loupeSize)
+            }
 
             Canvas { context, size in
                 let threshold = varianceThreshold
                 for localY in 0..<gridSpan {
                     for localX in 0..<gridSpan {
-                        let blockX = origin.blockX + localX
-                        let blockY = origin.blockY + localY
+                        let blockX = origin.0 + localX
+                        let blockY = origin.1 + localY
                         guard blockX < cache.maxBlocksX, blockY < cache.maxBlocksY else { continue }
                         guard cache.variance(blockX: blockX, blockY: blockY) < threshold else { continue }
 
@@ -56,8 +55,8 @@ struct AdvancedModeLoupeViewport: View {
                     }
                 }
 
-                let activeLocalX = reticleBlockX - origin.blockX
-                let activeLocalY = reticleBlockY - origin.blockY
+                let activeLocalX = reticleBlockX - origin.0
+                let activeLocalY = reticleBlockY - origin.1
                 if (0..<gridSpan).contains(activeLocalX), (0..<gridSpan).contains(activeLocalY) {
                     let highlight = CGRect(
                         x: CGFloat(activeLocalX) * cellSize,
@@ -88,30 +87,5 @@ struct AdvancedModeLoupeViewport: View {
         .shadow(color: .black.opacity(0.18), radius: 8, x: 0, y: 4)
         .allowsHitTesting(false)
         .accessibilityHidden(true)
-    }
-
-    @ViewBuilder
-    private func loupeImageCrop(pixelOrigin: CGPoint, cropWidth: Int, cropHeight: Int) -> some View {
-        let scale = image.scale
-        let fullPixelWidth = image.size.width * scale
-        let fullPixelHeight = image.size.height * scale
-        let zoomScale = loupeSize / CGFloat(max(cropWidth, 1))
-
-        Image(uiImage: image)
-            .resizable()
-            .aspectRatio(contentMode: .fill)
-            .frame(width: fullPixelWidth * zoomScale, height: fullPixelHeight * zoomScale)
-            .offset(
-                x: -pixelOrigin.x * zoomScale,
-                y: -pixelOrigin.y * zoomScale
-            )
-    }
-
-    private func subGridOrigin() -> (blockX: Int, blockY: Int) {
-        var originX = reticleBlockX - halfSpan
-        var originY = reticleBlockY - halfSpan
-        originX = max(0, min(originX, cache.maxBlocksX - gridSpan))
-        originY = max(0, min(originY, cache.maxBlocksY - gridSpan))
-        return (max(0, originX), max(0, originY))
     }
 }

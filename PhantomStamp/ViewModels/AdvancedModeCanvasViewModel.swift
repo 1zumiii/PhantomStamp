@@ -38,6 +38,7 @@ final class AdvancedModeCanvasViewModel {
     private(set) var isBuildingVarianceCache = false
     /// Human-readable status for on-screen debug (DEBUG) and support.
     private(set) var lastDebugStatus: String = "idle"
+    private(set) var lastPreviewPixelSize: CGSize = .zero
 
     private var buildToken: UUID?
     private var activePhotoID: UUID?
@@ -88,6 +89,7 @@ final class AdvancedModeCanvasViewModel {
 
     func updateLayout(
         containerSize: CGSize,
+        displayScale: CGFloat,
         item: SelectedPhotoItem,
         service: WatermarkService
     ) {
@@ -129,12 +131,18 @@ final class AdvancedModeCanvasViewModel {
         }
 
         lastBuiltLayoutSize = rounded
-        scheduleBuild(item: item, containerSize: rounded, service: service)
+        scheduleBuild(
+            item: item,
+            containerSize: rounded,
+            displayScale: displayScale,
+            service: service
+        )
     }
 
     private func scheduleBuild(
         item: SelectedPhotoItem,
         containerSize: CGSize,
+        displayScale: CGFloat,
         service: WatermarkService
     ) {
         let token = UUID()
@@ -146,12 +154,14 @@ final class AdvancedModeCanvasViewModel {
         let photoID = item.id
         let sourceImage = item.image
         let layoutSize = containerSize
+        let scale = displayScale
 
         Task { [weak self] in
             let preview = await MainActor.run {
-                CanvasPreviewMapping.cropScaledToFillPreview(
+                CanvasPreviewMapping.renderDisplayMatchedPreview(
                     from: sourceImage,
-                    containerSize: layoutSize
+                    containerSize: layoutSize,
+                    displayScale: scale
                 ) ?? sourceImage
             }
 
@@ -176,12 +186,20 @@ final class AdvancedModeCanvasViewModel {
 
                 self.previewImage = preview
                 self.varianceCache = cache
+                self.lastPreviewPixelSize = CGSize(
+                    width: preview.size.width * preview.scale,
+                    height: preview.size.height * preview.scale
+                )
 
                 if let cache {
                     self.reticleBlockX = min(self.reticleBlockX, max(0, cache.maxBlocksX - 1))
                     self.reticleBlockY = min(self.reticleBlockY, max(0, cache.maxBlocksY - 1))
-                    self.lastDebugStatus = "ready \(cache.maxBlocksX)×\(cache.maxBlocksY) blocks"
-                    AdvancedCanvasDebug.log("build done blocks=\(cache.maxBlocksX)×\(cache.maxBlocksY) preview=\(Int(preview.size.width))×\(Int(preview.size.height))")
+                    self.lastDebugStatus = "ready \(cache.maxBlocksX)×\(cache.maxBlocksY) · r(\(self.reticleBlockX),\(self.reticleBlockY))"
+                    AdvancedCanvasDebug.log(
+                        "build done blocks=\(cache.maxBlocksX)×\(cache.maxBlocksY) " +
+                        "previewPt=\(Int(preview.size.width))×\(Int(preview.size.height))@\(preview.scale) " +
+                        "previewPx=\(Int(self.lastPreviewPixelSize.width))×\(Int(self.lastPreviewPixelSize.height))"
+                    )
                 } else {
                     self.lastDebugStatus = "build failed — cache nil"
                     AdvancedCanvasDebug.log(self.lastDebugStatus)

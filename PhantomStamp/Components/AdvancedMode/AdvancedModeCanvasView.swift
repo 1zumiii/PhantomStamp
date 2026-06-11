@@ -9,6 +9,7 @@ import SwiftUI
 import UIKit
 
 struct AdvancedModeCanvasView: View {
+    @Environment(\.displayScale) private var displayScale
     @Bindable var viewModel: AdvancedModeCanvasViewModel
     let item: SelectedPhotoItem
     let varianceThreshold: Float
@@ -22,6 +23,24 @@ struct AdvancedModeCanvasView: View {
     /// before/after the variance cache loads (prevents width oscillation rebuild loops).
     private var layoutShowsX: Bool { item.width / DCTMatrix8x8.side > 1 }
     private var layoutShowsY: Bool { item.height / DCTMatrix8x8.side > 1 }
+
+    private var fractionX: String {
+        guard viewModel.maxBlocksX > 0 else { return "–" }
+        let f = ReticleBlockGeometry.blockCenterFraction(
+            index: viewModel.reticleBlockX,
+            blockCount: viewModel.maxBlocksX
+        )
+        return String(format: "%.2f", f)
+    }
+
+    private var fractionY: String {
+        guard viewModel.maxBlocksY > 0 else { return "–" }
+        let f = ReticleBlockGeometry.blockCenterFraction(
+            index: viewModel.reticleBlockY,
+            blockCount: viewModel.maxBlocksY
+        )
+        return String(format: "%.2f", f)
+    }
 
     var body: some View {
         let sliderEnabled = viewModel.isCacheReady && isInteractionEnabled
@@ -65,13 +84,22 @@ struct AdvancedModeCanvasView: View {
         }
         #if DEBUG
         .overlay(alignment: .bottomLeading) {
-            Text(viewModel.lastDebugStatus)
-                .font(.system(size: 9, design: .monospaced))
-                .foregroundStyle(.white)
-                .padding(4)
-                .background(.black.opacity(0.55), in: RoundedRectangle(cornerRadius: 4))
-                .padding(6)
-                .allowsHitTesting(false)
+            VStack(alignment: .leading, spacing: 2) {
+                Text(viewModel.lastDebugStatus)
+                Text(
+                    "reticle block (\(viewModel.reticleBlockX),\(viewModel.reticleBlockY)) " +
+                    "frac (\(fractionX),\(fractionY))"
+                )
+                Text(
+                    "preview px \(Int(viewModel.lastPreviewPixelSize.width))×\(Int(viewModel.lastPreviewPixelSize.height))"
+                )
+            }
+            .font(.system(size: 9, design: .monospaced))
+            .foregroundStyle(.white)
+            .padding(4)
+            .background(.black.opacity(0.55), in: RoundedRectangle(cornerRadius: 4))
+            .padding(6)
+            .allowsHitTesting(false)
         }
         #endif
     }
@@ -215,6 +243,11 @@ struct AdvancedModeCanvasView: View {
             AdvancedCanvasDebug.log("reportLayout aborted — watermarkService is not WatermarkService")
             return
         }
-        viewModel.updateLayout(containerSize: size, item: item, service: service)
+        viewModel.updateLayout(
+            containerSize: size,
+            displayScale: displayScale,
+            item: item,
+            service: service
+        )
     }
 }
