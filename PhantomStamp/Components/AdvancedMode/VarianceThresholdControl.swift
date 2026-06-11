@@ -47,6 +47,11 @@ private struct SnappingSigmaSlider: UIViewRepresentable {
 
     func updateUIView(_ slider: UISlider, context: Context) {
         context.coordinator.parent = self
+        // While dragging, UISlider owns thumb position — don't fight it from stale binding.
+        guard !context.coordinator.isDragging else {
+            slider.isEnabled = isEnabled
+            return
+        }
         let snapped = snap(value)
         if abs(Double(slider.value) - snapped) > 0.001 {
             slider.setValue(Float(snapped), animated: false)
@@ -61,24 +66,59 @@ private struct SnappingSigmaSlider: UIViewRepresentable {
 
     final class Coordinator: NSObject {
         var parent: SnappingSigmaSlider
+        var isDragging = false
+
+        private var lastEmitTime: CFAbsoluteTime = 0
+        private var pendingEmit: DispatchWorkItem?
+        private let throttleInterval: TimeInterval = 0.1
 
         init(parent: SnappingSigmaSlider) {
             self.parent = parent
         }
 
         @objc func valueChanged(_ sender: UISlider) {
-            parent.value = parent.snap(Double(sender.value))
+            let snapped = parent.snap(Double(sender.value))
+            let now = CFAbsoluteTimeGetCurrent()
+
+            if now - lastEmitTime >= throttleInterval {
+                emit(snapped)
+                lastEmitTime = now
+                pendingEmit?.cancel()
+                pendingEmit = nil
+            } else {
+                pendingEmit?.cancel()
+                let work = DispatchWorkItem { [weak self] in
+                    guard let self else { return }
+                    self.emit(snapped)
+                    self.lastEmitTime = CFAbsoluteTimeGetCurrent()
+                    self.pendingEmit = nil
+                }
+                pendingEmit = work
+                DispatchQueue.main.asyncAfter(
+                    deadline: .now() + throttleInterval,
+                    execute: work
+                )
+            }
         }
 
         @objc func touchDown(_ sender: UISlider) {
+            isDragging = true
             parent.onEditingChanged?(true)
         }
 
         @objc func touchUp(_ sender: UISlider) {
+            pendingEmit?.cancel()
+            pendingEmit = nil
             let snapped = parent.snap(Double(sender.value))
             sender.setValue(Float(snapped), animated: false)
-            parent.value = snapped
+            emit(snapped)
+            lastEmitTime = CFAbsoluteTimeGetCurrent()
+            isDragging = false
             parent.onEditingChanged?(false)
+        }
+
+        private func emit(_ snapped: Double) {
+            parent.value = snapped
         }
     }
 }
@@ -95,10 +135,13 @@ struct VarianceHistogramSparkline: View {
 
                 let barSlot = canvasSize.width / CGFloat(VarianceHistogramSummary.binCount)
                 let maxCount = CGFloat(summary.maxBinCount)
+                let drawableHeight = canvasSize.height - 4
 
                 for (index, count) in summary.binCounts.enumerated() {
                     guard count > 0 else { continue }
-                    let barHeight = (CGFloat(count) / maxCount) * (canvasSize.height - 4)
+                    // Sqrt scale so low-count bins stay visible against a dominant peak.
+                    let normalized = sqrt(CGFloat(count) / maxCount)
+                    let barHeight = max(4, normalized * drawableHeight * 0.96)
                     let rect = CGRect(
                         x: CGFloat(index) * barSlot + barSlot * 0.06,
                         y: canvasSize.height - barHeight - 2,
@@ -159,15 +202,11 @@ struct VarianceThresholdStats: View {
                     .foregroundStyle(.secondary)
             }
 
-            HStack(spacing: 12) {
-                Text("Smooth: \(protectedCount) blocks")
-                Text("·")
-                Text("Texture: \(textureCount) blocks")
-                Text("·")
-                Text("Total: \(summary.totalBlocks)")
+            HStack(spacing: 0) {
+                blockStatColumn(title: "Smooth", value: protectedCount, alignment: .leading)
+                blockStatColumn(title: "Texture", value: textureCount, alignment: .center)
+                blockStatColumn(title: "Total", value: summary.totalBlocks, alignment: .trailing)
             }
-            .font(.caption2.monospacedDigit())
-            .foregroundStyle(.secondary)
 
             Text("Based on the visible canvas preview · blocks below σ² embed at reduced energy.")
                 .font(.caption2)
@@ -175,6 +214,18 @@ struct VarianceThresholdStats: View {
                 .fixedSize(horizontal: false, vertical: true)
         }
         .padding(.horizontal, 2)
+    }
+
+    private func blockStatColumn(title: String, value: Int, alignment: HorizontalAlignment) -> some View {
+        VStack(alignment: alignment, spacing: 2) {
+            Text(title)
+                .font(.caption2)
+                .foregroundStyle(.tertiary)
+            Text(value, format: .number.grouping(.automatic))
+                .font(.caption.monospacedDigit().weight(.medium))
+                .foregroundStyle(.secondary)
+        }
+        .frame(maxWidth: .infinity, alignment: Alignment(horizontal: alignment, vertical: .center))
     }
 }
 

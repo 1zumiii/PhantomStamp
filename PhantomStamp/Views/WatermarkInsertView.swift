@@ -367,7 +367,7 @@ struct WatermarkInsertView: View {
                         guard !vm.isEmbedding, !vm.showSuccessOverlay else { return }
                         sigmaLoupeDebounceTask?.cancel()
                         sigmaLoupeDebounceTask = Task {
-                            try? await Task.sleep(for: .milliseconds(150))
+                            try? await Task.sleep(for: .milliseconds(280))
                             guard !Task.isCancelled else { return }
                             await MainActor.run {
                                 loupePreviewSigma = newSigma
