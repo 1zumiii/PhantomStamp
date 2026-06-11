@@ -13,18 +13,14 @@ import UIKit
 @MainActor
 @Observable
 final class RobustnessTestingViewModel {
-    struct ManipResultSheetModel: Identifiable {
-        struct Detail: Identifiable {
-            let id = UUID()
-            var label: String
-            var value: String
-        }
+    enum ManipSaveFeedback: Equatable {
+        case idle
+        case success
+    }
 
-        let id = UUID()
-        var isSuccess: Bool
-        var title: String
-        var subtitle: String
-        var details: [Detail]
+    enum ManipTool {
+        case jpeg
+        case resize
     }
 
     let settingsStore: UserSettingsStore
@@ -44,7 +40,12 @@ final class RobustnessTestingViewModel {
 
     var manipJpegQuality = 0.60
     var manipResizeScaleFactor = 1.0
-    var manipResultSheet: ManipResultSheetModel?
+    var manipJpegRunning = false
+    var manipResizeRunning = false
+    var manipJpegFeedback: ManipSaveFeedback = .idle
+    var manipResizeFeedback: ManipSaveFeedback = .idle
+    var manipJpegFeedbackTrigger = 0
+    var manipResizeFeedbackTrigger = 0
     var selectedCropKind: WatermarkCropAttackTests.CropKind = .right
 
     var currentSyncTemplateIntensity: Double { settingsStore.syncTemplateIntensity }
@@ -65,10 +66,6 @@ final class RobustnessTestingViewModel {
             scaleFactor: manipResizeScaleFactor
         ) else { return nil }
         return (w: out.width, h: out.height)
-    }
-
-    func dismissManipResultSheet() {
-        manipResultSheet = nil
     }
 
     func dismissAlert() {
@@ -107,11 +104,14 @@ final class RobustnessTestingViewModel {
             return
         }
 
+        manipJpegRunning = true
         isLoading = true
+        let runStarted = ContinuousClock.now
         defer { isLoading = false }
 
         let q = ImageCompressionUtils.clampQuality(manipJpegQuality)
         guard let result = ImageCompressionUtils.recompressJPEG(image: source, quality: q) else {
+            manipJpegRunning = false
             presentManipFailure(title: "Compression failed", subtitle: "JPEG re-encoding did not produce a valid image.")
             return
         }
@@ -120,16 +120,9 @@ final class RobustnessTestingViewModel {
         do {
             try await saveManipResultToPhotos(result.image)
             print("[TestPage] ManipJPEG q=\(String(format: "%.2f", q)) bytes=\(result.jpegBytes) out=\(outPx.w)x\(outPx.h)")
-            presentManipSuccess(
-                title: "Saved to Photos",
-                subtitle: "JPEG recompression finished successfully.",
-                details: [
-                    ("Quality", String(format: "%.2f", q)),
-                    ("File size", "\(result.jpegBytes) bytes"),
-                    ("Output", "\(outPx.w) × \(outPx.h) px"),
-                ]
-            )
+            await finishManipSaveRun(.jpeg, started: runStarted)
         } catch {
+            manipJpegRunning = false
             presentManipFailure(title: "Save failed", subtitle: error.localizedDescription)
         }
     }
@@ -144,19 +137,18 @@ final class RobustnessTestingViewModel {
             return
         }
 
+        manipResizeRunning = true
+        isLoading = true
+        let runStarted = ContinuousClock.now
+        defer { isLoading = false }
+
         let outPx = pixelSize(of: resized)
         do {
             try await saveManipResultToPhotos(resized)
             print("[TestPage] ManipResize scale=\(String(format: "%.2f", manipResizeScaleFactor)) out=\(outPx.w)x\(outPx.h)")
-            presentManipSuccess(
-                title: "Saved to Photos",
-                subtitle: "Proportional resize finished successfully.",
-                details: [
-                    ("Scale", String(format: "%.2fx", manipResizeScaleFactor)),
-                    ("Output", "\(outPx.w) × \(outPx.h) px"),
-                ]
-            )
+            await finishManipSaveRun(.resize, started: runStarted)
         } catch {
+            manipResizeRunning = false
             presentManipFailure(title: "Save failed", subtitle: error.localizedDescription)
         }
     }
@@ -337,22 +329,46 @@ final class RobustnessTestingViewModel {
         showAlert = true
     }
 
-    private func presentManipSuccess(title: String, subtitle: String, details: [(label: String, value: String)]) {
-        manipResultSheet = ManipResultSheetModel(
-            isSuccess: true,
-            title: title,
-            subtitle: subtitle,
-            details: details.map { ManipResultSheetModel.Detail(label: $0.label, value: $0.value) }
-        )
+    private static let manipSaveMinRunningDuration: Duration = .milliseconds(500)
+
+    private func finishManipSaveRun(_ tool: ManipTool, started: ContinuousClock.Instant) async {
+        let elapsed = started.duration(to: .now)
+        if elapsed < Self.manipSaveMinRunningDuration {
+            try? await Task.sleep(for: Self.manipSaveMinRunningDuration - elapsed)
+        }
+
+        switch tool {
+        case .jpeg: manipJpegRunning = false
+        case .resize: manipResizeRunning = false
+        }
+        flashManipSaveSuccess(tool)
+    }
+
+    private func flashManipSaveSuccess(_ tool: ManipTool) {
+        switch tool {
+        case .jpeg:
+            manipJpegFeedback = .success
+            manipJpegFeedbackTrigger += 1
+        case .resize:
+            manipResizeFeedback = .success
+            manipResizeFeedbackTrigger += 1
+        }
+
+        Task {
+            try? await Task.sleep(for: .seconds(1.5))
+            switch tool {
+            case .jpeg where manipJpegFeedback == .success:
+                manipJpegFeedback = .idle
+            case .resize where manipResizeFeedback == .success:
+                manipResizeFeedback = .idle
+            default:
+                break
+            }
+        }
     }
 
     private func presentManipFailure(title: String, subtitle: String) {
-        manipResultSheet = ManipResultSheetModel(
-            isSuccess: false,
-            title: title,
-            subtitle: subtitle,
-            details: []
-        )
+        present(subtitle, title: title)
     }
 
     private func saveToSystemPhotoAlbumIfPossible(_ image: UIImage) async {
