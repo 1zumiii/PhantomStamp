@@ -300,7 +300,7 @@ extension OperationDetailDisplay {
             rows.append(OperationDiagnosticsRow(
                 id: "rate",
                 title: "Effective embed rate",
-                value: String(format: "%.1f%% (%d / %d)", pct, embedded, v),
+                value: String(format: "%.1f%%", pct),
                 systemImage: "percent",
                 valueMonospaced: false
             ))

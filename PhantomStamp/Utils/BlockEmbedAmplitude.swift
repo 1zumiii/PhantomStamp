@@ -18,13 +18,34 @@ enum BlockEmbedAmplitude {
     static func targetAmplitude(
         baseAdaptiveQ: Float,
         variance: Float,
-        varianceThreshold: Float,
         embeddingIntensity: Float,
+        varianceThreshold: Float? = nil,
+        varianceGainCurve: VarianceGainCurve? = nil,
         smoothReductionFactor: Float = AppConstants.SmoothProtection.reductionFactor
     ) -> Float {
-        let isSmooth = variance < varianceThreshold
-        let globalMultiplier = embeddingIntensity * (isSmooth ? smoothReductionFactor : 1.0)
-        return baseAdaptiveQ * globalMultiplier * payloadStrength
+        let gain = embedGain(
+            variance: variance,
+            varianceThreshold: varianceThreshold,
+            varianceGainCurve: varianceGainCurve,
+            smoothReductionFactor: smoothReductionFactor
+        )
+        return baseAdaptiveQ * embeddingIntensity * gain * payloadStrength
+    }
+
+    /// Per-block strength multiplier (0…1) from curve or legacy binary threshold.
+    static func embedGain(
+        variance: Float,
+        varianceThreshold: Float?,
+        varianceGainCurve: VarianceGainCurve?,
+        smoothReductionFactor: Float = AppConstants.SmoothProtection.reductionFactor
+    ) -> Float {
+        if let curve = varianceGainCurve {
+            return curve.gain(atVariance: variance)
+        }
+        if let threshold = varianceThreshold {
+            return variance < threshold ? smoothReductionFactor : 1.0
+        }
+        return 1.0
     }
 
     /// Maps absolute amplitude to pseudo-color.

@@ -187,9 +187,12 @@ class WatermarkService: WatermarkServiceProtocol {
         // remaining 30% — reassemble Y + RGB rebuild
 
         let historyStarted = CFAbsoluteTimeGetCurrent()
+        let varianceGainCurveSnapshot: VarianceGainCurve? = await MainActor.run {
+            parameterOverrides?.varianceGainCurve
+        }
         let thresholdSnapshot: Double = await MainActor.run {
             if let overrides = parameterOverrides {
-                return overrides.varianceThreshold
+                return overrides.varianceGainCurve.maxVariance
             }
             return settingsStore?.textureVarianceThreshold ?? AppConstants.SettingsDefault.textureVarianceThreshold
         }
@@ -274,7 +277,8 @@ class WatermarkService: WatermarkServiceProtocol {
                                 strip: strip,
                                 macroblock: macroblock,
                                 thresholdSmooth: thresholdSmooth,
-                                embeddingStrengthMultiplier: embeddingStrengthMultiplier
+                                embeddingStrengthMultiplier: embeddingStrengthMultiplier,
+                                varianceGainCurve: varianceGainCurveSnapshot
                             )
                             return (out.strip, out.visited8x8Blocks, out.smoothSkipped8x8Blocks)
                         }

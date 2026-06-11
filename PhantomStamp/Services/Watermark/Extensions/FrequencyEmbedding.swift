@@ -17,6 +17,7 @@ extension WatermarkService {
         macroblock: Macroblock2D,
         thresholdSmooth: Float,
         embeddingStrengthMultiplier: Float = 1.0,
+        varianceGainCurve: VarianceGainCurve? = nil,
         smoothReductionFactor: Float = AppConstants.SmoothProtection.reductionFactor
     ) -> (strip: ImageStrip, visited8x8Blocks: Int, smoothSkipped8x8Blocks: Int) {
         var resultStrip = strip
@@ -56,8 +57,13 @@ extension WatermarkService {
                 // coherent garbage there instead of independent noise, which FEC cannot absorb.
                 // Embedding at `smoothReductionFactor × Q` keeps every macro-cell physically
                 // present (votes + sync phase never break) while the ripple stays near-invisible.
-                let isSmoothBlock = variance < thresholdSmooth
-                if isSmoothBlock {
+                let blockGain = BlockEmbedAmplitude.embedGain(
+                    variance: variance,
+                    varianceThreshold: varianceGainCurve == nil ? thresholdSmooth : nil,
+                    varianceGainCurve: varianceGainCurve,
+                    smoothReductionFactor: smoothReductionFactor
+                )
+                if blockGain < 0.999 {
                     smoothSkipped8x8Blocks += 1
                 }
 
@@ -78,9 +84,7 @@ extension WatermarkService {
                     &freqBlock,
                     bit: targetBit,
                     strength: strength,
-                    globalMultiplier: isSmoothBlock
-                        ? embeddingStrengthMultiplier * smoothReductionFactor
-                        : embeddingStrengthMultiplier
+                    globalMultiplier: embeddingStrengthMultiplier * blockGain
                 )
                 pixelBlock = performIDCT(freqBlock)
                 resultStrip.write8x8Block(pixelBlock, x: blockX, y: blockY)

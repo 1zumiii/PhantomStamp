@@ -12,8 +12,8 @@ import UIKit
 /// One-shot parameter overrides coming from the Advanced Mode panel (local view state).
 /// Passed directly into `WatermarkService` for a single embed run — never written to `UserSettingsStore`.
 struct AdvancedEmbedOverrides {
-    /// Physical variance (σ²) for the smooth-block threshold of the embed pipeline.
-    let varianceThreshold: Double
+    /// Continuous variance → gain mapping (replaces binary smooth-block threshold in Advanced Mode).
+    let varianceGainCurve: VarianceGainCurve
     /// Global adaptive-Q multiplier for this run.
     let embeddingIntensity: Double
 }

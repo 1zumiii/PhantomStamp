@@ -87,26 +87,32 @@ final class AdvancedModeCanvasViewModel {
     func blockAmplitude(
         blockX: Int,
         blockY: Int,
-        varianceThreshold: Float,
+        curve: VarianceGainCurve,
         embeddingIntensity: Float
     ) -> Float? {
         guard let varianceCache, let baseQCache else { return nil }
         return BlockEmbedAmplitude.targetAmplitude(
             baseAdaptiveQ: baseQCache.baseQ(blockX: blockX, blockY: blockY),
             variance: varianceCache.variance(blockX: blockX, blockY: blockY),
-            varianceThreshold: varianceThreshold,
-            embeddingIntensity: embeddingIntensity
+            embeddingIntensity: embeddingIntensity,
+            varianceGainCurve: curve
         )
     }
 
+    func reticleBlockGainLabel(curve: VarianceGainCurve) -> String? {
+        guard let cache = varianceCache else { return nil }
+        let variance = cache.variance(blockX: reticleBlockX, blockY: reticleBlockY)
+        return String(format: "G: %.0f%%", curve.gainPercent(atVariance: variance))
+    }
+
     func reticleBlockAmplitudeLabel(
-        varianceThreshold: Float,
+        curve: VarianceGainCurve,
         embeddingIntensity: Float
     ) -> String? {
         guard let amp = blockAmplitude(
             blockX: reticleBlockX,
             blockY: reticleBlockY,
-            varianceThreshold: varianceThreshold,
+            curve: curve,
             embeddingIntensity: embeddingIntensity
         ) else { return nil }
         return String(format: "A: %.1f", amp)
@@ -116,23 +122,30 @@ final class AdvancedModeCanvasViewModel {
         switch visualization {
         case .smoothBlock:
             return reticleBlockSigmaLabel
-        case .embedIntensity(let varianceThreshold, let embeddingIntensity):
+        case .varianceGain(let curve):
+            return reticleBlockGainLabel(curve: curve)
+        case .embedIntensity(let curve, let embeddingIntensity):
             return reticleBlockAmplitudeLabel(
-                varianceThreshold: varianceThreshold,
+                curve: curve,
                 embeddingIntensity: embeddingIntensity
             )
         }
     }
 
+    func gainCurveSummary(curve: VarianceGainCurve) -> VarianceGainCurveSummary? {
+        guard let varianceCache else { return nil }
+        return VarianceGainCurveSummary.build(variance: varianceCache, curve: curve)
+    }
+
     func amplitudeHistogram(
-        varianceThreshold: Float,
+        curve: VarianceGainCurve,
         embeddingIntensity: Float
     ) -> AmplitudeHistogramSummary? {
         guard let baseQCache, let varianceCache else { return nil }
         return AmplitudeHistogramSummary.build(
             baseQ: baseQCache,
             variance: varianceCache,
-            varianceThreshold: varianceThreshold,
+            varianceGainCurve: curve,
             embeddingIntensity: embeddingIntensity
         )
     }

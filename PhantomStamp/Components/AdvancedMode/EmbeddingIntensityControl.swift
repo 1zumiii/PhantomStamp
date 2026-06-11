@@ -93,15 +93,15 @@ private struct AmplitudeHistogramIntensityOverlay: View {
 struct AmplitudeIntensityStats: View {
     let summary: AmplitudeHistogramSummary
     let varianceCache: MacroblockVarianceCache
-    let varianceThreshold: Float
+    let varianceGainCurve: VarianceGainCurve
     let intensity: Double
 
     private var attenuatedCount: Int {
-        summary.attenuatedBlockCount(variance: varianceCache, varianceThreshold: varianceThreshold)
+        summary.attenuatedBlockCount(variance: varianceCache, curve: varianceGainCurve)
     }
 
     private var fullStrengthCount: Int {
-        summary.fullStrengthBlockCount(variance: varianceCache, varianceThreshold: varianceThreshold)
+        summary.fullStrengthBlockCount(variance: varianceCache, curve: varianceGainCurve)
     }
 
     var body: some View {
@@ -130,7 +130,7 @@ struct AmplitudeIntensityStats: View {
                 blockStatColumn(title: "Total", value: summary.totalBlocks, alignment: .trailing)
             }
 
-            Text("Heatmap shows per-block target DCT delta (adaptive Q × intensity × smooth attenuation).")
+            Text("Heatmap shows per-block target DCT delta (adaptive Q × intensity × gain curve).")
                 .font(.caption2)
                 .foregroundStyle(.tertiary)
                 .fixedSize(horizontal: false, vertical: true)
@@ -156,7 +156,7 @@ struct EmbeddingIntensityControl: View {
     @Binding var intensity: Double
     let baseQCache: MacroblockBaseQuantizationCache?
     let varianceCache: MacroblockVarianceCache?
-    let varianceThreshold: Float
+    let varianceGainCurve: VarianceGainCurve
     var isEnabled: Bool = true
     var onLiveIntensityChange: ((Double) -> Void)?
     var onEditingChanged: ((Bool) -> Void)?
@@ -170,7 +170,7 @@ struct EmbeddingIntensityControl: View {
         return AmplitudeHistogramSummary.build(
             baseQ: baseQCache,
             variance: varianceCache,
-            varianceThreshold: varianceThreshold,
+            varianceGainCurve: varianceGainCurve,
             embeddingIntensity: Float(liveIntensity)
         )
     }
@@ -191,7 +191,7 @@ struct EmbeddingIntensityControl: View {
                 AmplitudeIntensityStats(
                     summary: liveHistogram,
                     varianceCache: varianceCache,
-                    varianceThreshold: varianceThreshold,
+                    varianceGainCurve: varianceGainCurve,
                     intensity: liveIntensity
                 )
             } else {

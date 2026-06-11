@@ -22,11 +22,16 @@ struct WatermarkInsertView: View {
     // Advanced Mode — parameters are LOCAL view state, deliberately isolated from the global
     // `UserSettingsStore` until the sparkle button executes (no settings contamination while tuning).
     @State private var isAdvancedMode: Bool = false
-    /// Local UI state for σ (0...10 gray levels); mapped to variance (σ²) only at execution.
-    @State private var advancedSigma: Double = 2.0
-    /// Loupe mask threshold — decoupled from live slider drag to keep scrolling/dragging smooth.
-    @State private var loupePreviewSigma: Double = 2.0
+    /// Local UI state for σ (0...10 gray levels); caps the gain-curve X axis at σ².
+    @State private var advancedSigma: Double = 6.0
+    @State private var loupePreviewSigma: Double = 6.0
     @State private var sigmaLoupeDebounceTask: Task<Void, Never>?
+    /// Local variance → gain curve (Advanced Mode only; never written to `UserSettingsStore`).
+    @State private var advancedGainCurve: VarianceGainCurve = {
+        var curve = VarianceGainCurve.presetS
+        curve.maxVariance = 36.0
+        return curve
+    }()
     /// Local UI state for the global embedding intensity (adaptive-Q multiplier).
     @State private var advancedIntensity: Double = 10.0
     @State private var loupePreviewIntensity: Double = 10.0
@@ -37,6 +42,7 @@ struct WatermarkInsertView: View {
 
     private enum AdvancedSubTab {
         case smoothBlock
+        case varianceGain
         case intensity
     }
 
@@ -313,17 +319,22 @@ struct WatermarkInsertView: View {
             : "Images only • Up to \(WatermarkInsertViewModel.maxSelectedImageCount) • Picks append"
     }
 
-    private var advancedVarianceThreshold: Float {
-        Float(advancedSigma * advancedSigma)
+    /// Gain curve with X-axis ceiling synced to the committed σ threshold (σ²).
+    private var advancedCurveWithSigmaCap: VarianceGainCurve {
+        var curve = advancedGainCurve
+        curve.maxVariance = advancedSigma * advancedSigma
+        return curve
     }
 
     private var advancedCanvasVisualization: AdvancedCanvasVisualization {
         switch selectedAdvancedSubTab {
         case .smoothBlock:
             return .smoothBlock(varianceThreshold: Float(loupePreviewSigma * loupePreviewSigma))
+        case .varianceGain:
+            return .varianceGain(curve: advancedCurveWithSigmaCap)
         case .intensity:
             return .embedIntensity(
-                varianceThreshold: advancedVarianceThreshold,
+                curve: advancedCurveWithSigmaCap,
                 embeddingIntensity: Float(loupePreviewIntensity)
             )
         }
@@ -349,8 +360,9 @@ struct WatermarkInsertView: View {
     private var advancedControlPanel: some View {
         VStack(alignment: .leading, spacing: 12) {
             Picker("Parameter", selection: $selectedAdvancedSubTab) {
-                Text("Smooth Block").tag(AdvancedSubTab.smoothBlock)
-                Text("Embedding Intensity").tag(AdvancedSubTab.intensity)
+                Text("Texture σ").tag(AdvancedSubTab.smoothBlock)
+                Text("Gain Curve").tag(AdvancedSubTab.varianceGain)
+                Text("Intensity").tag(AdvancedSubTab.intensity)
             }
             .pickerStyle(.segmented)
 
@@ -367,6 +379,7 @@ struct WatermarkInsertView: View {
                         isEnabled: !vm.isEmbedding && !vm.showSuccessOverlay,
                         onLiveSigmaChange: { liveSigma in
                             guard !vm.isEmbedding, !vm.showSuccessOverlay else { return }
+                            advancedGainCurve.maxVariance = liveSigma * liveSigma
                             sigmaLoupeDebounceTask?.cancel()
                             sigmaLoupeDebounceTask = Task {
                                 try? await Task.sleep(for: .milliseconds(280))
@@ -382,6 +395,7 @@ struct WatermarkInsertView: View {
                             } else {
                                 sigmaLoupeDebounceTask?.cancel()
                                 loupePreviewSigma = advancedSigma
+                                advancedGainCurve.maxVariance = advancedSigma * advancedSigma
                             }
                         }
                     )
@@ -400,6 +414,18 @@ struct WatermarkInsertView: View {
                     .buttonStyle(.plain)
                     .padding(.top, 4)
                 }
+            case .varianceGain:
+                VStack(alignment: .leading, spacing: 10) {
+                    Text("Spline Variance–Gain Curve")
+                        .font(.subheadline.weight(.semibold))
+                        .foregroundStyle(.primary)
+
+                    VarianceGainCurveEditor(
+                        curve: $advancedGainCurve,
+                        varianceSummary: advancedCanvasVM.gainCurveSummary(curve: advancedCurveWithSigmaCap),
+                        isEnabled: !vm.isEmbedding && !vm.showSuccessOverlay
+                    )
+                }
             case .intensity:
                 VStack(alignment: .leading, spacing: 10) {
                     Text("Global Embedding Intensity")
@@ -410,7 +436,7 @@ struct WatermarkInsertView: View {
                         intensity: $advancedIntensity,
                         baseQCache: advancedCanvasVM.baseQCache,
                         varianceCache: advancedCanvasVM.varianceCache,
-                        varianceThreshold: advancedVarianceThreshold,
+                        varianceGainCurve: advancedCurveWithSigmaCap,
                         isEnabled: !vm.isEmbedding && !vm.showSuccessOverlay,
                         onLiveIntensityChange: { liveIntensity in
                             guard !vm.isEmbedding, !vm.showSuccessOverlay else { return }
@@ -702,9 +728,8 @@ struct WatermarkInsertView: View {
         Button {
             guard vm.canStartEmbed else { return }
             if isAdvancedMode {
-                // `advancedSigma` commits on σ-slider release; embed uses the last committed value.
                 let overrides = AdvancedEmbedOverrides(
-                    varianceThreshold: advancedSigma * advancedSigma,
+                    varianceGainCurve: advancedCurveWithSigmaCap,
                     embeddingIntensity: advancedIntensity
                 )
                 Task { await vm.embedWatermark(advancedOverrides: overrides) }

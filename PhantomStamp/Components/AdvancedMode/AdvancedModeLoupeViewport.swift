@@ -24,9 +24,11 @@ struct AdvancedModeLoupeViewport: View {
         switch visualization {
         case .smoothBlock(let varianceThreshold):
             return .smoothMask(varianceThresholdBits: varianceThreshold.bitPattern)
-        case .embedIntensity(let varianceThreshold, let embeddingIntensity):
+        case .varianceGain(let curve):
+            return .gainHeatmap(curveKey: curve.packedKey)
+        case .embedIntensity(let curve, let embeddingIntensity):
             return .amplitudeHeatmap(
-                varianceThresholdBits: varianceThreshold.bitPattern,
+                curveKey: curve.packedKey,
                 embeddingIntensityBits: embeddingIntensity.bitPattern
             )
         }

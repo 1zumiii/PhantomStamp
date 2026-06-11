@@ -31,7 +31,8 @@ enum LoupeDisplayBuilder {
 
     enum LoupeOverlayMode: Hashable {
         case smoothMask(varianceThresholdBits: UInt32)
-        case amplitudeHeatmap(varianceThresholdBits: UInt32, embeddingIntensityBits: UInt32)
+        case gainHeatmap(curveKey: VarianceGainCurve.PackedKey)
+        case amplitudeHeatmap(curveKey: VarianceGainCurve.PackedKey, embeddingIntensityBits: UInt32)
     }
 
     static func key(
@@ -106,15 +107,35 @@ enum LoupeDisplayBuilder {
                 pixelSize: pixelSize
             )
 
-        case .amplitudeHeatmap(let thresholdBits, let intensityBits):
-            let threshold = Float(bitPattern: thresholdBits)
+        case .gainHeatmap(let curveKey):
+            let curve = VarianceGainCurve.decoded(from: curveKey)
+            var gains = [Float](repeating: 0, count: gridSpan * gridSpan)
+            for localY in 0..<gridSpan {
+                for localX in 0..<gridSpan {
+                    let blockX = originX + localX
+                    let blockY = originY + localY
+                    guard blockX < varianceCache.maxBlocksX, blockY < varianceCache.maxBlocksY else { continue }
+                    let variance = varianceCache.variance(blockX: blockX, blockY: blockY)
+                    gains[localY * gridSpan + localX] = curve.gain(atVariance: variance)
+                }
+            }
+            maskOverlayImage = renderGainHeatmapOverlay(
+                gains: gains,
+                gridSpan: gridSpan,
+                activeLocalX: activeLocalX,
+                activeLocalY: activeLocalY,
+                pixelSize: pixelSize
+            )
+
+        case .amplitudeHeatmap(let curveKey, let intensityBits):
+            let curve = VarianceGainCurve.decoded(from: curveKey)
             let intensity = Float(bitPattern: intensityBits)
             guard let baseQCache else {
-                maskOverlayImage = renderSmoothMaskOverlay(
-                    smoothLocalCells: [],
+                maskOverlayImage = renderGainHeatmapOverlay(
+                    gains: [Float](repeating: 0, count: gridSpan * gridSpan),
+                    gridSpan: gridSpan,
                     activeLocalX: activeLocalX,
                     activeLocalY: activeLocalY,
-                    gridSpan: gridSpan,
                     pixelSize: pixelSize
                 )
                 break
@@ -129,8 +150,8 @@ enum LoupeDisplayBuilder {
                     let amp = BlockEmbedAmplitude.targetAmplitude(
                         baseAdaptiveQ: baseQCache.baseQ(blockX: blockX, blockY: blockY),
                         variance: varianceCache.variance(blockX: blockX, blockY: blockY),
-                        varianceThreshold: threshold,
-                        embeddingIntensity: intensity
+                        embeddingIntensity: intensity,
+                        varianceGainCurve: curve
                     )
                     amplitudes[localY * gridSpan + localX] = amp
                 }
@@ -182,6 +203,45 @@ enum LoupeDisplayBuilder {
                         height: cellSize
                     )
                 )
+            }
+            strokeActiveCell(cg: cg, activeLocalX: activeLocalX, activeLocalY: activeLocalY, gridSpan: gridSpan, cellSize: cellSize)
+        }
+    }
+
+    nonisolated private static func renderGainHeatmapOverlay(
+        gains: [Float],
+        gridSpan: Int,
+        activeLocalX: Int,
+        activeLocalY: Int,
+        pixelSize: Int
+    ) -> UIImage {
+        let size = CGSize(width: pixelSize, height: pixelSize)
+        let format = UIGraphicsImageRendererFormat()
+        format.scale = 1
+        format.opaque = false
+
+        let renderer = UIGraphicsImageRenderer(size: size, format: format)
+        return renderer.image { rendererContext in
+            let cg = rendererContext.cgContext
+            let cellSize = CGFloat(pixelSize) / CGFloat(gridSpan)
+
+            for localY in 0..<gridSpan {
+                for localX in 0..<gridSpan {
+                    let index = localY * gridSpan + localX
+                    guard index < gains.count else { continue }
+                    let gain = gains[index]
+                    guard gain > 0.04 else { continue }
+                    let alpha = CGFloat(gain) * 0.62
+                    cg.setFillColor(UIColor.systemOrange.withAlphaComponent(alpha).cgColor)
+                    cg.fill(
+                        CGRect(
+                            x: CGFloat(localX) * cellSize,
+                            y: CGFloat(localY) * cellSize,
+                            width: cellSize,
+                            height: cellSize
+                        )
+                    )
+                }
             }
             strokeActiveCell(cg: cg, activeLocalX: activeLocalX, activeLocalY: activeLocalY, gridSpan: gridSpan, cellSize: cellSize)
         }

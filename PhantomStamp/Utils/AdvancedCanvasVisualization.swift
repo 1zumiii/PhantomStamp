@@ -7,5 +7,6 @@ import Foundation
 
 enum AdvancedCanvasVisualization: Equatable {
     case smoothBlock(varianceThreshold: Float)
-    case embedIntensity(varianceThreshold: Float, embeddingIntensity: Float)
+    case varianceGain(curve: VarianceGainCurve)
+    case embedIntensity(curve: VarianceGainCurve, embeddingIntensity: Float)
 }

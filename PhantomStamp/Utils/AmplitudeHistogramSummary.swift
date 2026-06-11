@@ -21,7 +21,7 @@ struct AmplitudeHistogramSummary: Sendable {
     static func build(
         baseQ: MacroblockBaseQuantizationCache,
         variance: MacroblockVarianceCache,
-        varianceThreshold: Float,
+        varianceGainCurve: VarianceGainCurve,
         embeddingIntensity: Float
     ) -> AmplitudeHistogramSummary {
         var amplitudes = [Float]()
@@ -32,8 +32,8 @@ struct AmplitudeHistogramSummary: Sendable {
                 let amp = BlockEmbedAmplitude.targetAmplitude(
                     baseAdaptiveQ: baseQ.baseQ(blockX: blockX, blockY: blockY),
                     variance: variance.variance(blockX: blockX, blockY: blockY),
-                    varianceThreshold: varianceThreshold,
-                    embeddingIntensity: embeddingIntensity
+                    embeddingIntensity: embeddingIntensity,
+                    varianceGainCurve: varianceGainCurve
                 )
                 amplitudes.append(amp)
             }
@@ -59,12 +59,12 @@ struct AmplitudeHistogramSummary: Sendable {
         )
     }
 
-    func attenuatedBlockCount(variance: MacroblockVarianceCache, varianceThreshold: Float) -> Int {
+    func attenuatedBlockCount(variance: MacroblockVarianceCache, curve: VarianceGainCurve) -> Int {
         guard !sortedAmplitudes.isEmpty else { return 0 }
         var count = 0
         for blockY in 0..<variance.maxBlocksY {
             for blockX in 0..<variance.maxBlocksX {
-                if variance.variance(blockX: blockX, blockY: blockY) < varianceThreshold {
+                if curve.gain(atVariance: variance.variance(blockX: blockX, blockY: blockY)) < 0.999 {
                     count += 1
                 }
             }
@@ -72,8 +72,8 @@ struct AmplitudeHistogramSummary: Sendable {
         return count
     }
 
-    func fullStrengthBlockCount(variance: MacroblockVarianceCache, varianceThreshold: Float) -> Int {
-        max(0, totalBlocks - attenuatedBlockCount(variance: variance, varianceThreshold: varianceThreshold))
+    func fullStrengthBlockCount(variance: MacroblockVarianceCache, curve: VarianceGainCurve) -> Int {
+        max(0, totalBlocks - attenuatedBlockCount(variance: variance, curve: curve))
     }
 
     func medianAmplitude() -> Double {
