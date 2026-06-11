@@ -63,7 +63,7 @@ extension WatermarkError: LocalizedError {
         case .imageTooSmall:
             return "Image size is too small, cannot meet the minimum requirements for watermark processing."
         case .extractFailed:
-            return "Failed to extract watermark from the current image (algorithm not completed or image does not contain valid watermark)."
+            return "Failed to extract watermark from the current image (image does not contain valid watermark)."
         case .processingError:
             return "Error occurred during watermark processing."
         }

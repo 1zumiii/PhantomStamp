@@ -40,6 +40,9 @@ struct WatermarkInsertView: View {
                 .padding(.vertical, 10)
             }
             .scrollDismissesKeyboard(.interactively)
+            .simultaneousGesture(
+                TapGesture().onEnded { dismissPayloadKeyboardIfNeeded() }
+            )
             .navigationTitle("Embed Watermark")
             .scrollIndicators(.hidden)
             .background(Color(uiColor: .systemGroupedBackground))
@@ -109,6 +112,11 @@ struct WatermarkInsertView: View {
                 }
             }
         )
+    }
+
+    private func dismissPayloadKeyboardIfNeeded() {
+        guard isPayloadFocused else { return }
+        isPayloadFocused = false
     }
 
     private func applyDefaultPayloadIfAppropriate() {
@@ -363,12 +371,6 @@ struct WatermarkInsertView: View {
         .overlay {
             RoundedRectangle(cornerRadius: 18, style: .continuous)
                 .strokeBorder(Color.primary.opacity(0.05), lineWidth: 1)
-        }
-        .toolbar {
-            ToolbarItemGroup(placement: .keyboard) {
-                Spacer()
-                Button("Done") { isPayloadFocused = false }
-            }
         }
     }
 
