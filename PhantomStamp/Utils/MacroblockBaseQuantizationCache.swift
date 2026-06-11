@@ -17,6 +17,18 @@ struct MacroblockBaseQuantizationCache: Sendable {
         guard blockY >= 0, blockY < maxBlocksY, blockX >= 0, blockX < maxBlocksX else { return 0 }
         return grid[blockY][blockX]
     }
+
+    /// Reference ceiling at global intensity `1.0×` (full-strength block, no smooth attenuation).
+    /// Used as a fixed color-map denominator so slider changes affect heatmap saturation.
+    var imageBaselineMaxAmplitude: Float {
+        var peakBaseQ: Float = 0
+        for row in grid {
+            for baseQ in row {
+                peakBaseQ = max(peakBaseQ, baseQ)
+            }
+        }
+        return max(peakBaseQ * BlockEmbedAmplitude.payloadStrength, 0.001)
+    }
 }
 
 extension WatermarkService {

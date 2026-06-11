@@ -119,8 +119,8 @@ enum LoupeDisplayBuilder {
                 )
                 break
             }
+            let baselineMaxAmplitude = baseQCache.imageBaselineMaxAmplitude
             var amplitudes = [Float](repeating: 0, count: gridSpan * gridSpan)
-            var maxAmp: Float = 0
             for localY in 0..<gridSpan {
                 for localX in 0..<gridSpan {
                     let blockX = originX + localX
@@ -132,15 +132,13 @@ enum LoupeDisplayBuilder {
                         varianceThreshold: threshold,
                         embeddingIntensity: intensity
                     )
-                    let index = localY * gridSpan + localX
-                    amplitudes[index] = amp
-                    maxAmp = max(maxAmp, amp)
+                    amplitudes[localY * gridSpan + localX] = amp
                 }
             }
             maskOverlayImage = renderAmplitudeHeatmapOverlay(
                 amplitudes: amplitudes,
                 gridSpan: gridSpan,
-                maxAmplitude: max(maxAmp, 0.001),
+                baselineMaxAmplitude: baselineMaxAmplitude,
                 activeLocalX: activeLocalX,
                 activeLocalY: activeLocalY,
                 pixelSize: pixelSize
@@ -192,7 +190,7 @@ enum LoupeDisplayBuilder {
     nonisolated private static func renderAmplitudeHeatmapOverlay(
         amplitudes: [Float],
         gridSpan: Int,
-        maxAmplitude: Float,
+        baselineMaxAmplitude: Float,
         activeLocalX: Int,
         activeLocalY: Int,
         pixelSize: Int
@@ -213,8 +211,12 @@ enum LoupeDisplayBuilder {
                     guard index < amplitudes.count else { continue }
                     let amp = amplitudes[index]
                     guard amp > 0 else { continue }
-                    let normalized = amp / maxAmplitude
-                    cg.setFillColor(BlockEmbedAmplitude.heatmapUIColor(normalized: normalized).cgColor)
+                    cg.setFillColor(
+                        BlockEmbedAmplitude.heatmapUIColor(
+                            amplitude: amp,
+                            baselineMaxAmplitude: baselineMaxAmplitude
+                        ).cgColor
+                    )
                     cg.fill(
                         CGRect(
                             x: CGFloat(localX) * cellSize,

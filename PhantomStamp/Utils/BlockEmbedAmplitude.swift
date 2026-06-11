@@ -11,8 +11,8 @@ enum BlockEmbedAmplitude {
     /// Payload macroblock strength in `embedBitIntoFrequencies` (non-sync/header cells).
     static let payloadStrength: Float = 2.0
 
-  static let intensityMax: Double = 10
-  static let intensityStep: Double = 0.5
+    static let intensityMax: Double = 10
+    static let intensityStep: Double = 0.5
 
     /// Target DCT separation (`targetQa`) for one block — the absolute coefficient delta scale.
     static func targetAmplitude(
@@ -27,24 +27,30 @@ enum BlockEmbedAmplitude {
         return baseAdaptiveQ * globalMultiplier * payloadStrength
     }
 
-    /// Heatmap color: light yellow/green (low) → deep orange/red (high).
-    static func heatmapUIColor(normalized t: Float) -> UIColor {
-        let t = min(max(t, 0), 1)
-        if t < 0.5 {
-            let u = CGFloat(t * 2)
-            return UIColor(
-                red: 0.45 + 0.35 * u,
-                green: 0.82 - 0.22 * u,
-                blue: 0.38 - 0.28 * u,
-                alpha: 0.72
-            )
+    /// Maps absolute amplitude to a pseudo-color using a fixed per-image baseline (intensity 1.0×).
+    /// `rawRatio` may exceed 1.0 before clamping — higher slider values deepen saturation globally.
+    static func heatmapUIColor(amplitude: Float, baselineMaxAmplitude: Float) -> UIColor {
+        let rawRatio = amplitude / max(baselineMaxAmplitude, 0.001)
+        let t = min(max(rawRatio, 0), 1)
+        let u = CGFloat(t)
+
+        // Light green → yellow → orange-red with opacity tied to energy level.
+        let red: CGFloat
+        let green: CGFloat
+        let blue: CGFloat
+        if u < 0.5 {
+            let s = u * 2
+            red = 0.32 + 0.58 * s
+            green = 0.78 - 0.18 * s
+            blue = 0.42 - 0.30 * s
+        } else {
+            let s = (u - 0.5) * 2
+            red = 0.90 + 0.10 * s
+            green = 0.68 - 0.48 * s
+            blue = 0.12 - 0.08 * s
         }
-        let u = CGFloat((t - 0.5) * 2)
-        return UIColor(
-            red: 0.95 + 0.05 * u,
-            green: 0.58 - 0.38 * u,
-            blue: 0.12 - 0.08 * u,
-            alpha: 0.78
-        )
+
+        let alpha = 0.28 + 0.62 * u
+        return UIColor(red: red, green: green, blue: blue, alpha: alpha)
     }
 }
