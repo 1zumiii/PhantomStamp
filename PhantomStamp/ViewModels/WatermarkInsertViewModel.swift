@@ -10,8 +10,7 @@ import Observation
 import UIKit
 
 /// One-shot parameter overrides coming from the Advanced Mode panel (local view state).
-/// Applied to the live settings store only for the duration of a single embed run, then restored —
-/// the user's persisted global settings are never contaminated by advanced-mode tuning.
+/// Passed directly into `WatermarkService` for a single embed run — never written to `UserSettingsStore`.
 struct AdvancedEmbedOverrides {
     /// Physical variance (σ²) for the smooth-block threshold of the embed pipeline.
     let varianceThreshold: Double
@@ -121,28 +120,19 @@ final class WatermarkInsertViewModel {
         let images = items.map(\.image)
         let names = items.map(\.displayName)
 
-        // Temporarily map the advanced-mode local parameters onto the live settings store
-        // (the embed pipeline snapshots them at start), then restore the persisted values.
-        var restoreSettings: (() -> Void)?
-        if let overrides = advancedOverrides,
-           let svc = watermarkService as? WatermarkService,
-           let store = svc.settingsStore {
-            let savedThreshold = store.textureVarianceThreshold
-            let savedStrength = store.embeddingStrength
-            store.textureVarianceThreshold = overrides.varianceThreshold
-            store.embeddingStrength = overrides.embeddingIntensity
-            restoreSettings = {
-                store.textureVarianceThreshold = savedThreshold
-                store.embeddingStrength = savedStrength
-            }
-        }
-        defer { restoreSettings?() }
-
         do {
             let outputs: [UIImage]
             if images.count == 1 {
                 // Single-file API drives `watermarkProgress*` notifications only.
-                if let svc = watermarkService as? WatermarkService {
+                if let overrides = advancedOverrides, let svc = watermarkService as? WatermarkService {
+                    let one = try await svc.embedWatermark(
+                        into: images[0],
+                        text: text,
+                        sourceImageName: names.first,
+                        parameterOverrides: overrides
+                    )
+                    outputs = [one]
+                } else if let svc = watermarkService as? WatermarkService {
                     let one = try await svc.embedWatermark(into: images[0], text: text, sourceImageName: names.first)
                     outputs = [one]
                 } else {

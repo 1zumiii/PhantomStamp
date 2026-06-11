@@ -31,7 +31,6 @@ enum SigmaTrackGeometry {
 private struct SnappingSigmaSlider: UIViewRepresentable {
     @Binding var liveSigma: Double
     var isEnabled: Bool
-    var onCommit: ((Double) -> Void)?
     var onEditingChanged: ((Bool) -> Void)?
 
     private let step = 0.1
@@ -105,7 +104,6 @@ private struct SnappingSigmaSlider: UIViewRepresentable {
             sender.setValue(Float(snapped), animated: false)
             parent.liveSigma = snapped
             isDragging = false
-            parent.onCommit?(snapped)
             parent.onEditingChanged?(false)
         }
     }
@@ -273,9 +271,6 @@ struct VarianceThresholdControl: View {
                 SnappingSigmaSlider(
                     liveSigma: $liveSigma,
                     isEnabled: isEnabled,
-                    onCommit: { committed in
-                        sigma = committed
-                    },
                     onEditingChanged: onEditingChanged
                 )
                 .frame(height: 28)
@@ -285,9 +280,6 @@ struct VarianceThresholdControl: View {
                 SnappingSigmaSlider(
                     liveSigma: $liveSigma,
                     isEnabled: isEnabled,
-                    onCommit: { committed in
-                        sigma = committed
-                    },
                     onEditingChanged: onEditingChanged
                 )
                 .frame(height: 28)
@@ -308,6 +300,7 @@ struct VarianceThresholdControl: View {
             }
         }
         .onChange(of: liveSigma) { _, newValue in
+            sigma = newValue
             onLiveSigmaChange?(newValue)
         }
     }
