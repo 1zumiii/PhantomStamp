@@ -376,9 +376,15 @@ struct WatermarkInsertView: View {
 
     private var advancedOptionsCard: some View {
         let shape = RoundedRectangle(cornerRadius: 18, style: .continuous)
+        // UI works in standard deviation σ (0...10 gray levels) for a perceptually even scale —
+        // the most useful variance range [0, 1] would otherwise collapse into the first tick.
+        // Storage stays in physical variance (σ²), so the embed pipeline is untouched.
         let thresholdBinding = Binding(
-            get: { settingsStore.textureVarianceThreshold },
-            set: { settingsStore.textureVarianceThreshold = min(max($0, 0.0), 100.0) }
+            get: { settingsStore.textureVarianceThreshold.squareRoot() },
+            set: {
+                let sigma = min(max($0, 0.0), 10.0)
+                settingsStore.textureVarianceThreshold = sigma * sigma
+            }
         )
 
         return VStack(alignment: .leading, spacing: 12) {
@@ -389,15 +395,15 @@ struct WatermarkInsertView: View {
                             .font(.subheadline.weight(.semibold))
                             .foregroundStyle(.primary)
                         Spacer()
-                        Text("\(Int(settingsStore.textureVarianceThreshold.rounded()))")
+                        Text("σ \(settingsStore.textureVarianceThreshold.squareRoot(), specifier: "%.1f")")
                             .font(.caption.monospacedDigit().weight(.semibold))
                             .foregroundStyle(.secondary)
                     }
 
-                    Slider(value: thresholdBinding, in: 0...100, step: 1)
+                    Slider(value: thresholdBinding, in: 0...10, step: 0.1)
                         .tint(Color.orange)
 
-                    Text("Controls how aggressively the algorithm avoids embedding data in smooth areas. Higher values prioritize pristine visual quality in flat areas (like skies), while lower values maximize watermark redundancy and survival rate.")
+                    Text("Controls how aggressively the algorithm lowers embedding energy in smooth areas (measured in σ, gray-level standard deviation). Higher values prioritize pristine visual quality in flat areas (like skies), while lower values maximize watermark redundancy and survival rate.")
                         .font(.caption)
                         .foregroundStyle(.secondary)
                         .fixedSize(horizontal: false, vertical: true)
@@ -447,16 +453,16 @@ struct WatermarkInsertView: View {
                             .padding(.top, 4)
 
                         guideBlock(
-                            title: "0–10 (Aggressive / Maximum Robustness)",
-                            body: "Think of: clear blue skies, flat painted walls, or pure white paper. Embeds almost everywhere for maximum survival, but faint noise (banding) might be visible in completely smooth areas."
+                            title: "σ 0–3 (Aggressive / Maximum Robustness)",
+                            body: "Think of: clear blue skies, flat painted walls, or pure white paper. Embeds at full strength almost everywhere for maximum survival, but faint noise (banding) might be visible in completely smooth areas."
                         )
                         guideBlock(
-                            title: "15–30 (Balanced / Recommended)",
-                            body: "Think of: human skin, soft clouds, or gentle shadows. Skips only perfectly flat regions while keeping strong redundancy."
+                            title: "σ 4–5.5 (Balanced / Recommended)",
+                            body: "Think of: human skin, soft clouds, or gentle shadows. Only perfectly flat regions drop to the gentle low-energy embed while keeping strong redundancy."
                         )
                         guideBlock(
-                            title: "50–100 (Conservative / Maximum Invisibility)",
-                            body: "Think of: dense foliage, tree bark, brick walls, or pet fur. Extremely subtle, but may fail on mostly smooth photos due to too few embeddable blocks."
+                            title: "σ 7–10 (Conservative / Maximum Invisibility)",
+                            body: "Think of: dense foliage, tree bark, brick walls, or pet fur. Extremely subtle, but extraction headroom shrinks on mostly smooth photos since most blocks embed at reduced energy."
                         )
                     }
                     .padding(.horizontal, 20)

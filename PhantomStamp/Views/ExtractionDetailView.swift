@@ -305,7 +305,7 @@ struct ExtractionDetailView: View {
                     metricCard(title: "8×8 blocks scanned", value: "\(v)", systemImage: "square.grid.3x3")
                 }
                 if let s = skipped {
-                    metricCard(title: "Smooth blocks skipped", value: "\(s)", systemImage: "wind")
+                    metricCard(title: "Smooth blocks protected", value: "\(s)", systemImage: "wind")
                 }
                 if let v = visited, v > 0 {
                     let s = skipped ?? 0
