@@ -18,6 +18,17 @@ import SwiftUI
 @MainActor
 @Observable
 final class FullScreenWatermarkProgressOverlayViewModel {
+    // Pump tuning — live mode keeps smooth steps; catch-up collapses backlog quickly.
+    private static let catchUpBacklogThreshold = 5
+    private static let intervalDeltaMultiplier = 5.5
+    private static let maxIntervalSeconds = 0.35
+    private static let liveMinIntervalSeconds = 0.05
+    private static let catchUpMinIntervalSeconds = 0.01
+    private static let liveMaxAnimDuration = 0.42
+    private static let catchUpAnimDuration = 0.07
+    private static let finishingAnimDuration = 0.30
+    private static let completionHoldNanoseconds: UInt64 = 1_000_000_000
+
     var title: String = "Watermark"
     var detail: String = AppConstants.WatermarkStep.preparation.rawValue
     var progress: Double = 0
@@ -230,7 +241,7 @@ final class FullScreenWatermarkProgressOverlayViewModel {
         hideTask?.cancel()
         hideTask = Task { @MainActor [weak self] in
             // Keep visible briefly at completion.
-            try? await Task.sleep(nanoseconds: 1_250_000_000)
+            try? await Task.sleep(nanoseconds: Self.completionHoldNanoseconds)
             guard !Task.isCancelled, let self else { return }
             withAnimation(.easeOut(duration: 0.18)) {
                 self.state = .hidden
@@ -318,6 +329,81 @@ final class FullScreenWatermarkProgressOverlayViewModel {
         pumpSignal.signal()
     }
 
+    private func shouldCoalescePendingProgress() -> Bool {
+        if case .finishing = state, !pendingProgress.isEmpty { return true }
+        return pendingProgress.count >= Self.catchUpBacklogThreshold
+    }
+
+    /// Collapse the queue to a single highest-percentage event (latest detail wins ties).
+    private func coalescePendingProgress() -> QueuedProgress? {
+        var best: QueuedProgress?
+        while let item = pendingProgress.popMin() {
+            guard let current = best else {
+                best = item
+                continue
+            }
+            if item.percentage > current.percentage + 1e-9 {
+                best = item
+            } else if abs(item.percentage - current.percentage) <= 1e-9, item.enqueuedAt >= current.enqueuedAt {
+                best = item
+            }
+        }
+        return best
+    }
+
+    private func usesCatchUpTiming(backlogCount: Int) -> Bool {
+        if case .finishing = state { return true }
+        return backlogCount > 0
+    }
+
+    private func animationDuration(delta: Double, backlogCount: Int) -> Double {
+        if case .finishing = state {
+            return Self.finishingAnimDuration
+        }
+        if usesCatchUpTiming(backlogCount: backlogCount) {
+            return Self.catchUpAnimDuration
+        }
+        return min(max(0.20, 0.25 + delta * 0.7), Self.liveMaxAnimDuration)
+    }
+
+    private func applyProgressUpdate(_ next: QueuedProgress, clock: ContinuousClock) async {
+        let backlogCount = pendingProgress.count
+        let catchUpTiming = usesCatchUpTiming(backlogCount: backlogCount)
+        let minInterval = catchUpTiming ? Self.catchUpMinIntervalSeconds : Self.liveMinIntervalSeconds
+
+        let deltaForInterval = abs(next.percentage - progress)
+        let intervalSeconds = min(
+            max(deltaForInterval * Self.intervalDeltaMultiplier, minInterval),
+            Self.maxIntervalSeconds
+        )
+        if let last = lastProgressApplyInstant {
+            let elapsed = last.duration(to: clock.now)
+            let wait = Duration.seconds(intervalSeconds)
+            if elapsed < wait {
+                try? await clock.sleep(for: wait - elapsed)
+            }
+        }
+
+        detail = next.detailOverride ?? next.step.rawValue
+
+        let target = next.percentage
+        if target < progress - 1e-9 {
+            return
+        }
+
+        var tNoAnim = Transaction()
+        tNoAnim.animation = nil
+        withTransaction(tNoAnim) {
+            progressTextValue = target
+        }
+
+        let animDuration = animationDuration(delta: deltaForInterval, backlogCount: backlogCount)
+        withAnimation(.easeInOut(duration: animDuration)) {
+            progress = target
+        }
+        lastProgressApplyInstant = clock.now
+    }
+
     private func ensureProgressPump() {
         guard progressPumpTask == nil else { return }
         progressPumpTask = Task { @MainActor in
@@ -360,48 +446,17 @@ final class FullScreenWatermarkProgressOverlayViewModel {
                     continue
                 }
 
-                // Priority queue behavior: always take the smallest progress first.
+                if shouldCoalescePendingProgress() {
+                    guard let merged = coalescePendingProgress() else { continue }
+                    await applyProgressUpdate(merged, clock: clock)
+                    continue
+                }
+
+                // Live mode: play the smallest queued percentage first.
                 guard let next = pendingProgress.popMin() else {
                     continue
                 }
-
-                // Enforce minimum time between *applied* updates (adaptive + fast-forward under backlog).
-                let qCount = pendingProgress.count
-                let dynamicMinInterval = qCount > 2 ? 0.01 : 0.05
-
-                let deltaForInterval = abs(next.percentage - progress)
-                let intervalSeconds = min(max(deltaForInterval * 10.0, dynamicMinInterval), 1.00)
-                if let last = lastProgressApplyInstant {
-                    let elapsed = last.duration(to: clock.now)
-                    let minInterval = Duration.seconds(intervalSeconds)
-                    if elapsed < minInterval {
-                        try? await clock.sleep(for: (minInterval - elapsed))
-                    }
-                }
-
-                detail = next.detailOverride ?? next.step.rawValue
-
-                let target = next.percentage
-                // Drop stale regressions (can happen with concurrent notifications arriving out of order).
-                if target < progress - 1e-9 {
-                    continue
-                }
-
-                // Update the percent label without animation (avoid "counting" feel).
-                var tNoAnim = Transaction()
-                tNoAnim.animation = nil
-                withTransaction(tNoAnim) {
-                    progressTextValue = target
-                }
-
-                // Animation duration should also adapt to backlog.
-                let dynamicAnimDuration = qCount > 2
-                    ? 0.10
-                    : min(max(0.20, 0.25 + deltaForInterval * 0.7), 0.90)
-                withAnimation(.easeInOut(duration: dynamicAnimDuration)) {
-                    progress = target
-                }
-                lastProgressApplyInstant = clock.now
+                await applyProgressUpdate(next, clock: clock)
             }
         }
     }
