@@ -75,16 +75,21 @@ struct AdvancedModeLoupeViewport: View {
             .allowsHitTesting(false)
         }
         .frame(width: loupeSize, height: loupeSize)
-        .clipShape(RoundedRectangle(cornerRadius: 10, style: .continuous))
-        .overlay {
-            RoundedRectangle(cornerRadius: 10, style: .continuous)
-                .strokeBorder(Color.primary.opacity(0.22), lineWidth: 1)
-        }
         .background {
             RoundedRectangle(cornerRadius: 10, style: .continuous)
                 .fill(.ultraThinMaterial)
         }
-        .shadow(color: .black.opacity(0.18), radius: 8, x: 0, y: 4)
+        .clipShape(RoundedRectangle(cornerRadius: 10, style: .continuous))
+        .overlay {
+            RoundedRectangle(cornerRadius: 10, style: .continuous)
+                .strokeBorder(Color.black.opacity(0.35), lineWidth: 1.5)
+        }
+        .overlay {
+            RoundedRectangle(cornerRadius: 10, style: .continuous)
+                .strokeBorder(Color.white.opacity(0.55), lineWidth: 0.75)
+                .padding(0.75)
+        }
+        .shadow(color: .black.opacity(0.22), radius: 6, x: 0, y: 3)
         .allowsHitTesting(false)
         .accessibilityHidden(true)
     }

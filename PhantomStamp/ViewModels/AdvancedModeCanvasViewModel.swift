@@ -30,6 +30,8 @@ final class AdvancedModeCanvasViewModel {
     static let loupeCanvasPadding: CGFloat = 10
     static let axisSliderThickness: CGFloat = 18
     static let gridSpacing: CGFloat = 4
+    /// Initial crosshair inset from the top-leading corner (matches slider default).
+    static let defaultReticleMarginFraction: CGFloat = 0.10
 
     var reticleBlockX: Int = 0
     var reticleBlockY: Int = 0
@@ -44,6 +46,7 @@ final class AdvancedModeCanvasViewModel {
     private var buildToken: UUID?
     private var activePhotoID: UUID?
     private var lastBuiltLayoutSize: CGSize?
+    private var shouldApplyDefaultReticle = false
 
     var isCacheReady: Bool { varianceCache != nil && previewImage != nil }
 
@@ -96,6 +99,7 @@ final class AdvancedModeCanvasViewModel {
         varianceCache = nil
         isBuildingVarianceCache = false
         lastBuiltLayoutSize = nil
+        shouldApplyDefaultReticle = true
         reticleBlockX = 0
         reticleBlockY = 0
         lastDebugStatus = "bound photo \(photoID.uuidString.prefix(8))"
@@ -207,8 +211,20 @@ final class AdvancedModeCanvasViewModel {
                 )
 
                 if let cache {
-                    self.reticleBlockX = min(self.reticleBlockX, max(0, cache.maxBlocksX - 1))
-                    self.reticleBlockY = min(self.reticleBlockY, max(0, cache.maxBlocksY - 1))
+                    if self.shouldApplyDefaultReticle {
+                        self.reticleBlockX = ReticleBlockGeometry.defaultBlockIndex(
+                            blockCount: cache.maxBlocksX,
+                            marginFraction: Self.defaultReticleMarginFraction
+                        )
+                        self.reticleBlockY = ReticleBlockGeometry.defaultBlockIndex(
+                            blockCount: cache.maxBlocksY,
+                            marginFraction: Self.defaultReticleMarginFraction
+                        )
+                        self.shouldApplyDefaultReticle = false
+                    } else {
+                        self.reticleBlockX = min(self.reticleBlockX, max(0, cache.maxBlocksX - 1))
+                        self.reticleBlockY = min(self.reticleBlockY, max(0, cache.maxBlocksY - 1))
+                    }
                     self.lastDebugStatus = "ready \(cache.maxBlocksX)×\(cache.maxBlocksY) · r(\(self.reticleBlockX),\(self.reticleBlockY))"
                     AdvancedCanvasDebug.log(
                         "build done blocks=\(cache.maxBlocksX)×\(cache.maxBlocksY) " +
@@ -230,6 +246,7 @@ final class AdvancedModeCanvasViewModel {
         activePhotoID = nil
         lastBuiltLayoutSize = nil
         isBuildingVarianceCache = false
+        shouldApplyDefaultReticle = false
         reticleBlockX = 0
         reticleBlockY = 0
         lastDebugStatus = "cleared"

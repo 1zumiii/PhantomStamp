@@ -90,6 +90,13 @@ enum CanvasPreviewMapping {
 
 /// Shared block-center math so crosshair lines and slider cursor tips land on the same coordinate.
 enum ReticleBlockGeometry {
+    /// Default reticle index near the top-leading `marginFraction` boundary (e.g. 10% inset).
+    static func defaultBlockIndex(blockCount: Int, marginFraction: CGFloat = 0.10) -> Int {
+        guard blockCount > 1 else { return 0 }
+        let continuous = marginFraction * CGFloat(blockCount) - 0.5
+        return min(blockCount - 1, max(0, Int(continuous.rounded())))
+    }
+
     static func blockCenterFraction(index: Int, blockCount: Int) -> CGFloat {
         guard blockCount > 0 else { return 0.5 }
         guard blockCount > 1 else { return 0.5 }
