@@ -28,7 +28,7 @@ struct VarianceGainCurveStats: View {
             .font(.caption2)
         }
         .font(.caption.weight(.semibold))
-        .foregroundStyle(Color.orange.opacity(0.9))
+        .foregroundStyle(Color(red: 0.58, green: 0.32, blue: 0.94).opacity(0.9))
 
         Spacer()
 
@@ -43,7 +43,7 @@ struct VarianceGainCurveStats: View {
         blockStatColumn(title: "Total", value: summary?.totalBlocks ?? 0, alignment: .trailing)
       }
 
-      Text("Drag anchors vertically · gain maps to heatmap opacity in the loupe viewport.")
+      Text("Drag anchors · middle knot moves horizontally & vertically · heatmap updates in the loupe.")
         .font(.caption2)
         .foregroundStyle(.tertiary)
         .fixedSize(horizontal: false, vertical: true)
@@ -73,6 +73,7 @@ struct VarianceGainCurveEditor: View {
 
   private let plotHeight: CGFloat = 148
   private let axisInset = EdgeInsets(top: 10, leading: 36, bottom: 22, trailing: 12)
+  private let curvePurple = Color(red: 0.58, green: 0.32, blue: 0.94)
 
   var body: some View {
     VStack(alignment: .leading, spacing: 10) {
@@ -108,8 +109,9 @@ struct VarianceGainCurveEditor: View {
         .padding(.vertical, 6)
         .background {
           Capsule(style: .continuous)
-            .fill(Color.accentColor.opacity(0.12))
+            .fill(curvePurple.opacity(0.14))
         }
+        .foregroundStyle(curvePurple)
     }
     .buttonStyle(.plain)
     .disabled(!isEnabled)
@@ -121,7 +123,7 @@ struct VarianceGainCurveEditor: View {
       ZStack {
         axisLabels(plotRect: plotRect, size: geo.size)
         curvePath(in: plotRect)
-          .stroke(Color.accentColor, style: StrokeStyle(lineWidth: 2.5, lineCap: .round, lineJoin: .round))
+          .stroke(curvePurple, style: StrokeStyle(lineWidth: 2.5, lineCap: .round, lineJoin: .round))
         ForEach(draggableAnchors, id: \.index) { anchor in
           anchorHandle(anchor: anchor, plotRect: plotRect)
         }
@@ -133,6 +135,8 @@ struct VarianceGainCurveEditor: View {
     let index: Int
     let normalizedX: Double
     let gain: Double
+    /// Interior knot (between endpoints) — free 2D drag.
+    let allowsHorizontalDrag: Bool
   }
 
   private var draggableAnchors: [DraggableAnchor] {
@@ -140,7 +144,13 @@ struct VarianceGainCurveEditor: View {
     guard sorted.count >= 2 else { return [] }
     return sorted.enumerated().compactMap { index, pt in
       guard index < sorted.count - 1 else { return nil }
-      return DraggableAnchor(index: index, normalizedX: pt.normalizedX, gain: pt.gain)
+      let isInterior = index > 0 && index < sorted.count - 1
+      return DraggableAnchor(
+        index: index,
+        normalizedX: pt.normalizedX,
+        gain: pt.gain,
+        allowsHorizontalDrag: isInterior
+      )
     }
   }
 
@@ -210,12 +220,12 @@ struct VarianceGainCurveEditor: View {
   private func anchorHandle(anchor: DraggableAnchor, plotRect: CGRect) -> some View {
     let center = pointInPlot(normalizedX: anchor.normalizedX, gain: anchor.gain, plotRect: plotRect)
     Circle()
-      .fill(Color.accentColor)
-      .frame(width: 18, height: 18)
+      .fill(curvePurple)
+      .frame(width: anchor.allowsHorizontalDrag ? 20 : 18, height: anchor.allowsHorizontalDrag ? 20 : 18)
       .overlay {
         Circle().strokeBorder(Color.white, lineWidth: 2)
       }
-      .shadow(color: .black.opacity(0.18), radius: 3, y: 1)
+      .shadow(color: curvePurple.opacity(0.35), radius: 4, y: 1)
       .position(center)
       .gesture(
         DragGesture(minimumDistance: 0)
@@ -223,9 +233,19 @@ struct VarianceGainCurveEditor: View {
             guard isEnabled else { return }
             let y = min(max(value.location.y, plotRect.minY), plotRect.maxY)
             let gain = 1.0 - Double((y - plotRect.minY) / plotRect.height)
-            curve.setGain(atSortedIndex: anchor.index, gain: gain)
+            if anchor.allowsHorizontalDrag {
+              let x = min(max(value.location.x, plotRect.minX), plotRect.maxX)
+              let normalizedX = Double((x - plotRect.minX) / plotRect.width)
+              curve.setAnchor(
+                atSortedIndex: anchor.index,
+                normalizedX: normalizedX,
+                gain: gain
+              )
+            } else {
+              curve.setAnchor(atSortedIndex: anchor.index, gain: gain)
+            }
           }
       )
-      .accessibilityLabel("Gain anchor \(anchor.index + 1)")
+      .accessibilityLabel(anchor.allowsHorizontalDrag ? "Middle gain anchor" : "Gain anchor \(anchor.index + 1)")
   }
 }

@@ -112,18 +112,44 @@ struct VarianceGainCurve: Equatable, Codable, Sendable {
   /// Draggable interior indices (endpoints at x=0 and x=1 keep gain clamped but mid anchors move freely).
   static let draggableAnchorIndices = [0, 1]
 
-  /// Updates gain for the anchor at `sortedIndex` (0 = lowest variance knot).
-  mutating func setGain(atSortedIndex sortedIndex: Int, gain newGain: Double) {
-    let sorted = sortedPoints
+  /// Updates one knot by sorted index (0 = lowest-variance anchor).
+  mutating func setAnchor(
+    atSortedIndex sortedIndex: Int,
+    normalizedX newX: Double? = nil,
+    gain newGain: Double? = nil
+  ) {
+    var sorted = sortedPoints
     guard sorted.indices.contains(sortedIndex) else { return }
-    let targetX = sorted[sortedIndex].normalizedX
-    guard let i = points.firstIndex(where: { abs($0.normalizedX - targetX) < 1e-9 }) else { return }
-    let clamped = min(max(newGain, 0), 1)
-    if sortedIndex == sorted.count - 1 {
-      points[i].gain = 1.0
-    } else {
-      points[i].gain = clamped
+
+    if let newGain {
+      let clamped = min(max(newGain, 0), 1)
+      if sortedIndex == sorted.count - 1 {
+        sorted[sortedIndex].gain = 1.0
+      } else {
+        sorted[sortedIndex].gain = clamped
+      }
     }
+
+    if let newX, sortedIndex > 0, sortedIndex < sorted.count - 1 {
+      let leftBound = sorted[sortedIndex - 1].normalizedX + 0.04
+      let rightBound = sorted[sortedIndex + 1].normalizedX - 0.04
+      sorted[sortedIndex].normalizedX = min(max(newX, leftBound), rightBound)
+    }
+
+    if sortedIndex == 0 {
+      sorted[0].normalizedX = 0
+    }
+    if let last = sorted.indices.last {
+      sorted[last].normalizedX = 1
+      sorted[last].gain = 1
+    }
+
+    points = sorted
+  }
+
+  /// Backward-compatible vertical-only update.
+  mutating func setGain(atSortedIndex sortedIndex: Int, gain newGain: Double) {
+    setAnchor(atSortedIndex: sortedIndex, gain: newGain)
   }
 
   // MARK: Interpolation

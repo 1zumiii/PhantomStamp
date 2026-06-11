@@ -232,7 +232,9 @@ enum LoupeDisplayBuilder {
                     let gain = gains[index]
                     guard gain > 0.04 else { continue }
                     let alpha = CGFloat(gain) * 0.62
-                    cg.setFillColor(UIColor.systemOrange.withAlphaComponent(alpha).cgColor)
+                    cg.setFillColor(
+                        UIColor(red: 0.58, green: 0.32, blue: 0.94, alpha: alpha).cgColor
+                    )
                     cg.fill(
                         CGRect(
                             x: CGFloat(localX) * cellSize,
