@@ -17,8 +17,26 @@ struct WatermarkInsertView: View {
     @State private var showOverflowSheet = false
     @FocusState private var isPayloadFocused: Bool
     @State private var lastAppliedDefaultPayload: String?
-    @State private var isAdvancedOptionsExpanded: Bool = false
-    @State private var showAdvancedOptionsInfo: Bool = false
+    @State private var showTextureReferenceGuide: Bool = false
+
+    // Advanced Mode — parameters are LOCAL view state, deliberately isolated from the global
+    // `UserSettingsStore` until the sparkle button executes (no settings contamination while tuning).
+    @State private var isAdvancedMode: Bool = false
+    /// Local UI state for σ (0...10 gray levels); mapped to variance (σ²) only at execution.
+    @State private var advancedSigma: Double = 2.0
+    /// Loupe mask threshold — decoupled from live slider drag to keep scrolling/dragging smooth.
+    @State private var loupePreviewSigma: Double = 2.0
+    @State private var sigmaLoupeDebounceTask: Task<Void, Never>?
+    /// Local UI state for the global embedding intensity (adaptive-Q multiplier), placeholder for now.
+    @State private var advancedIntensity: Double = 10.0
+    @State private var selectedAdvancedSubTab: AdvancedSubTab = .smoothBlock
+
+    @State private var advancedCanvasVM = AdvancedModeCanvasViewModel()
+
+    private enum AdvancedSubTab {
+        case smoothBlock
+        case intensity
+    }
 
     init(watermarkService: any WatermarkServiceProtocol, settingsStore: UserSettingsStore) {
         self.watermarkService = watermarkService
@@ -27,29 +45,27 @@ struct WatermarkInsertView: View {
     }
 
     var body: some View {
-        ZStack {
-            ScrollView {
-                VStack(alignment: .leading, spacing: 18) {
-                    header
-                    uploadCard
-                    inputCard
-                    advancedOptionsCard
-                    Spacer(minLength: 12)
-                }
-                .padding(.horizontal, 20)
-                .padding(.vertical, 10)
+        ScrollView {
+            VStack(alignment: .leading, spacing: 18) {
+                header
+                uploadCard
+                inputCard
+                Spacer(minLength: 12)
             }
-            .scrollDismissesKeyboard(.interactively)
-            .simultaneousGesture(
-                TapGesture().onEnded { dismissPayloadKeyboardIfNeeded() }
-            )
-            .navigationTitle("Embed Watermark")
-            .scrollIndicators(.hidden)
-            .background(Color(uiColor: .systemGroupedBackground))
-
-            floatingActions
-                .padding(.horizontal, 18)
-                .padding(.bottom, 16)
+            .padding(.horizontal, 20)
+            .padding(.vertical, 10)
+        }
+        .scrollDismissesKeyboard(.interactively)
+        .simultaneousGesture(
+            TapGesture().onEnded { dismissPayloadKeyboardIfNeeded() }
+        )
+        .navigationTitle("Embed Watermark")
+        .scrollIndicators(.hidden)
+        .background(Color(uiColor: .systemGroupedBackground))
+        .sheet(isPresented: $showTextureReferenceGuide) {
+            TextureReferenceGuideSheet()
+                .presentationDetents([.medium, .large])
+                .presentationDragIndicator(.visible)
         }
         .sheet(isPresented: $showOverflowSheet) {
             UploadedImagesOverflowSheet(items: vm.selectedPhotoItems, onRemove: { vm.removePhoto(id: $0) })
@@ -70,6 +86,20 @@ struct WatermarkInsertView: View {
         }
         .onChange(of: vm.selectedPhotoItems.count) { _, count in
             if count == 0 { showOverflowSheet = false }
+        }
+        .onChange(of: isAdvancedMode) { _, advanced in
+            // Advanced mode is single-image: drop extra picks when switching in.
+            if advanced {
+                vm.keepOnlyFirstPhoto()
+            } else {
+                advancedCanvasVM.clear()
+            }
+        }
+        .onChange(of: vm.selectedPhotoItems.first?.id) { _, _ in
+            guard isAdvancedMode, vm.selectedPhotoItems.first != nil else {
+                advancedCanvasVM.clear()
+                return
+            }
         }
         .onChange(of: photoPickerItems) { _, items in
             guard !items.isEmpty else { return }
@@ -175,65 +205,46 @@ struct WatermarkInsertView: View {
         let shape = RoundedRectangle(cornerRadius: 18, style: .continuous)
 
         return VStack(alignment: .leading, spacing: 12) {
+            // Mode toggle lives at the very top of the card.
+            Picker("Embedding mode", selection: $isAdvancedMode.animation(.easeInOut(duration: 0.2))) {
+                Text("Adaptive").tag(false)
+                Text("Advanced").tag(true)
+            }
+            .pickerStyle(.segmented)
+            .disabled(vm.isEmbedding || vm.showSuccessOverlay)
+
             Label("Upload", systemImage: "arrow.up.doc")
                 .font(.subheadline.weight(.semibold))
                 .foregroundStyle(.secondary)
 
-            PhotosPicker(
-                selection: $photoPickerItems,
-                maxSelectionCount: vm.isAtImageLimit ? 1 : vm.remainingImageSlots,
-                matching: ImagePickerSupport.imagesOnlyFilter,
-                preferredItemEncoding: .automatic,
-                label: {
-                    ZStack {
-                        RoundedRectangle(cornerRadius: 22, style: .continuous)
-                            .fill(Color(uiColor: .secondarySystemGroupedBackground))
-
-                        RoundedRectangle(cornerRadius: 22, style: .continuous)
-                            .strokeBorder(
-                                Color.primary.opacity(0.28),
-                                style: StrokeStyle(lineWidth: 2, lineCap: .round, dash: [8, 7])
-                            )
-
-                        VStack(spacing: 10) {
-                            Image(systemName: "photo.badge.plus")
-                                .font(.title2)
-                                .foregroundStyle(Color.accentColor)
-                            Text("Tap to choose photos")
-                                .font(.headline.weight(.semibold))
-                                .foregroundStyle(.primary)
-                            Text(vm.isAtImageLimit
-                                ? "Maximum \(WatermarkInsertViewModel.maxSelectedImageCount) photos reached"
-                                : "Images only • Up to \(WatermarkInsertViewModel.maxSelectedImageCount) • Picks append")
-                                .font(.caption)
-                                .foregroundStyle(.secondary)
-                                .multilineTextAlignment(.center)
-                        }
-                        .padding(.horizontal, 18)
-                    }
-                    .frame(maxWidth: .infinity)
-                    .frame(height: 180)
-                    .contentShape(Rectangle())
-                }
-            )
-            .buttonStyle(.plain)
-            .disabled(vm.isEmbedding || vm.showSuccessOverlay || vm.isAtImageLimit)
+            // Middle viewport: in Advanced mode an uploaded photo takes over the dashed
+            // container entirely and becomes the canvas for future visual overlays.
+            if isAdvancedMode, let canvasItem = vm.selectedPhotoItems.first {
+                advancedCanvasViewport(for: canvasItem)
+            } else {
+                photoPickerArea
+            }
 
             Divider()
                 .opacity(0.35)
 
-            HStack(alignment: .center, spacing: 10) {
-                Label("Uploaded", systemImage: "rectangle.stack")
-                    .font(.caption.weight(.semibold))
-                    .foregroundStyle(.secondary)
-                Spacer()
-                Text(uploadedCountLabel)
-                    .font(.caption)
-                    .foregroundStyle(.secondary)
-            }
+            // Bottom panel: multi-image grid (Adaptive) vs parameter sub-tabs (Advanced).
+            if isAdvancedMode {
+                advancedControlPanel
+            } else {
+                HStack(alignment: .center, spacing: 10) {
+                    Label("Uploaded", systemImage: "rectangle.stack")
+                        .font(.caption.weight(.semibold))
+                        .foregroundStyle(.secondary)
+                    Spacer()
+                    Text(uploadedCountLabel)
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
+                }
 
-            uploadedThumbnailsRow
-                .frame(maxWidth: .infinity, alignment: .leading)
+                uploadedThumbnailsRow
+                    .frame(maxWidth: .infinity, alignment: .leading)
+            }
         }
         .padding(18)
         .background {
@@ -248,6 +259,152 @@ struct WatermarkInsertView: View {
                 uploadSuccessOverlay
             }
         }
+    }
+
+    /// Dashed PhotosPicker container. In Advanced mode the picker enforces a single photo.
+    private var photoPickerArea: some View {
+        PhotosPicker(
+            selection: $photoPickerItems,
+            maxSelectionCount: isAdvancedMode ? 1 : (vm.isAtImageLimit ? 1 : vm.remainingImageSlots),
+            matching: ImagePickerSupport.imagesOnlyFilter,
+            preferredItemEncoding: .automatic,
+            label: {
+                ZStack {
+                    RoundedRectangle(cornerRadius: 22, style: .continuous)
+                        .fill(Color(uiColor: .secondarySystemGroupedBackground))
+
+                    RoundedRectangle(cornerRadius: 22, style: .continuous)
+                        .strokeBorder(
+                            Color.primary.opacity(0.28),
+                            style: StrokeStyle(lineWidth: 2, lineCap: .round, dash: [8, 7])
+                        )
+
+                    VStack(spacing: 10) {
+                        Image(systemName: "photo.badge.plus")
+                            .font(.title2)
+                            .foregroundStyle(Color.accentColor)
+                        Text(isAdvancedMode ? "Tap to choose a photo" : "Tap to choose photos")
+                            .font(.headline.weight(.semibold))
+                            .foregroundStyle(.primary)
+                        Text(pickerCaption)
+                            .font(.caption)
+                            .foregroundStyle(.secondary)
+                            .multilineTextAlignment(.center)
+                    }
+                    .padding(.horizontal, 18)
+                }
+                .frame(maxWidth: .infinity)
+                .frame(height: 180)
+                .contentShape(Rectangle())
+            }
+        )
+        .buttonStyle(.plain)
+        .disabled(vm.isEmbedding || vm.showSuccessOverlay || (!isAdvancedMode && vm.isAtImageLimit))
+    }
+
+    private var pickerCaption: String {
+        if isAdvancedMode {
+            return "Single image • Fills the canvas viewport"
+        }
+        return vm.isAtImageLimit
+            ? "Maximum \(WatermarkInsertViewModel.maxSelectedImageCount) photos reached"
+            : "Images only • Up to \(WatermarkInsertViewModel.maxSelectedImageCount) • Picks append"
+    }
+
+    /// Advanced-mode canvas: grid layout with custom reticle sliders (see `AdvancedModeCanvasView`).
+    private func advancedCanvasViewport(for item: SelectedPhotoItem) -> some View {
+        AdvancedModeCanvasView(
+            viewModel: advancedCanvasVM,
+            item: item,
+            varianceThreshold: Float(loupePreviewSigma * loupePreviewSigma),
+            watermarkService: watermarkService,
+            isInteractionEnabled: !vm.isEmbedding && !vm.showSuccessOverlay,
+            onRemovePhoto: {
+                vm.removePhoto(id: item.id)
+                advancedCanvasVM.clear()
+            }
+        )
+    }
+
+    /// Advanced-mode bottom panel: nested sub-tab picker + per-parameter sliders.
+    /// Sliders bind ONLY to local @State — nothing is written to `UserSettingsStore` here.
+    private var advancedControlPanel: some View {
+        VStack(alignment: .leading, spacing: 12) {
+            Picker("Parameter", selection: $selectedAdvancedSubTab) {
+                Text("Smooth Block").tag(AdvancedSubTab.smoothBlock)
+                Text("Embedding Intensity").tag(AdvancedSubTab.intensity)
+            }
+            .pickerStyle(.segmented)
+
+            switch selectedAdvancedSubTab {
+            case .smoothBlock:
+                VStack(alignment: .leading, spacing: 10) {
+                    Text("Texture Variance Threshold")
+                        .font(.subheadline.weight(.semibold))
+                        .foregroundStyle(.primary)
+
+                    VarianceThresholdControl(
+                        sigma: $advancedSigma,
+                        histogram: advancedCanvasVM.varianceHistogram,
+                        isEnabled: !vm.isEmbedding && !vm.showSuccessOverlay,
+                        onLiveSigmaChange: { liveSigma in
+                            guard !vm.isEmbedding, !vm.showSuccessOverlay else { return }
+                            sigmaLoupeDebounceTask?.cancel()
+                            sigmaLoupeDebounceTask = Task {
+                                try? await Task.sleep(for: .milliseconds(280))
+                                guard !Task.isCancelled else { return }
+                                await MainActor.run {
+                                    loupePreviewSigma = liveSigma
+                                }
+                            }
+                        },
+                        onEditingChanged: { editing in
+                            if editing {
+                                sigmaLoupeDebounceTask?.cancel()
+                            } else {
+                                sigmaLoupeDebounceTask?.cancel()
+                                loupePreviewSigma = advancedSigma
+                            }
+                        }
+                    )
+
+                    Button {
+                        showTextureReferenceGuide = true
+                    } label: {
+                        HStack(spacing: 8) {
+                            Image(systemName: "info.circle")
+                                .font(.subheadline.weight(.semibold))
+                            Text("Texture reference guide")
+                                .font(.subheadline.weight(.semibold))
+                        }
+                        .foregroundStyle(Color.accentColor)
+                    }
+                    .buttonStyle(.plain)
+                    .padding(.top, 4)
+                }
+            case .intensity:
+                VStack(alignment: .leading, spacing: 10) {
+                    HStack(alignment: .firstTextBaseline) {
+                        Text("Global Embedding Intensity")
+                            .font(.subheadline.weight(.semibold))
+                            .foregroundStyle(.primary)
+                        Spacer()
+                        Text("\(advancedIntensity, specifier: "%.1f")×")
+                            .font(.caption.monospacedDigit().weight(.semibold))
+                            .foregroundStyle(.secondary)
+                    }
+
+                    Slider(value: $advancedIntensity, in: 0...10, step: 0.5)
+                        .tint(Color.orange)
+
+                    Text("Placeholder — multiplies the adaptive quantization step for this run only.")
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
+                        .fixedSize(horizontal: false, vertical: true)
+                }
+            }
+        }
+        .disabled(vm.isEmbedding || vm.showSuccessOverlay)
     }
 
     /// Blurred overlay after a successful embed; offers “Insert more” to reset upload state.
@@ -357,10 +514,15 @@ struct WatermarkInsertView: View {
                         .strokeBorder(Color.primary.opacity(0.12), lineWidth: 1)
                 }
 
-                Text(payloadHintBelowField)
-                    .font(.caption)
-                    .foregroundStyle(vm.isPayloadLengthValid ? Color.secondary : Color.orange)
-                    .fixedSize(horizontal: false, vertical: true)
+                HStack(alignment: .bottom, spacing: 12) {
+                    Text(payloadHintBelowField)
+                        .font(.caption)
+                        .foregroundStyle(vm.isPayloadLengthValid ? Color.secondary : Color.orange)
+                        .fixedSize(horizontal: false, vertical: true)
+                        .frame(maxWidth: .infinity, alignment: .leading)
+
+                    embedActionButton
+                }
             }
         }
         .padding(18)
@@ -371,67 +533,6 @@ struct WatermarkInsertView: View {
         .overlay {
             RoundedRectangle(cornerRadius: 18, style: .continuous)
                 .strokeBorder(Color.primary.opacity(0.05), lineWidth: 1)
-        }
-    }
-
-    private var advancedOptionsCard: some View {
-        let shape = RoundedRectangle(cornerRadius: 18, style: .continuous)
-        let thresholdBinding = Binding(
-            get: { settingsStore.textureVarianceThreshold },
-            set: { settingsStore.textureVarianceThreshold = min(max($0, 0.0), 100.0) }
-        )
-
-        return VStack(alignment: .leading, spacing: 12) {
-            DisclosureGroup(isExpanded: $isAdvancedOptionsExpanded) {
-                VStack(alignment: .leading, spacing: 12) {
-                    HStack(alignment: .firstTextBaseline) {
-                        Text("Texture Variance Threshold")
-                            .font(.subheadline.weight(.semibold))
-                            .foregroundStyle(.primary)
-                        Spacer()
-                        Text("\(Int(settingsStore.textureVarianceThreshold.rounded()))")
-                            .font(.caption.monospacedDigit().weight(.semibold))
-                            .foregroundStyle(.secondary)
-                    }
-
-                    Slider(value: thresholdBinding, in: 0...100, step: 1)
-                        .tint(Color.orange)
-
-                    Text("Controls how aggressively the algorithm avoids embedding data in smooth areas. Higher values prioritize pristine visual quality in flat areas (like skies), while lower values maximize watermark redundancy and survival rate.")
-                        .font(.caption)
-                        .foregroundStyle(.secondary)
-                        .fixedSize(horizontal: false, vertical: true)
-
-                    Button {
-                        showAdvancedOptionsInfo = true
-                    } label: {
-                        HStack(spacing: 8) {
-                            Image(systemName: "info.circle")
-                                .font(.subheadline.weight(.semibold))
-                            Text("Texture reference guide")
-                                .font(.subheadline.weight(.semibold))
-                        }
-                        .foregroundStyle(Color.accentColor)
-                    }
-                    .buttonStyle(.plain)
-                }
-                .padding(.top, 6)
-            } label: {
-                HStack(spacing: 10) {
-                    Label("Advanced options", systemImage: "slider.horizontal.3")
-                        .font(.subheadline.weight(.semibold))
-                        .foregroundStyle(.secondary)
-                    Spacer()
-                }
-            }
-        }
-        .padding(18)
-        .background { shape.fill(Color(uiColor: .secondarySystemGroupedBackground)) }
-        .overlay { shape.strokeBorder(Color.primary.opacity(0.05), lineWidth: 1) }
-        .sheet(isPresented: $showAdvancedOptionsInfo) {
-            TextureReferenceGuideSheet()
-                .presentationDetents([.medium, .large])
-                .presentationDragIndicator(.visible)
         }
     }
 
@@ -447,16 +548,16 @@ struct WatermarkInsertView: View {
                             .padding(.top, 4)
 
                         guideBlock(
-                            title: "0–10 (Aggressive / Maximum Robustness)",
-                            body: "Think of: clear blue skies, flat painted walls, or pure white paper. Embeds almost everywhere for maximum survival, but faint noise (banding) might be visible in completely smooth areas."
+                            title: "σ 0–3 (Aggressive / Maximum Robustness)",
+                            body: "Think of: clear blue skies, flat painted walls, or pure white paper. Embeds at full strength almost everywhere for maximum survival, but faint noise (banding) might be visible in completely smooth areas."
                         )
                         guideBlock(
-                            title: "15–30 (Balanced / Recommended)",
-                            body: "Think of: human skin, soft clouds, or gentle shadows. Skips only perfectly flat regions while keeping strong redundancy."
+                            title: "σ 4–5.5 (Balanced / Recommended)",
+                            body: "Think of: human skin, soft clouds, or gentle shadows. Only perfectly flat regions drop to the gentle low-energy embed while keeping strong redundancy."
                         )
                         guideBlock(
-                            title: "50–100 (Conservative / Maximum Invisibility)",
-                            body: "Think of: dense foliage, tree bark, brick walls, or pet fur. Extremely subtle, but may fail on mostly smooth photos due to too few embeddable blocks."
+                            title: "σ 7–10 (Conservative / Maximum Invisibility)",
+                            body: "Think of: dense foliage, tree bark, brick walls, or pet fur. Extremely subtle, but extraction headroom shrinks on mostly smooth photos since most blocks embed at reduced energy."
                         )
                     }
                     .padding(.horizontal, 20)
@@ -529,7 +630,7 @@ struct WatermarkInsertView: View {
 
     @ViewBuilder
     private var embedFABBackgroundFill: some View {
-        let shape = RoundedRectangle(cornerRadius: 16, style: .continuous)
+        let shape = Capsule(style: .continuous)
         if vm.canStartEmbed || vm.isEmbedding {
             shape.fill(embedFABGradient)
         } else {
@@ -554,11 +655,11 @@ struct WatermarkInsertView: View {
     }
 
     private var embedFABShadowRadius: CGFloat {
-        embedFABReady ? 26 : (vm.isEmbedding ? 20 : 6)
+        embedFABReady ? 14 : (vm.isEmbedding ? 10 : 4)
     }
 
     private var embedFABShadowY: CGFloat {
-        embedFABReady ? 16 : 6
+        embedFABReady ? 6 : 3
     }
 
     /// Matches `manageUploadedChip` when there is nothing to open: same fill + dimmed with `0.42` opacity.
@@ -566,45 +667,49 @@ struct WatermarkInsertView: View {
         (embedFABReady || vm.isEmbedding) ? 1.0 : 0.42
     }
 
-    private var floatingActions: some View {
-        VStack {
-            Spacer()
-            HStack(spacing: 12) {
-                Spacer()
-
-                Button {
-                    guard vm.canStartEmbed else { return }
-                    Task { await vm.embedWatermark() }
-                } label: {
-                    Image(systemName: vm.isEmbedding ? "hourglass" : "sparkles")
-                        .font(.body.weight(.semibold))
-                        .symbolEffect(.pulse, options: .repeating, isActive: vm.canStartEmbed && !vm.isEmbedding)
-                        .frame(width: 52, height: 52)
-                        .contentShape(Rectangle())
-                }
-                .buttonStyle(.plain)
-                .foregroundStyle(embedFABIconColor)
-                .background {
-                    embedFABBackgroundFill
-                }
-                .overlay {
-                    RoundedRectangle(cornerRadius: 16, style: .continuous)
-                        .strokeBorder(embedFABStrokeColor, lineWidth: embedFABReady ? 1.5 : 1)
-                }
-                .shadow(color: embedFABShadowColor, radius: embedFABShadowRadius, x: 0, y: embedFABShadowY)
-                .scaleEffect(embedFABReady ? 1.04 : 1.0)
-                .opacity(embedFABInactiveDimOpacity)
-                .animation(.spring(response: 0.32, dampingFraction: 0.72), value: embedFABReady)
-                .animation(.easeOut(duration: 0.2), value: vm.isEmbedding)
-                // Use hit-testing instead of `.disabled` so SwiftUI does not apply extra gray wash over our styling.
-                .allowsHitTesting(vm.canStartEmbed)
-                .accessibilityLabel(
-                    vm.canStartEmbed
-                        ? "Insert watermark"
-                        : "Insert watermark, unavailable until photos and watermark text are valid."
+    private var embedActionButton: some View {
+        Button {
+            guard vm.canStartEmbed else { return }
+            if isAdvancedMode {
+                // `advancedSigma` commits on σ-slider release; embed uses the last committed value.
+                let overrides = AdvancedEmbedOverrides(
+                    varianceThreshold: advancedSigma * advancedSigma,
+                    embeddingIntensity: advancedIntensity
                 )
+                Task { await vm.embedWatermark(advancedOverrides: overrides) }
+            } else {
+                Task { await vm.embedWatermark() }
             }
+        } label: {
+            HStack(spacing: 7) {
+                Image(systemName: vm.isEmbedding ? "hourglass" : "sparkles")
+                    .font(.subheadline.weight(.semibold))
+                    .symbolEffect(.pulse, options: .repeating, isActive: vm.canStartEmbed && !vm.isEmbedding)
+                Text("Embed")
+                    .font(.subheadline.weight(.semibold))
+            }
+            .padding(.horizontal, 16)
+            .padding(.vertical, 11)
+            .contentShape(Rectangle())
         }
+        .buttonStyle(.plain)
+        .foregroundStyle(embedFABIconColor)
+        .background { embedFABBackgroundFill }
+        .overlay {
+            Capsule(style: .continuous)
+                .strokeBorder(embedFABStrokeColor, lineWidth: embedFABReady ? 1.5 : 1)
+        }
+        .shadow(color: embedFABShadowColor, radius: embedFABShadowRadius, x: 0, y: embedFABShadowY)
+        .scaleEffect(embedFABReady ? 1.03 : 1.0)
+        .opacity(embedFABInactiveDimOpacity)
+        .animation(.spring(response: 0.32, dampingFraction: 0.72), value: embedFABReady)
+        .animation(.easeOut(duration: 0.2), value: vm.isEmbedding)
+        .allowsHitTesting(vm.canStartEmbed)
+        .accessibilityLabel(
+            vm.canStartEmbed
+                ? "Insert watermark"
+                : "Insert watermark, unavailable until photos and watermark text are valid."
+        )
     }
 }
 
