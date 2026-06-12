@@ -83,7 +83,6 @@ struct SettingsView: View {
     private var watermarkDefaultsSection: some View {
         Section {
             watermarkTextFieldRow
-            exportQualityRow
         } header: {
             sectionHeader(
                 title: AppConstants.Copy.Settings.sectionWatermarkDefaults,
