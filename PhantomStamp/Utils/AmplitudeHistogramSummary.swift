@@ -14,11 +14,13 @@ struct AmplitudeHistogramSummary: Sendable {
     let binCounts: [Int]
     let amplitudeMax: Double
     let binWidth: Double
+    let attenuatedBlockCount: Int
     private let sortedAmplitudes: [Float]
 
     var maxBinCount: Int { binCounts.max() ?? 0 }
+    var fullStrengthBlockCount: Int { max(0, totalBlocks - attenuatedBlockCount) }
 
-    static func build(
+    nonisolated static func build(
         baseQ: MacroblockBaseQuantizationCache,
         variance: MacroblockVarianceCache,
         varianceGainCurve: VarianceGainCurve,
@@ -26,12 +28,17 @@ struct AmplitudeHistogramSummary: Sendable {
     ) -> AmplitudeHistogramSummary {
         var amplitudes = [Float]()
         amplitudes.reserveCapacity(baseQ.maxBlocksX * baseQ.maxBlocksY)
+        var attenuatedBlockCount = 0
 
         for blockY in 0..<baseQ.maxBlocksY {
             for blockX in 0..<baseQ.maxBlocksX {
+                let blockVariance = variance.variance(blockX: blockX, blockY: blockY)
+                if varianceGainCurve.gain(atVariance: blockVariance) < 0.999 {
+                    attenuatedBlockCount += 1
+                }
                 let amp = BlockEmbedAmplitude.targetAmplitude(
                     baseAdaptiveQ: baseQ.baseQ(blockX: blockX, blockY: blockY),
-                    variance: variance.variance(blockX: blockX, blockY: blockY),
+                    variance: blockVariance,
                     embeddingIntensity: embeddingIntensity,
                     varianceGainCurve: varianceGainCurve
                 )
@@ -55,25 +62,9 @@ struct AmplitudeHistogramSummary: Sendable {
             binCounts: bins,
             amplitudeMax: amplitudeMax,
             binWidth: binWidth,
+            attenuatedBlockCount: attenuatedBlockCount,
             sortedAmplitudes: amplitudes
         )
-    }
-
-    func attenuatedBlockCount(variance: MacroblockVarianceCache, curve: VarianceGainCurve) -> Int {
-        guard !sortedAmplitudes.isEmpty else { return 0 }
-        var count = 0
-        for blockY in 0..<variance.maxBlocksY {
-            for blockX in 0..<variance.maxBlocksX {
-                if curve.gain(atVariance: variance.variance(blockX: blockX, blockY: blockY)) < 0.999 {
-                    count += 1
-                }
-            }
-        }
-        return count
-    }
-
-    func fullStrengthBlockCount(variance: MacroblockVarianceCache, curve: VarianceGainCurve) -> Int {
-        max(0, totalBlocks - attenuatedBlockCount(variance: variance, curve: curve))
     }
 
     func medianAmplitude() -> Double {

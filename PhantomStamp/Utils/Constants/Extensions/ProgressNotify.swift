@@ -17,6 +17,8 @@ extension AppConstants {
         static let watermarkPerFileProgressDidDrain = Notification.Name("WatermarkPerFileProgressDidDrain")
         /// Broadcast to show a full-screen progress overlay (embed/extract session start).
         static let watermarkProgressOverlayDidStart = Notification.Name("WatermarkProgressOverlayDidStart")
+        /// UI ack posted after the overlay has had a frame to become visible.
+        static let watermarkProgressOverlayDidPresent = Notification.Name("WatermarkProgressOverlayDidPresent")
         /// Broadcast to hide the full-screen progress overlay (embed/extract session end).
         static let watermarkProgressOverlayDidEnd = Notification.Name("WatermarkProgressOverlayDidEnd")
 
@@ -36,28 +38,72 @@ extension AppConstants {
     // Fixed all possible operation stages
     enum WatermarkStep: String {
         // Embedding pipeline (frequency-domain watermark).
-        case preparation = "Preparing payload"
-        case fecEncoding = "Applying FEC"
-        case macroblockBuild = "Building 2D tile"
+        /// Embed preparation: validates the image, FEC-encodes the text, adds the sync marker,
+        /// and folds the resulting bits into the repeating 2D watermark tile.
+        case preparation = "Packing the secret into a tiny suitcase"
 
-        case colorConversion = "Extracting luminance (Y)"
-        case stripSlicing = "Slicing luminance into strips"
+        /// Reserved granular embed step: adds forward-error-correction redundancy to the payload.
+        case fecEncoding = "Adding a little protection for the journey"
 
-        case processingStrips = "Embedding bits into DCT blocks"
+        /// Reserved granular embed step: arranges the encoded payload into its repeating tile pattern.
+        case macroblockBuild = "Teaching the message its hiding pattern"
 
-        case reassembling = "Reassembling luminance"
-        case rgbRebuild = "Rebuilding final image"
+        /// Embed color/layout step: converts RGB pixels to YCbCr and prepares the luminance channel.
+        case colorConversion = "Finding a quiet corner among the colors"
+
+        /// Reserved granular embed step: divides the luminance plane into independently processed strips.
+        case stripSlicing = "Making room between the pixels"
+
+        /// Embed frequency step: runs the strip tasks, applies block DCT, and hides payload bits.
+        case processingStrips = "Teaching the pixels to keep a secret"
+
+        /// Embed assembly step: writes processed strips back into the full luminance plane
+        /// and applies the spatial synchronization template.
+        case reassembling = "Putting the picture back together"
+
+        /// Embed finishing step: converts the completed YCbCr image back to a displayable RGB image.
+        case rgbRebuild = "Polishing the last few pixels"
 
         // Extraction pipeline (bit recovery + decode).
-        case extractPreparation = "Preparing extraction"
-        case extractConvertToYCbCr = "Convert To YCbCr"
-        case extractOffsetScan = "Perform offset scan"
-        case extractBitGrid = "Extract Bits"
-        case extractMajorityVoting = "Apply Majority Voting"
-        case extractDecodeFEC = "Decode FEC"
+        /// Extraction setup: validates input and starts the detached matrix-processing task.
+        case extractPreparation = "Listening for something hidden"
 
-        case extractDetectTransforms = "Detect Geometric Transforms"
-        case extractDeskew = "Deskew Image"
+        /// Extraction color step: converts the source image to YCbCr and selects its luminance plane.
+        case extractConvertToYCbCr = "Looking beneath the colors"
+
+        /// Extraction alignment step: scans all 64 pixel-grid offsets and topology hypotheses.
+        case extractOffsetScan = "Following the faint pixel trail"
+
+        /// Extraction sampling step: reads signed DCT coefficient differences into the raw soft-bit grid.
+        case extractBitGrid = "Gathering the scattered clues"
+
+        /// Reserved granular extraction step: folds repeated tiles and performs confidence-weighted voting.
+        case extractMajorityVoting = "Letting the clues compare notes"
+
+        /// Extraction finishing step: tries the expected payload lengths and decodes Hamming FEC.
+        case extractDecodeFEC = "Opening the message"
+
+        /// Extraction geometry step: detects rotation and scale from the spatial sync template.
+        case extractDetectTransforms = "Seeking the brightest star"
+
+        /// Reserved granular extraction step: resamples the luminance plane to undo detected geometry.
+        case extractDeskew = "Straightening the picture frame"
+
+        var isExtraction: Bool {
+            switch self {
+            case .extractPreparation,
+                 .extractConvertToYCbCr,
+                 .extractOffsetScan,
+                 .extractBitGrid,
+                 .extractMajorityVoting,
+                 .extractDecodeFEC,
+                 .extractDetectTransforms,
+                 .extractDeskew:
+                return true
+            default:
+                return false
+            }
+        }
     }
 }
 

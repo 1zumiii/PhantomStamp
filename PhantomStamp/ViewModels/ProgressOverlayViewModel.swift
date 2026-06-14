@@ -23,10 +23,10 @@ final class FullScreenWatermarkProgressOverlayViewModel {
     private static let completionHoldNanoseconds: UInt64 = 1_000_000_000
 
     // Embed strip phase (matches WatermarkService colorEnd…stripsEnd budget).
-    private static let embedStripsPhaseStart = 0.20
-    private static let embedStripsPhaseEnd = 0.70
+    private static let embedStripsPhaseStart = 0.50
+    private static let embedStripsPhaseEnd = 0.75
     private static let stripHeavyBacklogThreshold = 8
-    private static let stripMilestoneAdvance = 0.15
+    private static let stripMilestoneAdvance = 0.10
 
     private enum PumpPacing {
         case live
@@ -35,9 +35,9 @@ final class FullScreenWatermarkProgressOverlayViewModel {
 
         var minIntervalSeconds: Double {
             switch self {
-            case .live: 0.05
-            case .moderate: 0.03
-            case .catchUp: 0.015
+            case .live: 0.1
+            case .moderate: 0.06
+            case .catchUp: 0.03
             }
         }
 
@@ -84,10 +84,11 @@ final class FullScreenWatermarkProgressOverlayViewModel {
         }
     }
 
-    var title: String = "Watermark"
+    var title: String = "A little pixel magic"
     var detail: String = AppConstants.WatermarkStep.preparation.rawValue
     var progress: Double = 0
     var progressTextValue: Double = 0
+    private(set) var presentationSequence: Int = 0
 
     private var hideTask: Task<Void, Never>?
 
@@ -268,7 +269,8 @@ final class FullScreenWatermarkProgressOverlayViewModel {
     func startIfNeeded() {
         hideTask?.cancel()
         hideTask = nil
-        title = "Watermark"
+        presentationSequence &+= 1
+        title = "A little pixel magic"
         pendingProgress.removeAll(keepingCapacity: true)
         progressPumpTask?.cancel()
         progressPumpTask = nil
@@ -478,6 +480,9 @@ final class FullScreenWatermarkProgressOverlayViewModel {
             }
         }
 
+        if next.detailOverride == nil {
+            title = next.step.isExtraction ? "Finding the watermark" : "Hiding the watermark"
+        }
         detail = next.detailOverride ?? next.step.rawValue
 
         let target = next.percentage
@@ -577,4 +582,3 @@ private final class PumpSignal {
         }
     }
 }
-

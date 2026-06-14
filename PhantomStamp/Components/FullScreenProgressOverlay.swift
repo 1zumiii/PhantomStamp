@@ -22,6 +22,7 @@ struct FullScreenWatermarkProgressOverlay: View {
     @State private var dotsTask: Task<Void, Never>?
     @State private var shimmerPhase: CGFloat = -1
     @State private var isShimmerRunning: Bool = false
+    @State private var ghostIsFloating = false
 
     var body: some View {
         ZStack {
@@ -30,75 +31,85 @@ struct FullScreenWatermarkProgressOverlay: View {
                     .fill(.ultraThinMaterial)
                     .ignoresSafeArea()
 
-                VStack(spacing: 14) {
-                    HStack(spacing: 12) {
-                        Image(systemName: "wand.and.stars")
-                            .font(.title2)
-                            .foregroundStyle(Color.accentColor)
-                            .symbolEffect(.pulse, options: .repeating)
+                ZStack(alignment: .topTrailing) {
+                    PhantomGhost()
+                        .frame(width: 74, height: 94)
+                        .offset(x: 16, y: ghostIsFloating ? -64 : -61)
+                        .shadow(color: Color.white.opacity(0.72), radius: 1.5)
+                        .shadow(color: Color.black.opacity(0.22), radius: 7, x: 0, y: 3)
 
-                        VStack(alignment: .leading, spacing: 2) {
-                            Text(vm.title)
-                                .font(.headline.weight(.semibold))
-                            Text(detailWithDots)
+                    VStack(spacing: 14) {
+                        HStack(spacing: 12) {
+                            Image(systemName: "wand.and.stars")
+                                .font(.title2)
+                                .foregroundStyle(Color.accentColor)
+                                .symbolEffect(.pulse, options: .repeating)
+
+                            VStack(alignment: .leading, spacing: 2) {
+                                Text(vm.title)
+                                    .font(.headline.weight(.semibold))
+                                Text(detailWithDots)
+                                    .font(.caption)
+                                    .foregroundStyle(.secondary)
+                                    .lineLimit(2)
+                            }
+
+                            Spacer()
+
+                            if vm.batchTotal > 1 {
+                                batchBadge
+                                    .transition(.opacity.combined(with: .scale(scale: 0.98)))
+                            }
+                        }
+
+                        ProgressView(value: vm.progress, total: 1.0)
+                            .tint(.accentColor)
+                            .overlay {
+                                GeometryReader { geo in
+                                    let w = geo.size.width
+                                    Rectangle()
+                                        .fill(
+                                            LinearGradient(
+                                                colors: [.clear, Color.white.opacity(0.18), .clear],
+                                                startPoint: .top,
+                                                endPoint: .bottom
+                                            )
+                                        )
+                                        .frame(width: max(24, w * 0.18))
+                                        .offset(x: shimmerPhase * w)
+                                        .blendMode(.plusLighter)
+                                        .allowsHitTesting(false)
+                                }
+                                .mask(ProgressView(value: vm.progress, total: 1.0).tint(.white))
+                            }
+
+                        HStack {
+                            Text("\(Int(vm.progressTextValue * 100))%")
+                                .font(.caption.monospacedDigit().weight(.semibold))
+                                .foregroundStyle(.secondary)
+                            ProgressView()
+                                .controlSize(.mini)
+                                .tint(.secondary)
+                            Spacer()
+                            // Generic UI pacing copy: this is shown while the progress pump
+                            // deliberately gives each pipeline stage enough time to be readable.
+                            Text("Giving the pixels a moment.")
                                 .font(.caption)
                                 .foregroundStyle(.secondary)
-                                .lineLimit(2)
-                        }
-
-                        Spacer()
-
-                        if vm.batchTotal > 1 {
-                            batchBadge
-                                .transition(.opacity.combined(with: .scale(scale: 0.98)))
                         }
                     }
-
-                    ProgressView(value: vm.progress, total: 1.0)
-                        .tint(.accentColor)
-                        .overlay {
-                            GeometryReader { geo in
-                                let w = geo.size.width
-                                Rectangle()
-                                    .fill(
-                                        LinearGradient(
-                                            colors: [.clear, Color.white.opacity(0.18), .clear],
-                                            startPoint: .top,
-                                            endPoint: .bottom
-                                        )
-                                    )
-                                    .frame(width: max(24, w * 0.18))
-                                    .offset(x: shimmerPhase * w)
-                                    .blendMode(.plusLighter)
-                                    .allowsHitTesting(false)
-                            }
-                            .mask(ProgressView(value: vm.progress, total: 1.0).tint(.white))
-                        }
-
-                    HStack {
-                        Text("\(Int(vm.progressTextValue * 100))%")
-                            .font(.caption.monospacedDigit().weight(.semibold))
-                            .foregroundStyle(.secondary)
-                        ProgressView()
-                            .controlSize(.mini)
-                            .tint(.secondary)
-                        Spacer()
-                        Text("Keep the app open.")
-                            .font(.caption)
-                            .foregroundStyle(.secondary)
+                    .padding(18)
+                    .frame(maxWidth: 420)
+                    .background {
+                        RoundedRectangle(cornerRadius: 20, style: .continuous)
+                            .fill(Color(uiColor: .secondarySystemGroupedBackground))
                     }
+                    .overlay {
+                        RoundedRectangle(cornerRadius: 20, style: .continuous)
+                            .strokeBorder(Color.primary.opacity(0.10), lineWidth: 1)
+                    }
+                    .shadow(color: Color.black.opacity(0.20), radius: 30, x: 0, y: 18)
                 }
-                .padding(18)
-                .frame(maxWidth: 420)
-                .background {
-                    RoundedRectangle(cornerRadius: 20, style: .continuous)
-                        .fill(Color(uiColor: .secondarySystemGroupedBackground))
-                }
-                .overlay {
-                    RoundedRectangle(cornerRadius: 20, style: .continuous)
-                        .strokeBorder(Color.primary.opacity(0.10), lineWidth: 1)
-                }
-                .shadow(color: Color.black.opacity(0.20), radius: 30, x: 0, y: 18)
                 .padding(.horizontal, 22)
                 .transition(.opacity.combined(with: .scale(scale: 0.98)))
             }
@@ -135,6 +146,7 @@ struct FullScreenWatermarkProgressOverlay: View {
             if newValue {
                 guard !isShimmerRunning else { return }
                 isShimmerRunning = true
+                ghostIsFloating = false
 
                 // Reset shimmer position without animation; then start a single repeating animation.
                 var t = Transaction()
@@ -145,13 +157,28 @@ struct FullScreenWatermarkProgressOverlay: View {
                 withAnimation(.linear(duration: 1.25).repeatForever(autoreverses: false)) {
                     shimmerPhase = 1.0
                 }
+                withAnimation(.easeInOut(duration: 1.4).repeatForever(autoreverses: true)) {
+                    ghostIsFloating = true
+                }
             } else {
                 isShimmerRunning = false
+                ghostIsFloating = false
                 var t = Transaction()
                 t.animation = nil
                 withTransaction(t) {
                     shimmerPhase = -1
                 }
+            }
+        }
+        .onChange(of: vm.presentationSequence) { _, _ in
+            Task { @MainActor in
+                // Let SwiftUI commit the visible overlay before releasing CPU-heavy producers.
+                try? await Task.sleep(nanoseconds: 45_000_000)
+                guard vm.isVisible else { return }
+                NotificationCenter.default.post(
+                    name: AppConstants.Notifications.watermarkProgressOverlayDidPresent,
+                    object: nil
+                )
             }
         }
     }
@@ -197,4 +224,3 @@ struct FullScreenWatermarkProgressOverlay: View {
         FullScreenWatermarkProgressOverlay()
     }
 }
-

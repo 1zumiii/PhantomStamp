@@ -306,8 +306,14 @@ enum LoupeDisplayBuilder {
             width: cellSize,
             height: cellSize
         )
-        cg.setStrokeColor(UIColor.systemYellow.withAlphaComponent(0.95).cgColor)
-        cg.setLineWidth(1.25)
+        cg.setStrokeColor(UIColor.black.withAlphaComponent(0.62).cgColor)
+        cg.setLineWidth(3.25)
+        cg.stroke(highlight.insetBy(dx: 1, dy: 1))
+
+        cg.setStrokeColor(
+            UIColor(red: 0.90, green: 0.60, blue: 0.02, alpha: 1.0).cgColor
+        )
+        cg.setLineWidth(1.75)
         cg.stroke(highlight)
     }
 }

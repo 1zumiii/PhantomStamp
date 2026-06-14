@@ -120,6 +120,19 @@ enum HistoryRecordService {
         return true
     }
 
+    /// Deletes all history rows with one persistence save and one UI refresh notification.
+    static func deleteAllRecords(context: ModelContext) throws {
+        let records = try context.fetch(FetchDescriptor<WatermarkHistoryRecord>())
+        for record in records {
+            context.delete(record)
+        }
+        PersistenceService.save(context)
+        NotificationCenter.default.post(
+            name: AppConstants.Notifications.watermarkHistoryRecordsDidChange,
+            object: nil
+        )
+    }
+
     // MARK: - Convenience builders
 
     /// Records a finished embed attempt. Pass the **same** `UIImage` you used for the thumbnail source
@@ -193,6 +206,7 @@ enum HistoryRecordService {
         syncMatchCount: Int? = nil,
         extractDeskewAngleDegrees: Double? = nil,
         extractDeskewScale: Double? = nil,
+        extractTopologyHypothesisRawValue: String? = nil,
         extractGridOffsetXPx: Int? = nil,
         extractGridOffsetYPx: Int? = nil,
         extractMajoritySyncBits: Int? = nil,
@@ -223,6 +237,7 @@ enum HistoryRecordService {
                 syncMatchCount: syncMatchCount,
                 extractDeskewAngleDegrees: extractDeskewAngleDegrees,
                 extractDeskewScale: extractDeskewScale,
+                extractTopologyHypothesisRawValue: extractTopologyHypothesisRawValue,
                 extractGridOffsetXPx: extractGridOffsetXPx,
                 extractGridOffsetYPx: extractGridOffsetYPx,
                 extractMajoritySyncBits: extractMajoritySyncBits,
@@ -245,6 +260,7 @@ enum HistoryRecordService {
             syncMatchCount: syncMatchCount,
             extractDeskewAngleDegrees: extractDeskewAngleDegrees,
             extractDeskewScale: extractDeskewScale,
+            extractTopologyHypothesisRawValue: extractTopologyHypothesisRawValue,
             extractGridOffsetXPx: extractGridOffsetXPx,
             extractGridOffsetYPx: extractGridOffsetYPx,
             extractMajoritySyncBits: extractMajoritySyncBits,

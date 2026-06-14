@@ -13,6 +13,35 @@ import UIKit
 @MainActor
 @Observable
 final class RobustnessTestingViewModel {
+    enum ProgressPreviewMode: String, CaseIterable, Identifiable {
+        case embedding = "Embed"
+        case extraction = "Extract"
+
+        var id: Self { self }
+
+        var stages: [AppConstants.WatermarkStep] {
+            switch self {
+            case .embedding:
+                return [
+                    .preparation,
+                    .colorConversion,
+                    .processingStrips,
+                    .reassembling,
+                    .rgbRebuild,
+                ]
+            case .extraction:
+                return [
+                    .extractPreparation,
+                    .extractConvertToYCbCr,
+                    .extractDetectTransforms,
+                    .extractOffsetScan,
+                    .extractBitGrid,
+                    .extractDecodeFEC,
+                ]
+            }
+        }
+    }
+
     enum ManipSaveFeedback: Equatable {
         case idle
         case success
@@ -31,6 +60,8 @@ final class RobustnessTestingViewModel {
     var alertMessage = ""
     var showAlert = false
     var multiFileCount = 5
+    var selectedProgressPreviewMode: ProgressPreviewMode = .embedding
+    var progressPreviewRunning = false
 
     var manipPickerItem: PhotosPickerItem?
     var manipSourceImage: UIImage?
@@ -151,6 +182,46 @@ final class RobustnessTestingViewModel {
             manipResizeRunning = false
             presentManipFailure(title: "Save failed", subtitle: error.localizedDescription)
         }
+    }
+
+    func runProgressOverlayPreview() async {
+        guard !isLoading, !progressPreviewRunning else { return }
+
+        isLoading = true
+        progressPreviewRunning = true
+        let mode = selectedProgressPreviewMode
+        let stages = mode.stages
+
+        NotificationCenter.default.post(
+            name: AppConstants.Notifications.watermarkProgressOverlayDidStart,
+            object: nil
+        )
+
+        defer {
+            NotificationCenter.default.post(
+                name: AppConstants.Notifications.watermarkProgressOverlayDidEnd,
+                object: nil
+            )
+            progressPreviewRunning = false
+            isLoading = false
+        }
+
+        // Give SwiftUI one frame to present the real production overlay before playback.
+        try? await Task.sleep(for: .milliseconds(120))
+
+        for (index, step) in stages.enumerated() {
+            guard !Task.isCancelled else { return }
+
+            // Keep the final stage below 100% during its one-second showcase.
+            // The production overlay automatically begins completion as soon as 1.0 is queued.
+            let percentage = Double(index + 1) / Double(stages.count + 1)
+            postProgressPreview(step: step, percentage: percentage)
+            try? await Task.sleep(for: .seconds(1))
+        }
+
+        guard !Task.isCancelled, let finalStep = stages.last else { return }
+        postProgressPreview(step: finalStep, percentage: 1.0)
+        try? await Task.sleep(for: .milliseconds(350))
     }
 
     func runCompressionLimitSweep() async {
@@ -327,6 +398,18 @@ final class RobustnessTestingViewModel {
         alertTitle = title
         alertMessage = message
         showAlert = true
+    }
+
+    private func postProgressPreview(step: AppConstants.WatermarkStep, percentage: Double) {
+        let payload = ProgressPayload(
+            step: step,
+            percentage: min(max(percentage, 0), 1)
+        )
+        NotificationCenter.default.post(
+            name: AppConstants.Notifications.watermarkProgress,
+            object: nil,
+            userInfo: ["payload": payload]
+        )
     }
 
     private static let manipSaveMinRunningDuration: Duration = .milliseconds(500)

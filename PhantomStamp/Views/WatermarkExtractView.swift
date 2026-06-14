@@ -276,4 +276,3 @@ struct WatermarkExtractView: View {
         WatermarkExtractView(watermarkService: WatermarkService())
     }
 }
-

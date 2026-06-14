@@ -18,7 +18,7 @@ struct VarianceGainCurveSummary: Sendable {
 
   var maxGainBinCount: Int { gainBinCounts.max() ?? 0 }
 
-  static func build(
+  nonisolated static func build(
     variance: MacroblockVarianceCache,
     curve: VarianceGainCurve
   ) -> VarianceGainCurveSummary {

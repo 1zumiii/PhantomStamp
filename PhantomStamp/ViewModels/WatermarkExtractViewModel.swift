@@ -75,6 +75,7 @@ final class WatermarkExtractViewModel {
                 records[index].message = nil
                 records[index].confidence = nil
                 records[index].failureReason = "No image data is available for extraction."
+                records[index].diagnostics = nil
                 continue
             }
             indexImagePairs.append((index, image))
@@ -89,50 +90,66 @@ final class WatermarkExtractViewModel {
             do {
                 let extractedText: String
                 if let svc = watermarkService as? WatermarkService {
-                    extractedText = try await svc.extractWatermark(from: image, sourceImageName: records[index].imageName)
+                    let result = try await svc.extractWatermarkWithDiagnostics(
+                        from: image,
+                        sourceImageName: records[index].imageName
+                    )
+                    extractedText = result.text
+                    records[index].diagnostics = result.diagnostics
+                    records[index].durationMs = result.diagnostics.durationMs
                 } else {
                     extractedText = try await watermarkService.extractWatermark(from: image)
+                    records[index].durationMs = (CFAbsoluteTimeGetCurrent() - t0) * 1000
                 }
                 records[index].status = .extracted
                 records[index].message = extractedText
                 records[index].confidence = nil
                 records[index].failureReason = nil
-                records[index].durationMs = (CFAbsoluteTimeGetCurrent() - t0) * 1000
             } catch {
                 records[index].status = .failed
                 records[index].message = nil
                 records[index].confidence = nil
                 records[index].failureReason = error.localizedDescription
                 records[index].durationMs = (CFAbsoluteTimeGetCurrent() - t0) * 1000
+                records[index].diagnostics = nil
             }
             return
         }
 
         let images = indexImagePairs.map(\.image)
         let names = indexImagePairs.map { records[$0.index].imageName }
-        let results: [String?]
+        let detailedResults: [WatermarkExtractionResult?]?
+        let fallbackResults: [String?]?
         if let svc = watermarkService as? WatermarkService {
-            results = await svc.extractWatermarkBestEffort(from: images, sourceImageNames: names)
+            detailedResults = await svc.extractWatermarkBestEffortWithDiagnostics(
+                from: images,
+                sourceImageNames: names
+            )
+            fallbackResults = nil
         } else {
-            results = await watermarkService.extractWatermarkBestEffort(from: images)
+            detailedResults = nil
+            fallbackResults = await watermarkService.extractWatermarkBestEffort(from: images)
         }
 
-        for pairIndex in results.indices {
+        for pairIndex in images.indices {
             let recordIndex = indexImagePairs[pairIndex].index
-            if let extractedText = results[pairIndex] {
+            let detailed = detailedResults?[pairIndex]
+            let extractedText = detailed?.text ?? fallbackResults?[pairIndex]
+            if let extractedText {
                 records[recordIndex].status = .extracted
                 records[recordIndex].message = extractedText
                 records[recordIndex].confidence = nil
                 records[recordIndex].failureReason = nil
-                records[recordIndex].durationMs = nil
+                records[recordIndex].durationMs = detailed?.diagnostics.durationMs
+                records[recordIndex].diagnostics = detailed?.diagnostics
             } else {
                 records[recordIndex].status = .failed
                 records[recordIndex].message = nil
                 records[recordIndex].confidence = nil
                 records[recordIndex].failureReason = "Failed to extract watermark from this image."
                 records[recordIndex].durationMs = nil
+                records[recordIndex].diagnostics = nil
             }
         }
     }
 }
-

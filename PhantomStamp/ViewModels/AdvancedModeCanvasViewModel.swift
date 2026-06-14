@@ -132,24 +132,6 @@ final class AdvancedModeCanvasViewModel {
         }
     }
 
-    func gainCurveSummary(curve: VarianceGainCurve) -> VarianceGainCurveSummary? {
-        guard let varianceCache else { return nil }
-        return VarianceGainCurveSummary.build(variance: varianceCache, curve: curve)
-    }
-
-    func amplitudeHistogram(
-        curve: VarianceGainCurve,
-        embeddingIntensity: Float
-    ) -> AmplitudeHistogramSummary? {
-        guard let baseQCache, let varianceCache else { return nil }
-        return AmplitudeHistogramSummary.build(
-            baseQ: baseQCache,
-            variance: varianceCache,
-            varianceGainCurve: curve,
-            embeddingIntensity: embeddingIntensity
-        )
-    }
-
     /// True when the crosshair center overlaps the default bottom-trailing loupe slot.
     func shouldDodgeLoupe(canvasSize: CGSize) -> Bool {
         guard canvasSize.width > 0, canvasSize.height > 0,

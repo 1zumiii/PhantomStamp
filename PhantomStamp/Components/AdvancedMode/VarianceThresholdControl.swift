@@ -6,7 +6,6 @@
 //
 
 import SwiftUI
-import UIKit
 
 // MARK: - Track geometry (histogram line ↔ UISlider thumb)
 
@@ -23,90 +22,6 @@ enum SigmaTrackGeometry {
         let maxValue = max(0.001, domainMax)
         let t = CGFloat(min(maxValue, max(0, sigma)) / maxValue)
         return thumbInset + t * trackWidth(in: totalWidth)
-    }
-}
-
-// MARK: - UISlider
-
-/// UISlider wrapper — avoids SwiftUI `Slider` release glitches inside `ScrollView`.
-private struct SnappingSigmaSlider: UIViewRepresentable {
-    @Binding var liveSigma: Double
-    var isEnabled: Bool
-    var onEditingChanged: ((Bool) -> Void)?
-
-    private let step = 0.1
-    private let range: ClosedRange<Double> = 0...SigmaTrackGeometry.sigmaMax
-
-    func makeCoordinator() -> Coordinator {
-        Coordinator(parent: self)
-    }
-
-    func makeUIView(context: Context) -> UISlider {
-        let slider = UISlider(frame: .zero)
-        slider.minimumValue = Float(range.lowerBound)
-        slider.maximumValue = Float(range.upperBound)
-        slider.minimumTrackTintColor = UIColor.systemOrange
-        slider.maximumTrackTintColor = UIColor.tertiarySystemFill
-        slider.addTarget(
-            context.coordinator,
-            action: #selector(Coordinator.valueChanged(_:)),
-            for: .valueChanged
-        )
-        slider.addTarget(
-            context.coordinator,
-            action: #selector(Coordinator.touchDown(_:)),
-            for: .touchDown
-        )
-        slider.addTarget(
-            context.coordinator,
-            action: #selector(Coordinator.touchUp(_:)),
-            for: [.touchUpInside, .touchUpOutside, .touchCancel]
-        )
-        return slider
-    }
-
-    func updateUIView(_ slider: UISlider, context: Context) {
-        context.coordinator.parent = self
-        guard !context.coordinator.isDragging else {
-            slider.isEnabled = isEnabled
-            return
-        }
-        let snapped = snap(liveSigma)
-        if abs(Double(slider.value) - snapped) > 0.001 {
-            slider.setValue(Float(snapped), animated: false)
-        }
-        slider.isEnabled = isEnabled
-    }
-
-    private func snap(_ raw: Double) -> Double {
-        let clamped = min(range.upperBound, max(range.lowerBound, raw))
-        return (clamped / step).rounded() * step
-    }
-
-    final class Coordinator: NSObject {
-        var parent: SnappingSigmaSlider
-        var isDragging = false
-
-        init(parent: SnappingSigmaSlider) {
-            self.parent = parent
-        }
-
-        @objc func valueChanged(_ sender: UISlider) {
-            parent.liveSigma = parent.snap(Double(sender.value))
-        }
-
-        @objc func touchDown(_ sender: UISlider) {
-            isDragging = true
-            parent.onEditingChanged?(true)
-        }
-
-        @objc func touchUp(_ sender: UISlider) {
-            let snapped = parent.snap(Double(sender.value))
-            sender.setValue(Float(snapped), animated: false)
-            parent.liveSigma = snapped
-            isDragging = false
-            parent.onEditingChanged?(false)
-        }
     }
 }
 
@@ -269,8 +184,11 @@ struct VarianceThresholdControl: View {
                 VarianceHistogramSparkline(summary: histogram, sigma: liveSigma)
                     .frame(height: Self.histogramHeight)
 
-                SnappingSigmaSlider(
-                    liveSigma: $liveSigma,
+                SnappingTrackSlider(
+                    value: $liveSigma,
+                    range: 0...SigmaTrackGeometry.sigmaMax,
+                    step: 0.1,
+                    tint: .orange,
                     isEnabled: isEnabled,
                     onEditingChanged: { handleEditingChanged($0) }
                 )
@@ -278,8 +196,11 @@ struct VarianceThresholdControl: View {
 
                 VarianceThresholdStats(summary: histogram, sigma: liveSigma)
             } else {
-                SnappingSigmaSlider(
-                    liveSigma: $liveSigma,
+                SnappingTrackSlider(
+                    value: $liveSigma,
+                    range: 0...SigmaTrackGeometry.sigmaMax,
+                    step: 0.1,
+                    tint: .orange,
                     isEnabled: isEnabled,
                     onEditingChanged: { handleEditingChanged($0) }
                 )

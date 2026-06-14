@@ -43,9 +43,12 @@ struct VarianceGainCurveStats: View {
         blockStatColumn(title: "Total", value: summary?.totalBlocks ?? 0, alignment: .trailing)
       }
 
-      Text("Drag anchors · middle knot moves horizontally & vertically · heatmap updates in the loupe.")
+      Label(
+        "Drag the handles to tune the balance. The middle handle moves in both directions, and the preview updates as you adjust it.",
+        systemImage: "hand.draw"
+      )
         .font(.caption2)
-        .foregroundStyle(.tertiary)
+        .foregroundStyle(Color(red: 0.45, green: 0.24, blue: 0.78).opacity(0.82))
         .fixedSize(horizontal: false, vertical: true)
     }
     .padding(.horizontal, 2)

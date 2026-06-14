@@ -26,6 +26,7 @@ struct RobustnessTestingView: View {
     var body: some View {
         ScrollView {
             VStack(alignment: .leading, spacing: 20) {
+                progressOverlayCard
                 imageManipCard
                 attackLimitsCard
                 geometricCard
@@ -48,6 +49,58 @@ struct RobustnessTestingView: View {
         .sensoryFeedback(.success, trigger: vm.manipResizeFeedbackTrigger)
         .onChange(of: vm.manipPickerItem) { _, newItem in
             Task { await vm.loadManipSourceImage(from: newItem) }
+        }
+    }
+
+    // MARK: - Progress overlay
+
+    private var progressOverlayCard: some View {
+        card(title: "Progress overlay", systemImage: "hourglass.badge.plus") {
+            VStack(alignment: .leading, spacing: 12) {
+                Text("Plays the real production overlay one stage at a time. Each message remains on screen for one second.")
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+                    .fixedSize(horizontal: false, vertical: true)
+
+                Picker("Pipeline", selection: $vm.selectedProgressPreviewMode) {
+                    ForEach(RobustnessTestingViewModel.ProgressPreviewMode.allCases) { mode in
+                        Text(mode.rawValue).tag(mode)
+                    }
+                }
+                .pickerStyle(.segmented)
+                .disabled(vm.isLoading)
+
+                HStack {
+                    Label(
+                        "\(vm.selectedProgressPreviewMode.stages.count) stages",
+                        systemImage: "text.line.first.and.arrowtriangle.forward"
+                    )
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+
+                    Spacer()
+
+                    Button {
+                        Task { await vm.runProgressOverlayPreview() }
+                    } label: {
+                        HStack(spacing: 6) {
+                            if vm.progressPreviewRunning {
+                                ProgressView()
+                                    .controlSize(.small)
+                            } else {
+                                Image(systemName: "play.fill")
+                                    .font(.caption.weight(.semibold))
+                            }
+                            Text(vm.progressPreviewRunning ? "Running" : "Run")
+                                .font(.callout.weight(.semibold))
+                        }
+                        .frame(minWidth: 76)
+                    }
+                    .buttonStyle(.borderedProminent)
+                    .controlSize(.small)
+                    .disabled(vm.isLoading)
+                }
+            }
         }
     }
 
