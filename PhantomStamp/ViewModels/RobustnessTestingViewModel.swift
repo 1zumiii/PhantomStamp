@@ -50,6 +50,7 @@ final class RobustnessTestingViewModel {
     enum ManipTool {
         case jpeg
         case resize
+        case scribble
     }
 
     let settingsStore: UserSettingsStore
@@ -71,12 +72,17 @@ final class RobustnessTestingViewModel {
 
     var manipJpegQuality = 0.60
     var manipResizeScaleFactor = 1.0
+    var manipScribbleStrokeCount = 2
+    var manipScribbleWidthPercent = 0.60
     var manipJpegRunning = false
     var manipResizeRunning = false
+    var manipScribbleRunning = false
     var manipJpegFeedback: ManipSaveFeedback = .idle
     var manipResizeFeedback: ManipSaveFeedback = .idle
+    var manipScribbleFeedback: ManipSaveFeedback = .idle
     var manipJpegFeedbackTrigger = 0
     var manipResizeFeedbackTrigger = 0
+    var manipScribbleFeedbackTrigger = 0
     var selectedCropKind: WatermarkCropAttackTests.CropKind = .right
 
     var currentSyncTemplateIntensity: Double { settingsStore.syncTemplateIntensity }
@@ -180,6 +186,51 @@ final class RobustnessTestingViewModel {
             await finishManipSaveRun(.resize, started: runStarted)
         } catch {
             manipResizeRunning = false
+            presentManipFailure(title: "Save failed", subtitle: error.localizedDescription)
+        }
+    }
+
+    func runManipRandomScribble() async {
+        guard let source = manipSourceImage, let sourcePx = manipSourcePx else {
+            presentManipFailure(title: "No source image", subtitle: "Pick a photo in Image tools before adding scribbles.")
+            return
+        }
+
+        manipScribbleRunning = true
+        isLoading = true
+        let runStarted = ContinuousClock.now
+        defer { isLoading = false }
+
+        guard let result = RandomScribbleUtils.applyingRandomScribbles(
+            to: source,
+            strokeCount: manipScribbleStrokeCount,
+            widthPercent: manipScribbleWidthPercent
+        ) else {
+            manipScribbleRunning = false
+            presentManipFailure(title: "Scribble failed", subtitle: "Could not render the damaged image.")
+            return
+        }
+
+        let outPx = pixelSize(of: result)
+        guard outPx.w == sourcePx.w, outPx.h == sourcePx.h else {
+            manipScribbleRunning = false
+            presentManipFailure(
+                title: "Size changed unexpectedly",
+                subtitle: "Expected \(sourcePx.w) × \(sourcePx.h) px, got \(outPx.w) × \(outPx.h) px."
+            )
+            return
+        }
+
+        do {
+            try await saveManipResultToPhotos(result)
+            print(
+                "[TestPage] ManipScribble strokes=\(manipScribbleStrokeCount) "
+                    + "width=\(String(format: "%.2f%%", manipScribbleWidthPercent)) "
+                    + "out=\(outPx.w)x\(outPx.h)"
+            )
+            await finishManipSaveRun(.scribble, started: runStarted)
+        } catch {
+            manipScribbleRunning = false
             presentManipFailure(title: "Save failed", subtitle: error.localizedDescription)
         }
     }
@@ -423,6 +474,7 @@ final class RobustnessTestingViewModel {
         switch tool {
         case .jpeg: manipJpegRunning = false
         case .resize: manipResizeRunning = false
+        case .scribble: manipScribbleRunning = false
         }
         flashManipSaveSuccess(tool)
     }
@@ -435,6 +487,9 @@ final class RobustnessTestingViewModel {
         case .resize:
             manipResizeFeedback = .success
             manipResizeFeedbackTrigger += 1
+        case .scribble:
+            manipScribbleFeedback = .success
+            manipScribbleFeedbackTrigger += 1
         }
 
         Task {
@@ -444,6 +499,8 @@ final class RobustnessTestingViewModel {
                 manipJpegFeedback = .idle
             case .resize where manipResizeFeedback == .success:
                 manipResizeFeedback = .idle
+            case .scribble where manipScribbleFeedback == .success:
+                manipScribbleFeedback = .idle
             default:
                 break
             }

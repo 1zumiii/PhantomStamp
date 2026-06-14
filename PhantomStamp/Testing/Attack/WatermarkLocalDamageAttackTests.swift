@@ -26,6 +26,13 @@ enum WatermarkLocalDamageAttackTests {
         var extractedText: String?
     }
 
+    struct DownscaledDamageReport: Sendable {
+        var imageLoaded: Bool
+        var embedSucceeded: Bool
+        var rejectedFalsePositive: Bool
+        var extractedText: String?
+    }
+
     @MainActor
     static func runDiagonalScribbleOnBundledTestImg() async -> Report {
         guard let image = ImagePipelineTests.loadBundledTestUIImage() else {
@@ -176,6 +183,74 @@ enum WatermarkLocalDamageAttackTests {
         #endif
     }
 
+    @MainActor
+    static func runDownscaledScribbleOnBundledTestImg(
+        scale: CGFloat = 0.518
+    ) async -> DownscaledDamageReport {
+        guard let image = ImagePipelineTests.loadBundledTestUIImage() else {
+            return DownscaledDamageReport(
+                imageLoaded: false,
+                embedSucceeded: false,
+                rejectedFalsePositive: false,
+                extractedText: nil
+            )
+        }
+
+        let suite = UserDefaults(
+            suiteName: "phantomstamp.testing.downscaled-local-damage.\(UUID().uuidString)"
+        )!
+        let settings = UserSettingsStore(defaults: suite)
+        settings.textureVarianceThreshold = -1
+        let service = WatermarkService()
+        service.settingsStore = settings
+        let expectedText = "Successful"
+
+        guard let watermarked = try? await service.embedWatermarkSilently(
+            into: image,
+            text: expectedText
+        ) else {
+            return DownscaledDamageReport(
+                imageLoaded: true,
+                embedSucceeded: false,
+                rejectedFalsePositive: false,
+                extractedText: nil
+            )
+        }
+
+        let resized = resize(image: watermarked, scale: scale)
+        let damaged = drawHighContrastScribble(on: resized)
+        let extracted = try? await service.extractWatermarkSilently(from: damaged)
+        return DownscaledDamageReport(
+            imageLoaded: true,
+            embedSucceeded: true,
+            rejectedFalsePositive: extracted == nil || extracted == expectedText,
+            extractedText: extracted
+        )
+    }
+
+    @MainActor
+    static func runDownscaledScribbleAndPrint(scale: CGFloat = 0.518) async {
+        #if DEBUG
+        let report = await runDownscaledScribbleOnBundledTestImg(scale: scale)
+        let passed = report.imageLoaded
+            && report.embedSucceeded
+            && report.rejectedFalsePositive
+        let disposition: String
+        if report.extractedText == "Successful" {
+            disposition = "correct extraction"
+        } else if report.extractedText == nil {
+            disposition = "safe rejection"
+        } else {
+            disposition = "FALSE POSITIVE"
+        }
+        print(
+            "[WatermarkLocalDamageAttackTests] \(passed ? "PASS" : "FAIL") "
+                + "downscaled scribble scale=\(String(format: "%.3f", scale)): "
+                + "\(disposition), text=\(report.extractedText ?? "nil")"
+        )
+        #endif
+    }
+
     private static func drawHighContrastScribble(on image: UIImage) -> UIImage {
         let pixelSize = CGSize(
             width: image.size.width * image.scale,
@@ -227,6 +302,23 @@ enum WatermarkLocalDamageAttackTests {
                     height: pixelSize.height
                 )
             )
+        }
+    }
+
+    private static func resize(image: UIImage, scale: CGFloat) -> UIImage {
+        let sourceSize = CGSize(
+            width: image.size.width * image.scale,
+            height: image.size.height * image.scale
+        )
+        let targetSize = CGSize(
+            width: max(1, (sourceSize.width * scale).rounded()),
+            height: max(1, (sourceSize.height * scale).rounded())
+        )
+        let format = UIGraphicsImageRendererFormat()
+        format.scale = 1
+        format.opaque = true
+        return UIGraphicsImageRenderer(size: targetSize, format: format).image { _ in
+            image.draw(in: CGRect(origin: .zero, size: targetSize))
         }
     }
 }

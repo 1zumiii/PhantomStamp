@@ -513,19 +513,6 @@ class WatermarkService: WatermarkServiceProtocol {
                 let transformCandidates = await self.detectGeometricTransformCandidates(in: yChannel)
                 await reportProgress(step: .extractDetectTransforms, percentage: 0.40)
 
-                func payloadCanDecode(_ payload: [Int]) async -> Bool {
-                    for messageLength in 1...16 {
-                        let rawBits = 8 + messageLength * 8
-                        let paddedRawBits = ((rawBits + 3) / 4) * 4
-                        let eccCount = (paddedRawBits / 4) * 8
-                        guard payload.count >= eccCount else { continue }
-                        if await decodeFEC(bits: Array(payload.prefix(eccCount))) != nil {
-                            return true
-                        }
-                    }
-                    return false
-                }
-
                 func validationScore(_ work: ExtractMatrixWorkResult) -> Int {
                     let majority = work.majorityBestSyncBits ?? 0
                     return majority * 100 + work.offsetScanBestSyncBits
@@ -617,7 +604,7 @@ class WatermarkService: WatermarkServiceProtocol {
                         majorityMacroTileWidth: maj?.macroTileWidth,
                         topologyHypothesis: maj?.topologyHypothesis ?? gridScan.topologyHypothesis
                     )
-                    let fecPassed = await payloadCanDecode(payload)
+                    let fecPassed = maj?.fecValidated == true
 
                     #if DEBUG
                     let rows = rawExtractedScores.count

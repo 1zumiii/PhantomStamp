@@ -170,6 +170,10 @@ struct MajorityVotingDiagnostics: Sendable {
     var macroTileWidth: Int
     var votedMacroblockBitCount: Int
     var topologyHypothesis: ScoreGridTopologyHypothesis
+    /// True only when FEC decoded a fold backed by at least three locally certified repetitions.
+    var fecValidated: Bool
+    var certifiedRepetitionCount: Int
+    var totalRepetitionCount: Int
 }
 
 extension WatermarkService {
@@ -421,6 +425,13 @@ extension WatermarkService {
             let bx: Int
             let by: Int
         }
+
+        struct FoldResult {
+            let bits: [Int]
+            let certifiedRepetitionCount: Int
+            let totalRepetitionCount: Int
+            let usedUngatedFallback: Bool
+        }
         // Collected in ALL build configurations (the old list was #if DEBUG-only, which silently
         // disabled the decode fallback in Release builds).
         var topCandidates: [Candidate] = []
@@ -447,7 +458,12 @@ extension WatermarkService {
         // 0.75 is the default operating point; 0.90 is a strict gate used as the first attempt
         // when the residual geometric drift is large and only a handful of repetitions remain
         // truly aligned (marginal 75%-ers would drag the fold's BER over the FEC budget).
-        func computeVotedMacroblock(w: Int, bx: Int, by: Int, minSyncAgreement: Float = 0.75) -> [Int] {
+        func computeVotedMacroblock(
+            w: Int,
+            bx: Int,
+            by: Int,
+            minSyncAgreement: Float = 0.75
+        ) -> FoldResult {
             let originX = bx % w
             let originY = by % w
 
@@ -516,7 +532,12 @@ extension WatermarkService {
                 // All repetitions abstained (e.g. fully inside the dead frame) → guess 0.
                 votedMacroblock[i] = (validVotes > 0 && sum >= 0) ? 1 : 0
             }
-            return votedMacroblock
+            return FoldResult(
+                bits: votedMacroblock,
+                certifiedRepetitionCount: gatedReps.count,
+                totalRepetitionCount: allReps.count,
+                usedUngatedFallback: gatedReps.count < 3
+            )
         }
 
         // 1) Relocate sync header in-memory.
@@ -563,7 +584,10 @@ extension WatermarkService {
                 bestSyncBitsMatched: max(0, bestMatchCount),
                 macroTileWidth: bestW,
                 votedMacroblockBitCount: 0,
-                topologyHypothesis: hypothesis
+                topologyHypothesis: hypothesis,
+                fecValidated: false,
+                certifiedRepetitionCount: 0,
+                totalRepetitionCount: 0
             )
             return SoftMajorityVotingAttempt(
                 bits: [],
@@ -581,8 +605,18 @@ extension WatermarkService {
         // standard 0.75 fold (more redundancy when alignment is globally good).
         for c in topCandidates {
             for gate: Float in [0.90, 0.75] {
-                let votedMacroblock = computeVotedMacroblock(w: c.w, bx: c.bx, by: c.by, minSyncAgreement: gate)
-                let payloadBits = Array(votedMacroblock.dropFirst(syncCount))
+                let fold = computeVotedMacroblock(
+                    w: c.w,
+                    bx: c.bx,
+                    by: c.by,
+                    minSyncAgreement: gate
+                )
+
+                // Folding every repetition is useful as a best-effort diagnostic, but it is not
+                // evidence. With fewer than three independently certified repetitions, millions
+                // of sync/topology/length trials can make random noise pass a short Hamming decode.
+                guard !fold.usedUngatedFallback else { continue }
+                let payloadBits = Array(fold.bits.dropFirst(syncCount))
 
                 for messageLenGuess in 1...16 {
                     let eccCount = expectedEccBitCount(messageLengthBytes: messageLenGuess)
@@ -594,11 +628,14 @@ extension WatermarkService {
                         let diag = MajorityVotingDiagnostics(
                             bestSyncBitsMatched: c.matchCount,
                             macroTileWidth: c.w,
-                            votedMacroblockBitCount: votedMacroblock.count,
-                            topologyHypothesis: hypothesis
+                            votedMacroblockBitCount: fold.bits.count,
+                            topologyHypothesis: hypothesis,
+                            fecValidated: true,
+                            certifiedRepetitionCount: fold.certifiedRepetitionCount,
+                            totalRepetitionCount: fold.totalRepetitionCount
                         )
                         return SoftMajorityVotingAttempt(
-                            bits: votedMacroblock,
+                            bits: fold.bits,
                             diagnostics: diag,
                             fecDecoded: true
                         )
@@ -616,15 +653,18 @@ extension WatermarkService {
             print("  - sync=\(c.matchCount)/32 w=\(c.w) bx=\(c.bx) by=\(c.by)")
         }
         #endif
-        let voted = computeVotedMacroblock(w: bestW, bx: bestBx, by: bestBy)
+        let fold = computeVotedMacroblock(w: bestW, bx: bestBx, by: bestBy)
         let diag = MajorityVotingDiagnostics(
             bestSyncBitsMatched: bestMatchCount,
             macroTileWidth: bestW,
-            votedMacroblockBitCount: voted.count,
-            topologyHypothesis: hypothesis
+            votedMacroblockBitCount: fold.bits.count,
+            topologyHypothesis: hypothesis,
+            fecValidated: false,
+            certifiedRepetitionCount: fold.certifiedRepetitionCount,
+            totalRepetitionCount: fold.totalRepetitionCount
         )
         return SoftMajorityVotingAttempt(
-            bits: voted,
+            bits: fold.bits,
             diagnostics: diag,
             fecDecoded: false
         )

@@ -51,6 +51,9 @@ struct PhantomStampApp: App {
                     if ProcessInfo.processInfo.arguments.contains("--run-geometric-candidate-test") {
                         await WatermarkLocalDamageAttackTests.runRotationAndPrint()
                     }
+                    if ProcessInfo.processInfo.arguments.contains("--run-downscaled-damage-test") {
+                        await WatermarkLocalDamageAttackTests.runDownscaledScribbleAndPrint()
+                    }
                     #endif
                 }
         }

@@ -47,6 +47,7 @@ struct RobustnessTestingView: View {
         }
         .sensoryFeedback(.success, trigger: vm.manipJpegFeedbackTrigger)
         .sensoryFeedback(.success, trigger: vm.manipResizeFeedbackTrigger)
+        .sensoryFeedback(.success, trigger: vm.manipScribbleFeedbackTrigger)
         .onChange(of: vm.manipPickerItem) { _, newItem in
             Task { await vm.loadManipSourceImage(from: newItem) }
         }
@@ -281,6 +282,10 @@ struct RobustnessTestingView: View {
 
                 Divider().opacity(0.75)
 
+                manipScribbleSection
+
+                Divider().opacity(0.75)
+
                 manipJpegCompressSection
 
                 Divider().opacity(0.75)
@@ -387,6 +392,63 @@ struct RobustnessTestingView: View {
                     feedback: vm.manipJpegFeedback
                 ) {
                     Task { await vm.runManipJpegCompress() }
+                }
+                .disabled(vm.isLoading || vm.manipSourceImage == nil)
+            }
+        }
+    }
+
+    private var manipScribbleSection: some View {
+        VStack(alignment: .leading, spacing: 10) {
+            Text("Random local scribble")
+                .font(.callout.weight(.semibold))
+
+            Text("Adds a few short high-contrast curves and saves at exactly the original pixel dimensions. Each run generates a new pattern.")
+                .font(.caption)
+                .foregroundStyle(.secondary)
+                .fixedSize(horizontal: false, vertical: true)
+
+            HStack {
+                Text("Strokes")
+                    .font(.footnote.weight(.semibold))
+                    .foregroundStyle(.secondary)
+                Spacer()
+                stepperCapsule(
+                    value: $vm.manipScribbleStrokeCount,
+                    range: 1...8,
+                    decrementDisabled: vm.isLoading || vm.manipScribbleStrokeCount <= 1,
+                    incrementDisabled: vm.isLoading || vm.manipScribbleStrokeCount >= 8
+                )
+            }
+
+            HStack {
+                Text("Width")
+                    .font(.footnote.weight(.semibold))
+                    .foregroundStyle(.secondary)
+                Spacer()
+                Text(String(format: "%.2f%% of short edge", vm.manipScribbleWidthPercent))
+                    .font(.caption.monospacedDigit())
+                    .foregroundStyle(.secondary)
+            }
+
+            Slider(value: $vm.manipScribbleWidthPercent, in: 0.15...2.0, step: 0.05)
+                .disabled(vm.isLoading || vm.manipSourceImage == nil)
+
+            if let src = vm.manipSourcePx {
+                Text("Output: \(src.w) × \(src.h) px  (unchanged)")
+                    .font(.caption.monospacedDigit())
+                    .foregroundStyle(.secondary)
+            }
+
+            HStack {
+                Spacer()
+                ManipSaveButton(
+                    title: "Scribble & Save",
+                    prominent: true,
+                    isRunning: vm.manipScribbleRunning,
+                    feedback: vm.manipScribbleFeedback
+                ) {
+                    Task { await vm.runManipRandomScribble() }
                 }
                 .disabled(vm.isLoading || vm.manipSourceImage == nil)
             }
