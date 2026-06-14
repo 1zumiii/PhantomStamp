@@ -91,6 +91,8 @@ struct FullScreenWatermarkProgressOverlay: View {
                                 .controlSize(.mini)
                                 .tint(.secondary)
                             Spacer()
+                            // Generic UI pacing copy: this is shown while the progress pump
+                            // deliberately gives each pipeline stage enough time to be readable.
                             Text("Giving the pixels a moment.")
                                 .font(.caption)
                                 .foregroundStyle(.secondary)

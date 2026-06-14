@@ -17,7 +17,9 @@ struct HistoryView: View {
     var body: some View {
         NavigationStack {
             VStack(spacing: 0) {
-                filterBar
+                if !viewModel.records.isEmpty {
+                    filterBar
+                }
                 historyContent
                     .frame(maxWidth: .infinity, maxHeight: .infinity)
             }
@@ -137,14 +139,7 @@ struct HistoryView: View {
     private var historyContent: some View {
         Group {
             if viewModel.filteredRecords.isEmpty {
-                ZStack {
-                    Color(uiColor: .systemGroupedBackground)
-                    ContentUnavailableView(
-                        AppConstants.Copy.History.emptyTitle,
-                        systemImage: AppConstants.Symbol.tabHistory,
-                        description: Text(AppConstants.Copy.History.emptyDescription)
-                    )
-                }
+                historyEmptyState
                 .frame(maxWidth: .infinity, maxHeight: .infinity)
             } else {
                 List {
@@ -177,6 +172,73 @@ struct HistoryView: View {
                 .listStyle(.plain)
                 .scrollContentBackground(.hidden)
                 .background(Color(uiColor: .systemGroupedBackground))
+            }
+        }
+    }
+
+    private var historyEmptyState: some View {
+        ZStack {
+            Color(uiColor: .systemGroupedBackground)
+
+            if viewModel.records.isEmpty {
+                VStack(spacing: 18) {
+                    ZStack {
+                        Circle()
+                            .fill(Color.accentColor.opacity(0.10))
+                            .frame(width: 86, height: 86)
+
+                        Image(systemName: "clock.arrow.circlepath")
+                            .font(.system(size: 38, weight: .medium))
+                            .foregroundStyle(Color.accentColor.opacity(0.78))
+                    }
+
+                    VStack(spacing: 7) {
+                        Text("Your history starts here")
+                            .font(.title3.weight(.semibold))
+                            .foregroundStyle(.primary)
+
+                        Text("Watermark embeds and extraction attempts will appear here after they finish.")
+                            .font(.subheadline)
+                            .foregroundStyle(.secondary)
+                            .multilineTextAlignment(.center)
+                            .fixedSize(horizontal: false, vertical: true)
+                    }
+
+                    Label(
+                        settingsStore.autoLogWatermarkEmbedToHistory
+                            ? "History logging is on"
+                            : "Turn on history logging in Settings",
+                        systemImage: settingsStore.autoLogWatermarkEmbedToHistory
+                            ? "checkmark.circle.fill"
+                            : "exclamationmark.circle.fill"
+                    )
+                    .font(.caption.weight(.semibold))
+                    .foregroundStyle(
+                        settingsStore.autoLogWatermarkEmbedToHistory
+                            ? Color.green
+                            : Color.orange
+                    )
+                    .padding(.horizontal, 12)
+                    .padding(.vertical, 7)
+                    .background {
+                        Capsule(style: .continuous)
+                            .fill(
+                                (settingsStore.autoLogWatermarkEmbedToHistory
+                                    ? Color.green
+                                    : Color.orange)
+                                    .opacity(0.10)
+                            )
+                    }
+                }
+                .frame(maxWidth: 330)
+                .padding(.horizontal, 28)
+                .offset(y: -28)
+            } else {
+                ContentUnavailableView(
+                    "No \(viewModel.selectedFilter.rawValue.lowercased()) records",
+                    systemImage: "line.3.horizontal.decrease.circle",
+                    description: Text("Choose another filter to see the rest of your history.")
+                )
             }
         }
     }
