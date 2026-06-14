@@ -17,6 +17,8 @@ struct GridOffsetScanResult: Sendable {
     var offset: CGPoint?
     /// Best sync-header match (out of 32 bits) observed across all offsets and windows.
     var bestSyncBitsMatched: Int
+    /// Topology hypothesis that produced the best sync match during offset search.
+    var topologyHypothesis: ScoreGridTopologyHypothesis = .normal
 }
 
 extension WatermarkService {
@@ -49,8 +51,9 @@ extension WatermarkService {
         // bit grids can produce early false positives. Instead, we keep the best match globally.
         var bestMatchCount = -1
         var bestOffset: CGPoint?
+        var bestTopology: ScoreGridTopologyHypothesis = .normal
         #if DEBUG
-        var bestDetails: (offsetX: Int, offsetY: Int, bx: Int, by: Int, w: Int) = (0, 0, 0, 0, 0)
+        var bestDetails: (offsetX: Int, offsetY: Int, bx: Int, by: Int, w: Int, topology: ScoreGridTopologyHypothesis) = (0, 0, 0, 0, 0, .normal)
         #endif
 
         for offsetY in 0..<DCTMatrix8x8.side {
@@ -66,57 +69,72 @@ extension WatermarkService {
                 let maxCols = min(searchBlockLimit, (matrix.width - offsetX) / DCTMatrix8x8.side)
                 if maxRows < 4 || maxCols < 8 { continue }
 
-                // Pre-extract all bits under this (offsetX, offsetY) once, then run sliding windows purely in memory.
+                // Pre-extract all signed scores under this (offsetX, offsetY) once, then run
+                // topology hypotheses and sliding windows purely in memory.
                 // This is the single biggest speedup: without it we'd redo DCT for every (bx,by,w) candidate.
-                var bitGrid = [[Int]](repeating: [Int](repeating: 0, count: maxCols), count: maxRows)
+                var scoreGrid = [[Float]](repeating: [Float](repeating: .nan, count: maxCols), count: maxRows)
                 for r in 0..<maxRows {
                     for c in 0..<maxCols {
                         let block = extractSpatialBlock(from: matrix, x: offsetX + c * DCTMatrix8x8.side, y: offsetY + r * DCTMatrix8x8.side)
                         // Poison-skip (same rule as `extractBitsWithOffset`): a block touched by the
                         // deskew OOB sentinel is (near-)constant, so ALL its AC coefficients are ~0 and
                         // `extractBitFromFrequencies` would return a deterministic, fabricated `1`.
-                        // Mark it -1 instead — it can never equal a sync-marker bit, so windows
+                        // Mark it NaN instead — it becomes a hard-bit abstention, so windows
                         // overlapping the dead frame lose score instead of gaining fake matches.
                         if isBlockPolluted(block) {
-                            bitGrid[r][c] = -1
+                            scoreGrid[r][c] = .nan
                             continue
                         }
                         let freqBlock = performDCT(block)
-                        bitGrid[r][c] = extractBitFromFrequencies(freqBlock)
+                        scoreGrid[r][c] = extractBitConfidence(freqBlock)
                     }
                 }
 
-                for by in 0..<maxRows {
-                    for bx in 0..<maxCols {
-                        for w in 8...18 {
-                            // Reading 32 bits row-major with stride W needs enough columns/rows.
-                            let maxRowNeeded = by + (32 / w) + 1
-                            let maxColNeeded = bx + min(32, w)
-                            if maxRowNeeded > maxRows || maxColNeeded > maxCols { continue }
+                for hypothesis in ScoreGridTopologyHypothesis.allCases {
+                    let transformedScores = transformedSoftScoreGrid(scoreGrid, hypothesis: hypothesis)
+                    let topologyRows = transformedScores.count
+                    let topologyCols = transformedScores.first?.count ?? 0
+                    if topologyRows < 4 || topologyCols < 8 { continue }
 
-                            var matchCount = 0
-                            for i in 0..<32 {
-                                let r = by + (i / w)
-                                let c = bx + (i % w)
-                                if bitGrid[r][c] == syncMarker[i] { matchCount += 1 }
-                            }
+                    var bitGrid = [[Int]](repeating: [], count: topologyRows)
+                    for r in 0..<topologyRows {
+                        bitGrid[r] = transformedScores[r].map { $0.isNaN ? -1 : ($0 >= 0 ? 1 : 0) }
+                    }
 
-                            if matchCount > bestMatchCount {
-                                bestMatchCount = matchCount
-                                bestOffset = CGPoint(x: offsetX, y: offsetY)
-                                #if DEBUG
-                                bestDetails = (offsetX, offsetY, bx, by, w)
-                                #endif
-                            }
+                    for by in 0..<topologyRows {
+                        for bx in 0..<topologyCols {
+                            for w in 8...18 {
+                                // Reading 32 bits row-major with stride W needs enough columns/rows.
+                                let maxRowNeeded = by + (32 / w) + 1
+                                let maxColNeeded = bx + min(32, w)
+                                if maxRowNeeded > topologyRows || maxColNeeded > topologyCols { continue }
 
-                            if matchCount == 32 {
-                                #if DEBUG
-                                print("[WatermarkService] DEBUG gridOffset best=32/32 offset=(\(offsetX),\(offsetY)) bx=\(bx) by=\(by) w=\(w)")
-                                #endif
-                                return GridOffsetScanResult(
-                                    offset: CGPoint(x: offsetX, y: offsetY),
-                                    bestSyncBitsMatched: 32
-                                )
+                                var matchCount = 0
+                                for i in 0..<32 {
+                                    let r = by + (i / w)
+                                    let c = bx + (i % w)
+                                    if bitGrid[r][c] == syncMarker[i] { matchCount += 1 }
+                                }
+
+                                if matchCount > bestMatchCount {
+                                    bestMatchCount = matchCount
+                                    bestOffset = CGPoint(x: offsetX, y: offsetY)
+                                    bestTopology = hypothesis
+                                    #if DEBUG
+                                    bestDetails = (offsetX, offsetY, bx, by, w, hypothesis)
+                                    #endif
+                                }
+
+                                if matchCount == 32 {
+                                    #if DEBUG
+                                    print("[WatermarkService] DEBUG gridOffset best=32/32 offset=(\(offsetX),\(offsetY)) bx=\(bx) by=\(by) w=\(w) topology=\(hypothesis.rawValue)")
+                                    #endif
+                                    return GridOffsetScanResult(
+                                        offset: CGPoint(x: offsetX, y: offsetY),
+                                        bestSyncBitsMatched: 32,
+                                        topologyHypothesis: hypothesis
+                                    )
+                                }
                             }
                         }
                     }
@@ -126,9 +144,13 @@ extension WatermarkService {
 
         if bestMatchCount >= (32 - tolerance), let bestOffset {
             #if DEBUG
-            print("[WatermarkService] DEBUG gridOffset best=\(bestMatchCount)/32 offset=(\(bestDetails.offsetX),\(bestDetails.offsetY)) bx=\(bestDetails.bx) by=\(bestDetails.by) w=\(bestDetails.w)")
+            print("[WatermarkService] DEBUG gridOffset best=\(bestMatchCount)/32 offset=(\(bestDetails.offsetX),\(bestDetails.offsetY)) bx=\(bestDetails.bx) by=\(bestDetails.by) w=\(bestDetails.w) topology=\(bestDetails.topology.rawValue)")
             #endif
-            return GridOffsetScanResult(offset: bestOffset, bestSyncBitsMatched: bestMatchCount)
+            return GridOffsetScanResult(
+                offset: bestOffset,
+                bestSyncBitsMatched: bestMatchCount,
+                topologyHypothesis: bestTopology
+            )
         }
 
         #if DEBUG
@@ -138,7 +160,11 @@ extension WatermarkService {
             print("[WatermarkService] DEBUG gridOffset no-hit best=<none>")
         }
         #endif
-        return GridOffsetScanResult(offset: nil, bestSyncBitsMatched: max(0, bestMatchCount))
+        return GridOffsetScanResult(
+            offset: nil,
+            bestSyncBitsMatched: max(0, bestMatchCount),
+            topologyHypothesis: bestTopology
+        )
     }
 
     /// Extract the 8×8 spatial-domain block from the global Y channel matrix based on absolute coordinates.
@@ -193,4 +219,3 @@ extension WatermarkService {
         return block
     }
 }
-

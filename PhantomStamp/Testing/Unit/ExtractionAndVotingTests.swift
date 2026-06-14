@@ -113,6 +113,31 @@ enum ExtractionAndVotingTests {
             guard check(service.applyMajorityVoting(to: grid).isEmpty) else { return (false, checks) }
         }
 
+        // Part D: 8-way topology ambiguity is resolved by the FEC-backed soft-voting path.
+        do {
+            let text = "rotate"
+            let sync = getSyncMarkerBits()
+            let fec = encodeFEC(text: text)
+            let macro = build2DTile(from: sync + fec)
+            let rows = macro.bitsHigh * 4
+            let cols = macro.bitsWide * 4
+            var canonicalScores = [[Float]](repeating: [Float](repeating: 0, count: cols), count: rows)
+
+            for r in 0..<rows {
+                for c in 0..<cols {
+                    let bit = macro.bits[(r % macro.bitsHigh) * macro.bitsWide + (c % macro.bitsWide)]
+                    canonicalScores[r][c] = bit == 1 ? 12.0 : -12.0
+                }
+            }
+
+            for hypothesis in ScoreGridTopologyHypothesis.allCases {
+                let observed = service.transformedSoftScoreGrid(canonicalScores, hypothesis: hypothesis)
+                let voted = service.applySoftMajorityVotingWithDiagnostics(to: observed).bits
+                let decoded = decodeVotedPayload(voted)
+                guard check(decoded == text) else { return (false, checks) }
+            }
+        }
+
         return (true, checks)
     }
 
@@ -142,5 +167,20 @@ enum ExtractionAndVotingTests {
             }
         }
     }
-}
 
+    private static func decodeVotedPayload(_ voted: [Int]) -> String? {
+        let syncCount = getSyncMarkerBits().count
+        guard voted.count >= syncCount else { return nil }
+        let payloadBits = Array(voted.dropFirst(syncCount))
+        for lenGuess in 1...16 {
+            let rawBits = 8 + lenGuess * 8
+            let paddedRaw = ((rawBits + 3) / 4) * 4
+            let eccCount = (paddedRaw / 4) * 8
+            guard payloadBits.count >= eccCount else { continue }
+            if let decoded = decodeFEC(bits: Array(payloadBits.prefix(eccCount))) {
+                return decoded
+            }
+        }
+        return nil
+    }
+}

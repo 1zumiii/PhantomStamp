@@ -16,6 +16,30 @@
 import CoreGraphics
 import Foundation
 
+/// In-memory topology hypotheses for the recovered macro-cell score grid.
+///
+/// The DCT payload bit is encoded as `abs(C(1,2)) - abs(C(2,1))`. A 90-degree axis swap
+/// exchanges those two coefficients, so all 90/270-degree hypotheses must invert score polarity.
+enum ScoreGridTopologyHypothesis: String, CaseIterable, Sendable {
+    case normal
+    case normalFlipped
+    case rotated90
+    case rotated90Flipped
+    case rotated180
+    case rotated180Flipped
+    case rotated270
+    case rotated270Flipped
+
+    var invertsPolarity: Bool {
+        switch self {
+        case .rotated90, .rotated90Flipped, .rotated270, .rotated270Flipped:
+            return true
+        case .normal, .normalFlipped, .rotated180, .rotated180Flipped:
+            return false
+        }
+    }
+}
+
 /// Diagnostics from the macro-tile sync relocation + majority-voting fold.
 struct MajorityVotingDiagnostics: Sendable {
     /// Best 32-bit sync match score on the extracted bit grid (same scale as offset scan: out of 32).
@@ -25,6 +49,94 @@ struct MajorityVotingDiagnostics: Sendable {
 }
 
 extension WatermarkService {
+    /// Applies one of the eight D4 topology hypotheses to a score grid.
+    ///
+    /// The `Flipped` variants are horizontal mirrors after the corresponding rotation. Combined
+    /// with 0/90/180/270-degree rotations, that single mirror axis spans both horizontal and
+    /// vertical reflections.
+    func transformedSoftScoreGrid(
+        _ scores: [[Float]],
+        hypothesis: ScoreGridTopologyHypothesis
+    ) -> [[Float]] {
+        guard !scores.isEmpty, let firstRow = scores.first, !firstRow.isEmpty else { return [] }
+        let rows = scores.count
+        let cols = firstRow.count
+        let sign: Float = hypothesis.invertsPolarity ? -1.0 : 1.0
+
+        func value(_ r: Int, _ c: Int) -> Float {
+            let v = scores[r][c]
+            return v.isNaN ? .nan : (v * sign)
+        }
+
+        switch hypothesis {
+        case .normal:
+            return scores
+
+        case .normalFlipped:
+            var out = [[Float]](repeating: [Float](repeating: .nan, count: cols), count: rows)
+            for r in 0..<rows {
+                for c in 0..<cols {
+                    out[r][c] = value(r, cols - 1 - c)
+                }
+            }
+            return out
+
+        case .rotated90:
+            var out = [[Float]](repeating: [Float](repeating: .nan, count: rows), count: cols)
+            for r in 0..<cols {
+                for c in 0..<rows {
+                    out[r][c] = value(rows - 1 - c, r)
+                }
+            }
+            return out
+
+        case .rotated90Flipped:
+            var out = [[Float]](repeating: [Float](repeating: .nan, count: rows), count: cols)
+            for r in 0..<cols {
+                for c in 0..<rows {
+                    out[r][c] = value(c, r)
+                }
+            }
+            return out
+
+        case .rotated180:
+            var out = [[Float]](repeating: [Float](repeating: .nan, count: cols), count: rows)
+            for r in 0..<rows {
+                for c in 0..<cols {
+                    out[r][c] = value(rows - 1 - r, cols - 1 - c)
+                }
+            }
+            return out
+
+        case .rotated180Flipped:
+            var out = [[Float]](repeating: [Float](repeating: .nan, count: cols), count: rows)
+            for r in 0..<rows {
+                for c in 0..<cols {
+                    out[r][c] = value(rows - 1 - r, c)
+                }
+            }
+            return out
+
+        case .rotated270:
+            var out = [[Float]](repeating: [Float](repeating: .nan, count: rows), count: cols)
+            for r in 0..<cols {
+                for c in 0..<rows {
+                    out[r][c] = value(c, cols - 1 - r)
+                }
+            }
+            return out
+
+        case .rotated270Flipped:
+            var out = [[Float]](repeating: [Float](repeating: .nan, count: rows), count: cols)
+            for r in 0..<cols {
+                for c in 0..<rows {
+                    out[r][c] = value(rows - 1 - c, cols - 1 - r)
+                }
+            }
+            return out
+        }
+    }
+
     /// Convenience overload for 8-bit planes (tests / non-deskewed paths): promotes to Float once,
     /// then runs the precision-preserving extraction below.
     func extractBitsWithOffset(_ matrix: Matrix, offset: CGPoint) -> [[Int]] {
@@ -115,7 +227,51 @@ extension WatermarkService {
     /// sync window whose garbage byte happened to land in 1...16. Real `decodeFEC` (SECDED:
     /// detects double-bit errors per codeword) is the only meaningful validator.
     func applySoftMajorityVotingWithDiagnostics(to scores: [[Float]]) -> (bits: [Int], diagnostics: MajorityVotingDiagnostics?) {
-        guard !scores.isEmpty, !scores[0].isEmpty else { return ([], nil) }
+        var bestFallback: SoftMajorityVotingAttempt?
+        var bestDecoded: SoftMajorityVotingAttempt?
+
+        for hypothesis in ScoreGridTopologyHypothesis.allCases {
+            let transformedScores = transformedSoftScoreGrid(scores, hypothesis: hypothesis)
+            let attempt = applySoftMajorityVotingSingleTopologyWithDiagnostics(
+                to: transformedScores,
+                hypothesis: hypothesis
+            )
+
+            if attempt.fecDecoded {
+                if bestDecoded == nil ||
+                    (attempt.diagnostics?.bestSyncBitsMatched ?? -1) > (bestDecoded?.diagnostics?.bestSyncBitsMatched ?? -1) {
+                    bestDecoded = attempt
+                }
+            } else if bestFallback == nil ||
+                        (attempt.diagnostics?.bestSyncBitsMatched ?? -1) > (bestFallback?.diagnostics?.bestSyncBitsMatched ?? -1) {
+                bestFallback = attempt
+            }
+        }
+
+        let selected = bestDecoded ?? bestFallback
+        return (selected?.bits ?? [], selected?.diagnostics)
+    }
+
+    private struct SoftMajorityVotingAttempt {
+        var bits: [Int]
+        var diagnostics: MajorityVotingDiagnostics?
+        var fecDecoded: Bool
+    }
+
+    /// Runs the existing sync relocation + soft fold + FEC validation for one already-normalized
+    /// topology. The public wrapper above tries all eight orthogonal hypotheses and lets FEC pick
+    /// the physically correct one.
+    private func applySoftMajorityVotingSingleTopologyWithDiagnostics(
+        to scores: [[Float]],
+        hypothesis: ScoreGridTopologyHypothesis
+    ) -> SoftMajorityVotingAttempt {
+        guard !scores.isEmpty, !scores[0].isEmpty else {
+            return SoftMajorityVotingAttempt(
+                bits: [],
+                diagnostics: nil,
+                fecDecoded: false
+            )
+        }
         let maxRows = scores.count
         let maxCols = scores[0].count
         let syncMarker = getSyncMarkerBits()
@@ -277,7 +433,11 @@ extension WatermarkService {
                 macroTileWidth: bestW,
                 votedMacroblockBitCount: 0
             )
-            return ([], diag)
+            return SoftMajorityVotingAttempt(
+                bits: [],
+                diagnostics: diag,
+                fecDecoded: false
+            )
         }
 
         // 2) Validate candidates by ACTUAL FEC decode, best sync match first.
@@ -297,14 +457,18 @@ extension WatermarkService {
                     guard (syncCount + eccCount) <= (c.w * c.w), payloadBits.count >= eccCount else { continue }
                     if decodeFEC(bits: Array(payloadBits.prefix(eccCount))) != nil {
                         #if DEBUG
-                        print("[WatermarkService] DEBUG voting: decode SUCCESS sync=\(c.matchCount)/32 w=\(c.w) bx=\(c.bx) by=\(c.by) gate=\(gate) guessLen=\(messageLenGuess)")
+                        print("[WatermarkService] DEBUG voting: decode SUCCESS topology=\(hypothesis.rawValue) sync=\(c.matchCount)/32 w=\(c.w) bx=\(c.bx) by=\(c.by) gate=\(gate) guessLen=\(messageLenGuess)")
                         #endif
                         let diag = MajorityVotingDiagnostics(
                             bestSyncBitsMatched: c.matchCount,
                             macroTileWidth: c.w,
                             votedMacroblockBitCount: votedMacroblock.count
                         )
-                        return (votedMacroblock, diag)
+                        return SoftMajorityVotingAttempt(
+                            bits: votedMacroblock,
+                            diagnostics: diag,
+                            fecDecoded: true
+                        )
                     }
                 }
             }
@@ -313,7 +477,7 @@ extension WatermarkService {
         // 3) Nothing decoded — return the best-sync macroblock so the caller can still try its
         // own decode strategies (e.g. length-guessed truncation).
         #if DEBUG
-        print("[WatermarkService] DEBUG voting: no candidate FEC-decoded; returning best-sync macroblock sync=\(bestMatchCount)/32 w=\(bestW) bx=\(bestBx) by=\(bestBy)")
+        print("[WatermarkService] DEBUG voting: no candidate FEC-decoded; returning best-sync macroblock topology=\(hypothesis.rawValue) sync=\(bestMatchCount)/32 w=\(bestW) bx=\(bestBx) by=\(bestBy)")
         print("[WatermarkService] DEBUG voting: top candidates (sync/w/bx/by):")
         for c in topCandidates.prefix(6) {
             print("  - sync=\(c.matchCount)/32 w=\(c.w) bx=\(c.bx) by=\(c.by)")
@@ -325,7 +489,11 @@ extension WatermarkService {
             macroTileWidth: bestW,
             votedMacroblockBitCount: voted.count
         )
-        return (voted, diag)
+        return SoftMajorityVotingAttempt(
+            bits: voted,
+            diagnostics: diag,
+            fecDecoded: false
+        )
     }
 
     func applyMajorityVoting(to bits: [[Int]]) -> [Int] {
