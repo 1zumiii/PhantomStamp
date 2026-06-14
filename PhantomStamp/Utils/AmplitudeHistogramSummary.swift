@@ -20,7 +20,7 @@ struct AmplitudeHistogramSummary: Sendable {
     var maxBinCount: Int { binCounts.max() ?? 0 }
     var fullStrengthBlockCount: Int { max(0, totalBlocks - attenuatedBlockCount) }
 
-    static func build(
+    nonisolated static func build(
         baseQ: MacroblockBaseQuantizationCache,
         variance: MacroblockVarianceCache,
         varianceGainCurve: VarianceGainCurve,

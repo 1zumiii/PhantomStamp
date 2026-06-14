@@ -54,6 +54,8 @@ struct WatermarkInsertView: View {
     @State private var advancedIntensity: Double = 10.0
     @State private var loupePreviewIntensity: Double = 10.0
     @State private var intensityLoupeDebouncer = AdvancedPreviewDebouncer()
+    @State private var gainCurveSummary: VarianceGainCurveSummary?
+    @State private var amplitudeHistogram: AmplitudeHistogramSummary?
     @State private var selectedAdvancedSubTab: AdvancedSubTab = .smoothBlock
 
     @State private var advancedCanvasVM = AdvancedModeCanvasViewModel()
@@ -62,6 +64,17 @@ struct WatermarkInsertView: View {
         case smoothBlock
         case varianceGain
         case intensity
+    }
+
+    private struct GainSummaryRequest: Hashable {
+        let photoID: UUID
+        let curveKey: VarianceGainCurve.PackedKey
+    }
+
+    private struct AmplitudeSummaryRequest: Hashable {
+        let photoID: UUID
+        let curveKey: VarianceGainCurve.PackedKey
+        let intensityBits: UInt64
     }
 
     init(watermarkService: any WatermarkServiceProtocol, settingsStore: UserSettingsStore) {
@@ -119,13 +132,19 @@ struct WatermarkInsertView: View {
                 vm.keepOnlyFirstPhoto()
             } else {
                 advancedCanvasVM.clear()
+                gainCurveSummary = nil
+                amplitudeHistogram = nil
             }
         }
         .onChange(of: vm.selectedPhotoItems.first?.id) { _, _ in
             guard isAdvancedMode, vm.selectedPhotoItems.first != nil else {
                 advancedCanvasVM.clear()
+                gainCurveSummary = nil
+                amplitudeHistogram = nil
                 return
             }
+            gainCurveSummary = nil
+            amplitudeHistogram = nil
         }
         .onChange(of: photoPickerItems) { _, items in
             guard !items.isEmpty else { return }
@@ -232,7 +251,7 @@ struct WatermarkInsertView: View {
 
         return VStack(alignment: .leading, spacing: 12) {
             // Mode toggle lives at the very top of the card.
-            Picker("Embedding mode", selection: $isAdvancedMode.animation(.easeInOut(duration: 0.2))) {
+            Picker("Embedding mode", selection: $isAdvancedMode) {
                 Text("Adaptive").tag(false)
                 Text("Advanced").tag(true)
             }
@@ -440,9 +459,12 @@ struct WatermarkInsertView: View {
 
                     VarianceGainCurveEditor(
                         curve: $advancedGainCurve,
-                        varianceSummary: advancedCanvasVM.gainCurveSummary(curve: advancedCurveWithSigmaCap),
+                        varianceSummary: gainCurveSummary,
                         isEnabled: !vm.isEmbedding && !vm.showSuccessOverlay
                     )
+                    .task(id: gainSummaryRequest) {
+                        await refreshGainCurveSummary()
+                    }
                 }
             case .intensity:
                 VStack(alignment: .leading, spacing: 10) {
@@ -455,10 +477,7 @@ struct WatermarkInsertView: View {
 
                     EmbeddingIntensityControl(
                         intensity: $advancedIntensity,
-                        histogram: advancedCanvasVM.amplitudeHistogram(
-                            curve: advancedCurveWithSigmaCap,
-                            embeddingIntensity: Float(advancedIntensity)
-                        ),
+                        histogram: amplitudeHistogram,
                         isEnabled: !vm.isEmbedding && !vm.showSuccessOverlay,
                         onLiveIntensityChange: { liveIntensity in
                             guard !vm.isEmbedding, !vm.showSuccessOverlay else { return }
@@ -475,6 +494,9 @@ struct WatermarkInsertView: View {
                             }
                         }
                     )
+                    .task(id: amplitudeSummaryRequest) {
+                        await refreshAmplitudeHistogram()
+                    }
                 }
             }
         }
@@ -506,6 +528,67 @@ struct WatermarkInsertView: View {
         }
         .frame(maxWidth: .infinity, alignment: .leading)
         .padding(.vertical, 1)
+    }
+
+    private var gainSummaryRequest: GainSummaryRequest? {
+        guard let photoID = vm.selectedPhotoItems.first?.id,
+              advancedCanvasVM.varianceCache != nil else { return nil }
+        return GainSummaryRequest(
+            photoID: photoID,
+            curveKey: advancedCurveWithSigmaCap.packedKey
+        )
+    }
+
+    private var amplitudeSummaryRequest: AmplitudeSummaryRequest? {
+        guard let photoID = vm.selectedPhotoItems.first?.id,
+              advancedCanvasVM.varianceCache != nil,
+              advancedCanvasVM.baseQCache != nil else { return nil }
+        return AmplitudeSummaryRequest(
+            photoID: photoID,
+            curveKey: advancedCurveWithSigmaCap.packedKey,
+            intensityBits: advancedIntensity.bitPattern
+        )
+    }
+
+    private func refreshGainCurveSummary() async {
+        guard gainSummaryRequest != nil,
+              let varianceCache = advancedCanvasVM.varianceCache else {
+            gainCurveSummary = nil
+            return
+        }
+        let curve = advancedCurveWithSigmaCap
+
+        // Coalesce rapid handle updates before scheduling CPU work.
+        try? await Task.sleep(for: .milliseconds(90))
+        guard !Task.isCancelled else { return }
+
+        let summary = await Task.detached(priority: .utility) {
+            VarianceGainCurveSummary.build(variance: varianceCache, curve: curve)
+        }.value
+        guard !Task.isCancelled else { return }
+        gainCurveSummary = summary
+    }
+
+    private func refreshAmplitudeHistogram() async {
+        guard amplitudeSummaryRequest != nil,
+              let varianceCache = advancedCanvasVM.varianceCache,
+              let baseQCache = advancedCanvasVM.baseQCache else {
+            amplitudeHistogram = nil
+            return
+        }
+        let curve = advancedCurveWithSigmaCap
+        let intensity = Float(advancedIntensity)
+
+        let histogram = await Task.detached(priority: .utility) {
+            AmplitudeHistogramSummary.build(
+                baseQ: baseQCache,
+                variance: varianceCache,
+                varianceGainCurve: curve,
+                embeddingIntensity: intensity
+            )
+        }.value
+        guard !Task.isCancelled else { return }
+        amplitudeHistogram = histogram
     }
 
     /// Blurred overlay after a successful embed; offers “Insert more” to reset upload state.

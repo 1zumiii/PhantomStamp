@@ -58,7 +58,7 @@ extension AppConstants {
         case extractMajorityVoting = "Letting the clues compare notes"
         case extractDecodeFEC = "Opening the message"
 
-        case extractDetectTransforms = "Checking which way the picture is facing"
+        case extractDetectTransforms = "Seeking the brightest star"
         case extractDeskew = "Straightening the picture frame"
 
         var isExtraction: Bool {
