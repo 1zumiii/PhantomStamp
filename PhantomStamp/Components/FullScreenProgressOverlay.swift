@@ -33,10 +33,10 @@ struct FullScreenWatermarkProgressOverlay: View {
 
                 ZStack(alignment: .topTrailing) {
                     PhantomGhost()
-                        .frame(width: 68, height: 76)
-                        .offset(x: -28, y: ghostIsFloating ? -49 : -45)
-                        .rotationEffect(.degrees(ghostIsFloating ? 1.0 : -1.0))
-                        .shadow(color: Color.black.opacity(0.10), radius: 5, y: 2)
+                        .frame(width: 74, height: 94)
+                        .offset(x: 16, y: ghostIsFloating ? -64 : -61)
+                        .shadow(color: Color.white.opacity(0.72), radius: 1.5)
+                        .shadow(color: Color.black.opacity(0.22), radius: 7, x: 0, y: 3)
 
                     VStack(spacing: 14) {
                         HStack(spacing: 12) {
@@ -157,7 +157,7 @@ struct FullScreenWatermarkProgressOverlay: View {
                 withAnimation(.linear(duration: 1.25).repeatForever(autoreverses: false)) {
                     shimmerPhase = 1.0
                 }
-                withAnimation(.easeInOut(duration: 1.15).repeatForever(autoreverses: true)) {
+                withAnimation(.easeInOut(duration: 1.4).repeatForever(autoreverses: true)) {
                     ghostIsFloating = true
                 }
             } else {

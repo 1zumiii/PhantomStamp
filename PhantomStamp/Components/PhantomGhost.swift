@@ -9,22 +9,22 @@ private struct PhantomGhostBody: Shape {
     func path(in rect: CGRect) -> Path {
         let w = rect.width
         let h = rect.height
-        let bodyBottom = h * 0.82
+        let bodyBottom = h * 0.88
 
         return Path { path in
             path.move(to: CGPoint(x: w * 0.12, y: bodyBottom))
-            path.addLine(to: CGPoint(x: w * 0.12, y: h * 0.38))
+            path.addLine(to: CGPoint(x: w * 0.12, y: h * 0.36))
             path.addCurve(
-                to: CGPoint(x: w * 0.88, y: h * 0.38),
-                control1: CGPoint(x: w * 0.12, y: h * 0.06),
-                control2: CGPoint(x: w * 0.88, y: h * 0.06)
+                to: CGPoint(x: w * 0.88, y: h * 0.36),
+                control1: CGPoint(x: w * 0.12, y: h * 0.08),
+                control2: CGPoint(x: w * 0.88, y: h * 0.08)
             )
             path.addLine(to: CGPoint(x: w * 0.88, y: bodyBottom))
-            path.addLine(to: CGPoint(x: w * 0.76, y: h * 0.70))
-            path.addLine(to: CGPoint(x: w * 0.64, y: bodyBottom))
-            path.addLine(to: CGPoint(x: w * 0.52, y: h * 0.70))
-            path.addLine(to: CGPoint(x: w * 0.40, y: bodyBottom))
-            path.addLine(to: CGPoint(x: w * 0.28, y: h * 0.70))
+            path.addLine(to: CGPoint(x: w * 0.76, y: h * 0.76))
+            path.addLine(to: CGPoint(x: w * 0.63, y: bodyBottom))
+            path.addLine(to: CGPoint(x: w * 0.50, y: h * 0.76))
+            path.addLine(to: CGPoint(x: w * 0.37, y: bodyBottom))
+            path.addLine(to: CGPoint(x: w * 0.24, y: h * 0.76))
             path.closeSubpath()
         }
     }
@@ -54,8 +54,8 @@ struct PhantomGhost: View {
                 PhantomGhostBody()
                     .fill(bodyColor)
 
-                eye(at: CGPoint(x: size.width * 0.38, y: size.height * 0.39), in: size)
-                eye(at: CGPoint(x: size.width * 0.62, y: size.height * 0.39), in: size)
+                eye(at: CGPoint(x: size.width * 0.39, y: size.height * 0.38), in: size)
+                eye(at: CGPoint(x: size.width * 0.61, y: size.height * 0.38), in: size)
 
                 PhantomSmile()
                     .trim(from: 0.04, to: 0.96)
@@ -63,18 +63,18 @@ struct PhantomGhost: View {
                         Color(red: 0.48, green: 0.53, blue: 0.96),
                         style: StrokeStyle(lineWidth: max(1.5, size.width * 0.035), lineCap: .round)
                     )
-                    .frame(width: size.width * 0.22, height: size.height * 0.10)
-                    .position(x: size.width * 0.50, y: size.height * 0.55)
+                    .frame(width: size.width * 0.20, height: size.height * 0.08)
+                    .position(x: size.width * 0.50, y: size.height * 0.53)
 
             }
         }
-        .aspectRatio(0.88, contentMode: .fit)
+        .aspectRatio(0.78, contentMode: .fit)
         .accessibilityHidden(true)
     }
 
     private func eye(at point: CGPoint, in size: CGSize) -> some View {
-        let eyeWidth = size.width * 0.15
-        let eyeHeight = size.height * 0.18
+        let eyeWidth = size.width * 0.13
+        let eyeHeight = size.height * 0.15
 
         return Ellipse()
             .fill(inkColor)
@@ -82,8 +82,8 @@ struct PhantomGhost: View {
             .overlay(alignment: .topLeading) {
                 Circle()
                     .fill(Color.white.opacity(0.66))
-                    .frame(width: eyeWidth * 0.34)
-                    .padding(eyeWidth * 0.16)
+                    .frame(width: eyeWidth * 0.32)
+                    .padding(eyeWidth * 0.15)
             }
             .position(point)
     }

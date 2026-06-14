@@ -46,9 +46,14 @@ struct SnappingTrackSlider: View {
                         Circle()
                             .strokeBorder(Color.white.opacity(0.9), lineWidth: 2)
                     }
-                    .shadow(color: tint.opacity(isDragging ? 0.34 : 0.18), radius: isDragging ? 5 : 3, y: 1)
-                    .scaleEffect(isDragging ? 1.04 : 1)
+                    .shadow(color: tint.opacity(0.22), radius: 3, y: 1)
                     .position(x: thumbX, y: geometry.size.height / 2)
+            }
+            // Slider values can update every display frame. Never inherit an animation
+            // transaction from a parent view while the drag is in flight.
+            .transaction { transaction in
+                transaction.animation = nil
+                transaction.disablesAnimations = true
             }
             .contentShape(Rectangle())
             .gesture(
@@ -56,15 +61,23 @@ struct SnappingTrackSlider: View {
                     .onChanged { drag in
                         guard isEnabled else { return }
                         if !isDragging {
-                            isDragging = true
+                            updateWithoutAnimation {
+                                isDragging = true
+                            }
                             onEditingChanged?(true)
                         }
-                        value = snappedValue(at: drag.location.x, width: width)
+                        let nextValue = snappedValue(at: drag.location.x, width: width)
+                        updateWithoutAnimation {
+                            value = nextValue
+                        }
                     }
                     .onEnded { drag in
                         guard isEnabled else { return }
-                        value = snappedValue(at: drag.location.x, width: width)
-                        isDragging = false
+                        let finalValue = snappedValue(at: drag.location.x, width: width)
+                        updateWithoutAnimation {
+                            value = finalValue
+                            isDragging = false
+                        }
                         onEditingChanged?(false)
                     }
             )
@@ -78,9 +91,13 @@ struct SnappingTrackSlider: View {
             onEditingChanged?(true)
             switch direction {
             case .increment:
-                value = snap(value + step)
+                updateWithoutAnimation {
+                    value = snap(value + step)
+                }
             case .decrement:
-                value = snap(value - step)
+                updateWithoutAnimation {
+                    value = snap(value - step)
+                }
             @unknown default:
                 break
             }
@@ -105,5 +122,11 @@ struct SnappingTrackSlider: View {
         let clamped = min(range.upperBound, max(range.lowerBound, rawValue))
         let steps = ((clamped - range.lowerBound) / step).rounded()
         return min(range.upperBound, max(range.lowerBound, range.lowerBound + steps * step))
+    }
+
+    private func updateWithoutAnimation(_ updates: () -> Void) {
+        var transaction = Transaction(animation: nil)
+        transaction.disablesAnimations = true
+        withTransaction(transaction, updates)
     }
 }
