@@ -49,6 +49,15 @@ final class AdvancedModeCanvasViewModel {
     private var activePhotoID: UUID?
     private var lastBuiltLayoutSize: CGSize?
     private var shouldApplyDefaultReticle = false
+    @ObservationIgnored
+    private var amplitudeHistogramCacheKey: AmplitudeHistogramCacheKey?
+    @ObservationIgnored
+    private var cachedAmplitudeHistogram: AmplitudeHistogramSummary?
+
+    private struct AmplitudeHistogramCacheKey: Equatable {
+        let curve: VarianceGainCurve.PackedKey
+        let embeddingIntensityBits: UInt32
+    }
 
     var isCacheReady: Bool { varianceCache != nil && previewImage != nil }
 
@@ -142,12 +151,23 @@ final class AdvancedModeCanvasViewModel {
         embeddingIntensity: Float
     ) -> AmplitudeHistogramSummary? {
         guard let baseQCache, let varianceCache else { return nil }
-        return AmplitudeHistogramSummary.build(
+        let key = AmplitudeHistogramCacheKey(
+            curve: curve.packedKey,
+            embeddingIntensityBits: embeddingIntensity.bitPattern
+        )
+        if amplitudeHistogramCacheKey == key {
+            return cachedAmplitudeHistogram
+        }
+
+        let histogram = AmplitudeHistogramSummary.build(
             baseQ: baseQCache,
             variance: varianceCache,
             varianceGainCurve: curve,
             embeddingIntensity: embeddingIntensity
         )
+        amplitudeHistogramCacheKey = key
+        cachedAmplitudeHistogram = histogram
+        return histogram
     }
 
     /// True when the crosshair center overlaps the default bottom-trailing loupe slot.
@@ -180,6 +200,7 @@ final class AdvancedModeCanvasViewModel {
         varianceCache = nil
         baseQCache = nil
         varianceHistogram = nil
+        invalidateAmplitudeHistogramCache()
         isBuildingVarianceCache = false
         lastBuiltLayoutSize = nil
         shouldApplyDefaultReticle = true
@@ -299,6 +320,7 @@ final class AdvancedModeCanvasViewModel {
                 self.varianceCache = cache
                 self.baseQCache = baseQ
                 self.varianceHistogram = cache.map { VarianceHistogramSummary.build(from: $0) }
+                self.invalidateAmplitudeHistogramCache()
                 self.lastPreviewPixelSize = CGSize(
                     width: preview.size.width * preview.scale,
                     height: preview.size.height * preview.scale
@@ -346,6 +368,7 @@ final class AdvancedModeCanvasViewModel {
         varianceCache = nil
         baseQCache = nil
         varianceHistogram = nil
+        invalidateAmplitudeHistogramCache()
         activePhotoID = nil
         lastBuiltLayoutSize = nil
         isBuildingVarianceCache = false
@@ -354,5 +377,10 @@ final class AdvancedModeCanvasViewModel {
         reticleBlockY = 0
         lastDebugStatus = "cleared"
         AdvancedCanvasDebug.log("clear")
+    }
+
+    private func invalidateAmplitudeHistogramCache() {
+        amplitudeHistogramCacheKey = nil
+        cachedAmplitudeHistogram = nil
     }
 }

@@ -17,6 +17,8 @@ extension AppConstants {
         static let watermarkPerFileProgressDidDrain = Notification.Name("WatermarkPerFileProgressDidDrain")
         /// Broadcast to show a full-screen progress overlay (embed/extract session start).
         static let watermarkProgressOverlayDidStart = Notification.Name("WatermarkProgressOverlayDidStart")
+        /// UI ack posted after the overlay has had a frame to become visible.
+        static let watermarkProgressOverlayDidPresent = Notification.Name("WatermarkProgressOverlayDidPresent")
         /// Broadcast to hide the full-screen progress overlay (embed/extract session end).
         static let watermarkProgressOverlayDidEnd = Notification.Name("WatermarkProgressOverlayDidEnd")
 

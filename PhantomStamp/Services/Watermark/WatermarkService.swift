@@ -84,6 +84,22 @@ class WatermarkService: WatermarkServiceProtocol {
             return first
         }
     }
+
+    private func awaitProgressOverlayPresentation(timeoutNanoseconds: UInt64 = 500_000_000) async {
+        let name = AppConstants.Notifications.watermarkProgressOverlayDidPresent
+        await withTaskGroup(of: Void.self) { group in
+            group.addTask {
+                for await _ in NotificationCenter.default.notifications(named: name, object: nil) {
+                    return
+                }
+            }
+            group.addTask {
+                try? await Task.sleep(nanoseconds: timeoutNanoseconds)
+            }
+            await group.next()
+            group.cancelAll()
+        }
+    }
     
     // ==========================================
     // Embedding Watermark
@@ -448,8 +464,8 @@ class WatermarkService: WatermarkServiceProtocol {
     ) async throws -> WatermarkExtractionResult {
         if shouldHideProgressbar, reportsProgressNotifications {
             NotificationCenter.default.post(name: AppConstants.Notifications.watermarkProgressOverlayDidStart, object: nil)
+            await awaitProgressOverlayPresentation()
         }
-        if reportsProgressNotifications { await Task.yield() }
 
         let throttler = ProgressThrottler()
         

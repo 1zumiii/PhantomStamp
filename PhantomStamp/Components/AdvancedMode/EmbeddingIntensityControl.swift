@@ -6,7 +6,6 @@
 //
 
 import SwiftUI
-import UIKit
 
 /// Amplitude histogram sparkline for the intensity sub-panel.
 struct AmplitudeHistogramSparkline: View {
@@ -92,17 +91,7 @@ private struct AmplitudeHistogramIntensityOverlay: View {
 
 struct AmplitudeIntensityStats: View {
     let summary: AmplitudeHistogramSummary
-    let varianceCache: MacroblockVarianceCache
-    let varianceGainCurve: VarianceGainCurve
     let intensity: Double
-
-    private var attenuatedCount: Int {
-        summary.attenuatedBlockCount(variance: varianceCache, curve: varianceGainCurve)
-    }
-
-    private var fullStrengthCount: Int {
-        summary.fullStrengthBlockCount(variance: varianceCache, curve: varianceGainCurve)
-    }
 
     var body: some View {
         VStack(alignment: .leading, spacing: 4) {
@@ -125,8 +114,8 @@ struct AmplitudeIntensityStats: View {
             }
 
             HStack(spacing: 0) {
-                blockStatColumn(title: "Attenuated", value: attenuatedCount, alignment: .leading)
-                blockStatColumn(title: "Full", value: fullStrengthCount, alignment: .center)
+                blockStatColumn(title: "Attenuated", value: summary.attenuatedBlockCount, alignment: .leading)
+                blockStatColumn(title: "Full", value: summary.fullStrengthBlockCount, alignment: .center)
                 blockStatColumn(title: "Total", value: summary.totalBlocks, alignment: .trailing)
             }
 
@@ -154,9 +143,7 @@ struct AmplitudeIntensityStats: View {
 /// Intensity slider with amplitude histogram (reuses snapping UISlider infrastructure).
 struct EmbeddingIntensityControl: View {
     @Binding var intensity: Double
-    let baseQCache: MacroblockBaseQuantizationCache?
-    let varianceCache: MacroblockVarianceCache?
-    let varianceGainCurve: VarianceGainCurve
+    let histogram: AmplitudeHistogramSummary?
     var isEnabled: Bool = true
     var onLiveIntensityChange: ((Double) -> Void)?
     var onEditingChanged: ((Bool) -> Void)?
@@ -165,38 +152,32 @@ struct EmbeddingIntensityControl: View {
 
     private static let histogramHeight: CGFloat = 56
 
-    private var liveHistogram: AmplitudeHistogramSummary? {
-        guard let baseQCache, let varianceCache else { return nil }
-        return AmplitudeHistogramSummary.build(
-            baseQ: baseQCache,
-            variance: varianceCache,
-            varianceGainCurve: varianceGainCurve,
-            embeddingIntensity: Float(liveIntensity)
-        )
-    }
-
     var body: some View {
         VStack(alignment: .leading, spacing: 8) {
-            if let liveHistogram, let varianceCache {
-                AmplitudeHistogramSparkline(summary: liveHistogram, intensity: liveIntensity)
+            if let histogram {
+                AmplitudeHistogramSparkline(summary: histogram, intensity: liveIntensity)
                     .frame(height: Self.histogramHeight)
 
-                SnappingIntensitySlider(
-                    liveValue: $liveIntensity,
+                SnappingTrackSlider(
+                    value: $liveIntensity,
+                    range: 0...BlockEmbedAmplitude.intensityMax,
+                    step: BlockEmbedAmplitude.intensityStep,
+                    tint: .orange,
                     isEnabled: isEnabled,
                     onEditingChanged: { handleEditingChanged($0) }
                 )
                 .frame(height: 28)
 
                 AmplitudeIntensityStats(
-                    summary: liveHistogram,
-                    varianceCache: varianceCache,
-                    varianceGainCurve: varianceGainCurve,
+                    summary: histogram,
                     intensity: liveIntensity
                 )
             } else {
-                SnappingIntensitySlider(
-                    liveValue: $liveIntensity,
+                SnappingTrackSlider(
+                    value: $liveIntensity,
+                    range: 0...BlockEmbedAmplitude.intensityMax,
+                    step: BlockEmbedAmplitude.intensityStep,
+                    tint: .orange,
                     isEnabled: isEnabled,
                     onEditingChanged: { handleEditingChanged($0) }
                 )
@@ -220,76 +201,5 @@ struct EmbeddingIntensityControl: View {
     private func handleEditingChanged(_ editing: Bool) {
         if !editing { intensity = liveIntensity }
         onEditingChanged?(editing)
-    }
-}
-
-// MARK: - Intensity UISlider (0…10, step 0.5)
-
-private struct SnappingIntensitySlider: UIViewRepresentable {
-    @Binding var liveValue: Double
-    var isEnabled: Bool
-    var onEditingChanged: ((Bool) -> Void)?
-
-    private let step = BlockEmbedAmplitude.intensityStep
-    private let range: ClosedRange<Double> = 0...BlockEmbedAmplitude.intensityMax
-
-    func makeCoordinator() -> Coordinator { Coordinator(parent: self) }
-
-    func makeUIView(context: Context) -> UISlider {
-        let slider = UISlider(frame: .zero)
-        slider.minimumValue = Float(range.lowerBound)
-        slider.maximumValue = Float(range.upperBound)
-        slider.minimumTrackTintColor = UIColor.systemOrange
-        slider.maximumTrackTintColor = UIColor.tertiarySystemFill
-        slider.addTarget(context.coordinator, action: #selector(Coordinator.valueChanged(_:)), for: .valueChanged)
-        slider.addTarget(context.coordinator, action: #selector(Coordinator.touchDown(_:)), for: .touchDown)
-        slider.addTarget(
-            context.coordinator,
-            action: #selector(Coordinator.touchUp(_:)),
-            for: [.touchUpInside, .touchUpOutside, .touchCancel]
-        )
-        return slider
-    }
-
-    func updateUIView(_ slider: UISlider, context: Context) {
-        context.coordinator.parent = self
-        guard !context.coordinator.isDragging else {
-            slider.isEnabled = isEnabled
-            return
-        }
-        let snapped = snap(liveValue)
-        if abs(Double(slider.value) - snapped) > 0.001 {
-            slider.setValue(Float(snapped), animated: false)
-        }
-        slider.isEnabled = isEnabled
-    }
-
-    private func snap(_ raw: Double) -> Double {
-        let clamped = min(range.upperBound, max(range.lowerBound, raw))
-        return (clamped / step).rounded() * step
-    }
-
-    final class Coordinator: NSObject {
-        var parent: SnappingIntensitySlider
-        var isDragging = false
-
-        init(parent: SnappingIntensitySlider) { self.parent = parent }
-
-        @objc func valueChanged(_ sender: UISlider) {
-            parent.liveValue = parent.snap(Double(sender.value))
-        }
-
-        @objc func touchDown(_ sender: UISlider) {
-            isDragging = true
-            parent.onEditingChanged?(true)
-        }
-
-        @objc func touchUp(_ sender: UISlider) {
-            let snapped = parent.snap(Double(sender.value))
-            sender.setValue(Float(snapped), animated: false)
-            parent.liveValue = snapped
-            isDragging = false
-            parent.onEditingChanged?(false)
-        }
     }
 }

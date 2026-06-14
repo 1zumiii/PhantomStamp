@@ -88,6 +88,7 @@ final class FullScreenWatermarkProgressOverlayViewModel {
     var detail: String = AppConstants.WatermarkStep.preparation.rawValue
     var progress: Double = 0
     var progressTextValue: Double = 0
+    private(set) var presentationSequence: Int = 0
 
     private var hideTask: Task<Void, Never>?
 
@@ -268,6 +269,7 @@ final class FullScreenWatermarkProgressOverlayViewModel {
     func startIfNeeded() {
         hideTask?.cancel()
         hideTask = nil
+        presentationSequence &+= 1
         title = "A little pixel magic"
         pendingProgress.removeAll(keepingCapacity: true)
         progressPumpTask?.cancel()

@@ -8,6 +8,24 @@
 import PhotosUI
 import SwiftUI
 
+private final class AdvancedPreviewDebouncer {
+    private var task: Task<Void, Never>?
+
+    func schedule(action: @escaping @MainActor () -> Void) {
+        task?.cancel()
+        task = Task { @MainActor in
+            try? await Task.sleep(for: .milliseconds(280))
+            guard !Task.isCancelled else { return }
+            action()
+        }
+    }
+
+    func cancel() {
+        task?.cancel()
+        task = nil
+    }
+}
+
 struct WatermarkInsertView: View {
     let watermarkService: any WatermarkServiceProtocol
     @Bindable var settingsStore: UserSettingsStore
@@ -25,7 +43,7 @@ struct WatermarkInsertView: View {
     /// Local UI state for σ (0...10 gray levels); caps the gain-curve X axis at σ².
     @State private var advancedSigma: Double = 6.0
     @State private var loupePreviewSigma: Double = 6.0
-    @State private var sigmaLoupeDebounceTask: Task<Void, Never>?
+    @State private var sigmaLoupeDebouncer = AdvancedPreviewDebouncer()
     /// Local variance → gain curve (Advanced Mode only; never written to `UserSettingsStore`).
     @State private var advancedGainCurve: VarianceGainCurve = {
         var curve = VarianceGainCurve.presetS
@@ -35,7 +53,7 @@ struct WatermarkInsertView: View {
     /// Local UI state for the global embedding intensity (adaptive-Q multiplier).
     @State private var advancedIntensity: Double = 10.0
     @State private var loupePreviewIntensity: Double = 10.0
-    @State private var intensityLoupeDebounceTask: Task<Void, Never>?
+    @State private var intensityLoupeDebouncer = AdvancedPreviewDebouncer()
     @State private var selectedAdvancedSubTab: AdvancedSubTab = .smoothBlock
 
     @State private var advancedCanvasVM = AdvancedModeCanvasViewModel()
@@ -360,18 +378,21 @@ struct WatermarkInsertView: View {
     private var advancedControlPanel: some View {
         VStack(alignment: .leading, spacing: 12) {
             Picker("Parameter", selection: $selectedAdvancedSubTab) {
-                Text("Texture σ").tag(AdvancedSubTab.smoothBlock)
-                Text("Gain Curve").tag(AdvancedSubTab.varianceGain)
-                Text("Intensity").tag(AdvancedSubTab.intensity)
+                Text("Soft Areas").tag(AdvancedSubTab.smoothBlock)
+                Text("Texture Mix").tag(AdvancedSubTab.varianceGain)
+                Text("Strength").tag(AdvancedSubTab.intensity)
             }
             .pickerStyle(.segmented)
 
             switch selectedAdvancedSubTab {
             case .smoothBlock:
                 VStack(alignment: .leading, spacing: 10) {
-                    Text("Texture Variance Threshold")
-                        .font(.subheadline.weight(.semibold))
-                        .foregroundStyle(.primary)
+                    advancedPanelIntroduction(
+                        title: "Protect smooth areas",
+                        detail: "Keep skies, skin, walls, and other even areas cleaner. Move right to protect more of the image.",
+                        systemImage: "shield.lefthalf.filled",
+                        tint: .blue
+                    )
 
                     VarianceThresholdControl(
                         sigma: $advancedSigma,
@@ -379,21 +400,15 @@ struct WatermarkInsertView: View {
                         isEnabled: !vm.isEmbedding && !vm.showSuccessOverlay,
                         onLiveSigmaChange: { liveSigma in
                             guard !vm.isEmbedding, !vm.showSuccessOverlay else { return }
-                            advancedGainCurve.maxVariance = liveSigma * liveSigma
-                            sigmaLoupeDebounceTask?.cancel()
-                            sigmaLoupeDebounceTask = Task {
-                                try? await Task.sleep(for: .milliseconds(280))
-                                guard !Task.isCancelled else { return }
-                                await MainActor.run {
-                                    loupePreviewSigma = liveSigma
-                                }
+                            sigmaLoupeDebouncer.schedule {
+                                loupePreviewSigma = liveSigma
                             }
                         },
                         onEditingChanged: { editing in
                             if editing {
-                                sigmaLoupeDebounceTask?.cancel()
+                                sigmaLoupeDebouncer.cancel()
                             } else {
-                                sigmaLoupeDebounceTask?.cancel()
+                                sigmaLoupeDebouncer.cancel()
                                 loupePreviewSigma = advancedSigma
                                 advancedGainCurve.maxVariance = advancedSigma * advancedSigma
                             }
@@ -416,9 +431,12 @@ struct WatermarkInsertView: View {
                 }
             case .varianceGain:
                 VStack(alignment: .leading, spacing: 10) {
-                    Text("Spline Variance–Gain Curve")
-                        .font(.subheadline.weight(.semibold))
-                        .foregroundStyle(.primary)
+                    advancedPanelIntroduction(
+                        title: "Balance detail and resilience",
+                        detail: "Choose how quickly strength rises with texture. A higher curve survives edits better; a lower curve stays subtler.",
+                        systemImage: "point.3.connected.trianglepath.dotted",
+                        tint: Color(red: 0.58, green: 0.32, blue: 0.94)
+                    )
 
                     VarianceGainCurveEditor(
                         curve: $advancedGainCurve,
@@ -428,32 +446,31 @@ struct WatermarkInsertView: View {
                 }
             case .intensity:
                 VStack(alignment: .leading, spacing: 10) {
-                    Text("Global Embedding Intensity")
-                        .font(.subheadline.weight(.semibold))
-                        .foregroundStyle(.primary)
+                    advancedPanelIntroduction(
+                        title: "Set overall strength",
+                        detail: "Higher values survive more editing. Lower values are harder to notice.",
+                        systemImage: "dial.high",
+                        tint: .orange
+                    )
 
                     EmbeddingIntensityControl(
                         intensity: $advancedIntensity,
-                        baseQCache: advancedCanvasVM.baseQCache,
-                        varianceCache: advancedCanvasVM.varianceCache,
-                        varianceGainCurve: advancedCurveWithSigmaCap,
+                        histogram: advancedCanvasVM.amplitudeHistogram(
+                            curve: advancedCurveWithSigmaCap,
+                            embeddingIntensity: Float(advancedIntensity)
+                        ),
                         isEnabled: !vm.isEmbedding && !vm.showSuccessOverlay,
                         onLiveIntensityChange: { liveIntensity in
                             guard !vm.isEmbedding, !vm.showSuccessOverlay else { return }
-                            intensityLoupeDebounceTask?.cancel()
-                            intensityLoupeDebounceTask = Task {
-                                try? await Task.sleep(for: .milliseconds(280))
-                                guard !Task.isCancelled else { return }
-                                await MainActor.run {
-                                    loupePreviewIntensity = liveIntensity
-                                }
+                            intensityLoupeDebouncer.schedule {
+                                loupePreviewIntensity = liveIntensity
                             }
                         },
                         onEditingChanged: { editing in
                             if editing {
-                                intensityLoupeDebounceTask?.cancel()
+                                intensityLoupeDebouncer.cancel()
                             } else {
-                                intensityLoupeDebounceTask?.cancel()
+                                intensityLoupeDebouncer.cancel()
                                 loupePreviewIntensity = advancedIntensity
                             }
                         }
@@ -462,6 +479,33 @@ struct WatermarkInsertView: View {
             }
         }
         .disabled(vm.isEmbedding || vm.showSuccessOverlay)
+    }
+
+    private func advancedPanelIntroduction(
+        title: String,
+        detail: String,
+        systemImage: String,
+        tint: Color
+    ) -> some View {
+        HStack(alignment: .top, spacing: 10) {
+            RoundedRectangle(cornerRadius: 2, style: .continuous)
+                .fill(tint.opacity(0.8))
+                .frame(width: 3)
+
+            VStack(alignment: .leading, spacing: 3) {
+                Label(title, systemImage: systemImage)
+                    .font(.subheadline.weight(.semibold))
+                    .foregroundStyle(tint)
+
+                Text(detail)
+                    .font(.caption)
+                    .foregroundStyle(tint.opacity(0.86))
+                    .lineSpacing(1)
+                    .fixedSize(horizontal: false, vertical: true)
+            }
+        }
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .padding(.vertical, 1)
     }
 
     /// Blurred overlay after a successful embed; offers “Insert more” to reset upload state.
