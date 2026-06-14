@@ -44,6 +44,14 @@ struct PhantomStampApp: App {
             RootView(watermarkService: watermarkService)
                 .task {
                     await PhotoLibraryExporter.preflightAddOnlyAuthorizationIfNeeded()
+                    #if DEBUG
+                    if ProcessInfo.processInfo.arguments.contains("--run-local-damage-test") {
+                        await WatermarkLocalDamageAttackTests.runAndPrint()
+                    }
+                    if ProcessInfo.processInfo.arguments.contains("--run-geometric-candidate-test") {
+                        await WatermarkLocalDamageAttackTests.runRotationAndPrint()
+                    }
+                    #endif
                 }
         }
         .modelContainer(sharedModelContainer)

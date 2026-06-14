@@ -157,7 +157,12 @@ extension WatermarkService {
     ///     the FFT, surrounded by a sinc-shaped boundary artifact).
     ///  3. The `imag` array is already zeroed by `FFTComplexMatrix.init` — we only need to fill
     ///     the real part, the input signal is purely real.
-    func extractAndRemoveDC(from yChannel: Matrix, targetSize: Int = 512) -> FFTComplexMatrix {
+    func extractAndRemoveDC(
+        from yChannel: Matrix,
+        targetSize: Int = 512,
+        originX: Int? = nil,
+        originY: Int? = nil
+    ) -> FFTComplexMatrix {
         let w = yChannel.width
         let h = yChannel.height
         let N = targetSize
@@ -165,8 +170,8 @@ extension WatermarkService {
         precondition(yChannel.data.count == w * h, "Y channel data size does not match width * height")
 
         // Center the N×N analysis window. Negative origin = zero-padding to the top/left.
-        let startX = (w - N) / 2
-        let startY = (h - N) / 2
+        let startX = originX ?? ((w - N) / 2)
+        let startY = originY ?? ((h - N) / 2)
 
         // PASS 1: accumulate the mean over actual in-bounds pixels only.
         var sum: Float = 0

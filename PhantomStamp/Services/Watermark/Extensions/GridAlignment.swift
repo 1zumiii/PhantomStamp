@@ -39,13 +39,8 @@ extension WatermarkService {
         let tolerance = 4
         let syncPatterns = (8...18).map { PackedSyncMarkerPattern(bits: syncMarker, width: $0) }
 
-        // Performance guardrail:
-        // Doing 64 offset scans over the whole image is expensive (each block requires DCT).
-        // We restrict to the top-left region (in macroblocks) which is sufficient to locate at least one
-        // complete sync header in typical crop/translate scenarios.
-        // JPEG recompression tends to increase bit noise; expanding the search window improves the odds
-        // of finding a higher-quality sync hit (at the cost of more DCT work).
-        let searchBlockLimit = 45
+        // Performance guardrail: the 64 offsets probe three bounded regions rather than the whole
+        // image. This preserves spatial diversity without multiplying DCT work by image area.
         let normalFastPathAccept = 31
 
         // Return the globally best match across all 64 pixel offsets.
@@ -61,7 +56,7 @@ extension WatermarkService {
         struct OffsetScoreGrid {
             let offsetX: Int
             let offsetY: Int
-            let scores: [[Float]]
+            let regionScores: [[[Float]]]
             let normalMatch: SyncScanMatch?
         }
 
@@ -116,6 +111,43 @@ extension WatermarkService {
             return localBest
         }
 
+        func strongerMatch(_ lhs: SyncScanMatch?, _ rhs: SyncScanMatch?) -> SyncScanMatch? {
+            switch (lhs, rhs) {
+            case (nil, nil): return nil
+            case (let value?, nil), (nil, let value?): return value
+            case (let left?, let right?):
+                return left.matchCount >= right.matchCount ? left : right
+            }
+        }
+
+        /// Preserve the original 45×45 top-left probe so every W≤18 tile phase remains covered,
+        /// then add two smaller, spatially separated probes for local-damage resilience.
+        func searchRegions(
+            totalRows: Int,
+            totalCols: Int
+        ) -> [(row: Int, col: Int, side: Int)] {
+            let remoteSide = 24
+            let maxRemoteRowOrigin = max(0, totalRows - remoteSide)
+            let maxRemoteColOrigin = max(0, totalCols - remoteSide)
+            let proposed = [
+                (row: 0, col: 0, side: 45),
+                (
+                    row: maxRemoteRowOrigin / 2,
+                    col: maxRemoteColOrigin / 2,
+                    side: remoteSide
+                ),
+                (
+                    row: maxRemoteRowOrigin,
+                    col: maxRemoteColOrigin,
+                    side: remoteSide
+                )
+            ]
+            var seen = Set<String>()
+            return proposed.filter {
+                seen.insert("\($0.row):\($0.col)").inserted
+            }
+        }
+
         let offsetCount = DCTMatrix8x8.side * DCTMatrix8x8.side
         var offsetResults = [OffsetScoreGrid?](repeating: nil, count: offsetCount)
         let progressLock = NSLock()
@@ -127,31 +159,44 @@ extension WatermarkService {
             DispatchQueue.concurrentPerform(iterations: offsetCount) { idx in
                 let offsetY = idx / DCTMatrix8x8.side
                 let offsetX = idx % DCTMatrix8x8.side
-                let maxRows = min(searchBlockLimit, (matrix.height - offsetY) / DCTMatrix8x8.side)
-                let maxCols = min(searchBlockLimit, (matrix.width - offsetX) / DCTMatrix8x8.side)
+                let totalRows = (matrix.height - offsetY) / DCTMatrix8x8.side
+                let totalCols = (matrix.width - offsetX) / DCTMatrix8x8.side
 
-                if maxRows >= 4, maxCols >= 8 {
-                    var scoreGrid = [[Float]](
-                        repeating: [Float](repeating: .nan, count: maxCols),
-                        count: maxRows
-                    )
-                    for r in 0..<maxRows {
-                        for c in 0..<maxCols {
-                            let block = extractSpatialBlock(
-                                from: matrix,
-                                x: offsetX + c * DCTMatrix8x8.side,
-                                y: offsetY + r * DCTMatrix8x8.side
-                            )
-                            if isBlockPolluted(block) { continue }
-                            scoreGrid[r][c] = extractBitConfidence(performDCT(block))
+                if totalRows >= 4, totalCols >= 8 {
+                    var regionScores: [[[Float]]] = []
+                    var bestNormalMatch: SyncScanMatch?
+                    for region in searchRegions(totalRows: totalRows, totalCols: totalCols) {
+                        let regionRows = min(region.side, totalRows - region.row)
+                        let regionCols = min(region.side, totalCols - region.col)
+                        guard regionRows >= 4, regionCols >= 8 else { continue }
+
+                        var scoreGrid = [[Float]](
+                            repeating: [Float](repeating: .nan, count: regionCols),
+                            count: regionRows
+                        )
+                        for r in 0..<regionRows {
+                            for c in 0..<regionCols {
+                                let block = extractSpatialBlock(
+                                    from: matrix,
+                                    x: offsetX + (region.col + c) * DCTMatrix8x8.side,
+                                    y: offsetY + (region.row + r) * DCTMatrix8x8.side
+                                )
+                                if isBlockPolluted(block) { continue }
+                                scoreGrid[r][c] = extractBitConfidence(performDCT(block))
+                            }
                         }
+                        regionScores.append(scoreGrid)
+                        bestNormalMatch = strongerMatch(
+                            bestNormalMatch,
+                            scanScoreGrid(scoreGrid, hypothesis: .normal)
+                        )
                     }
 
                     resultPtr[idx] = OffsetScoreGrid(
                         offsetX: offsetX,
                         offsetY: offsetY,
-                        scores: scoreGrid,
-                        normalMatch: scanScoreGrid(scoreGrid, hypothesis: .normal)
+                        regionScores: regionScores,
+                        normalMatch: bestNormalMatch
                     )
                 }
 
@@ -204,12 +249,12 @@ extension WatermarkService {
             DispatchQueue.concurrentPerform(iterations: cachedOffsetScores.count) { idx in
                 let cached = cachedOffsetScores[idx]
                 var localBest: SyncScanMatch?
-                for hypothesis in ScoreGridTopologyHypothesis.allCases where hypothesis != .normal {
-                    guard let match = scanScoreGrid(cached.scores, hypothesis: hypothesis) else { continue }
-                    if localBest == nil || match.matchCount > (localBest?.matchCount ?? -1) {
-                        localBest = match
+                scan: for scores in cached.regionScores {
+                    for hypothesis in ScoreGridTopologyHypothesis.allCases where hypothesis != .normal {
+                        guard let match = scanScoreGrid(scores, hypothesis: hypothesis) else { continue }
+                        localBest = strongerMatch(localBest, match)
+                        if match.matchCount == 32 { break scan }
                     }
-                    if match.matchCount == 32 { break }
                 }
                 matchPtr[idx] = localBest
             }

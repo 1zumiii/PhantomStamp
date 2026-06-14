@@ -508,86 +508,154 @@ class WatermarkService: WatermarkServiceProtocol {
                 // ==========================================
 
 
-                // ==========================================
-                // [New Feature] Extract Region + DFT Global Star Seeking
-                // ==========================================
-                let transformParams = await self.detectGeometricTransforms(in: yChannel)
-                #if DEBUG
-                if abs(transformParams.angle) > 5e-3 || abs(transformParams.scale - 1.0) > 5e-4 {
-                    print("[WatermarkService] geometric transformation detected, applying deskewing...")
-                } else {
-                    print("[WatermarkService] geometric transformation too small, skipping deskewing.")
-                }
-                #endif
-                // ==========================================
-                // [New Feature] Spatial Domain Inverse Interpolation Correction (Deskewing)
-                // ==========================================
-                let deskewedYChannel = await self.deskewImage(yChannel, angle: transformParams.angle, scale: transformParams.scale)
+                // DFT is a proposal generator, not an authority. Spatially separated FFT windows
+                // form transform consensuses, while identity is always retained as a fallback.
+                let transformCandidates = await self.detectGeometricTransformCandidates(in: yChannel)
                 await reportProgress(step: .extractDetectTransforms, percentage: 0.40)
 
+                func payloadCanDecode(_ payload: [Int]) async -> Bool {
+                    for messageLength in 1...16 {
+                        let rawBits = 8 + messageLength * 8
+                        let paddedRawBits = ((rawBits + 3) / 4) * 4
+                        let eccCount = (paddedRawBits / 4) * 8
+                        guard payload.count >= eccCount else { continue }
+                        if await decodeFEC(bits: Array(payload.prefix(eccCount))) != nil {
+                            return true
+                        }
+                    }
+                    return false
+                }
 
-                // 2. physical and logical alignment
-                let gridScan = await self.findGridOffsetAndSyncMarker(in: deskewedYChannel, onOffsetProgress: { t in
-                    let coarse = floor(min(max(t, 0), 1) * 4) / 4
-                    let pct = 0.40 + 0.40 * coarse
-                    reportProgress(step: .extractOffsetScan, percentage: pct)
-                })
-                await reportProgress(step: .extractOffsetScan, percentage: 0.80)
+                func validationScore(_ work: ExtractMatrixWorkResult) -> Int {
+                    let majority = work.majorityBestSyncBits ?? 0
+                    return majority * 100 + work.offsetScanBestSyncBits
+                }
 
-                guard let gridOffset = gridScan.offset else {
-                    return ExtractMatrixWorkResult(
-                        payloadBitsWithoutSync: [],
+                var bestFailedWork: ExtractMatrixWorkResult?
+
+                // A candidate earns the right to control the full image only after the existing
+                // DCT sync marker and real FEC decoder validate it.
+                for (candidateIndex, transformParams) in transformCandidates.enumerated() {
+                    #if DEBUG
+                    print(
+                        "[WatermarkService] validating geometric candidate "
+                            + "\(candidateIndex + 1)/\(transformCandidates.count): "
+                            + "angle=\(transformParams.angle * 180 / .pi)deg "
+                            + "scale=\(transformParams.scale) "
+                            + "identity=\(transformParams.isIdentity)"
+                    )
+                    #endif
+
+                    let deskewedYChannel = await self.deskewImage(
+                        yChannel,
+                        angle: transformParams.angle,
+                        scale: transformParams.scale
+                    )
+
+                    // 2. physical and logical alignment. Each offset now probes multiple spatial
+                    // regions, so a local edit cannot blind validation merely by covering one corner.
+                    let gridScan = await self.findGridOffsetAndSyncMarker(
+                        in: deskewedYChannel,
+                        onOffsetProgress: { t in
+                            let coarse = floor(min(max(t, 0), 1) * 4) / 4
+                            let candidateSpan = 0.40 / Double(max(transformCandidates.count, 1))
+                            let candidateStart = 0.40 + Double(candidateIndex) * candidateSpan
+                            reportProgress(
+                                step: .extractOffsetScan,
+                                percentage: candidateStart + candidateSpan * coarse
+                            )
+                        }
+                    )
+
+                    guard let gridOffset = gridScan.offset else {
+                        let failed = ExtractMatrixWorkResult(
+                            payloadBitsWithoutSync: [],
+                            deskewAngleRadians: transformParams.angle,
+                            deskewScale: transformParams.scale,
+                            offsetScanBestSyncBits: gridScan.bestSyncBitsMatched,
+                            gridOffsetX: nil,
+                            gridOffsetY: nil,
+                            rawBitGridRows: 0,
+                            rawBitGridCols: 0,
+                            majorityBestSyncBits: nil,
+                            majorityMacroTileWidth: nil,
+                            topologyHypothesis: gridScan.topologyHypothesis
+                        )
+                        if bestFailedWork == nil || validationScore(failed) > validationScore(bestFailedWork!) {
+                            bestFailedWork = failed
+                        }
+                        continue
+                    }
+
+                    // 3. data extraction from this candidate's corrected plane.
+                    let rawExtractedScores = await self.extractSoftBitsWithOffset(
+                        deskewedYChannel,
+                        offset: gridOffset
+                    )
+
+                    // 4. sync-gated recovery and FEC validation.
+                    let voting = await self.applySoftMajorityVotingWithDiagnostics(
+                        to: rawExtractedScores,
+                        preferredHypothesis: gridScan.topologyHypothesis
+                    )
+                    let votedBits = voting.bits
+                    let syncCount = await getSyncMarkerBits().count
+                    let payload = votedBits.count >= syncCount
+                        ? Array(votedBits.dropFirst(syncCount))
+                        : []
+                    let maj = voting.diagnostics
+                    let candidateWork = ExtractMatrixWorkResult(
+                        payloadBitsWithoutSync: payload,
                         deskewAngleRadians: transformParams.angle,
                         deskewScale: transformParams.scale,
                         offsetScanBestSyncBits: gridScan.bestSyncBitsMatched,
-                        gridOffsetX: nil,
-                        gridOffsetY: nil,
-                        rawBitGridRows: 0,
-                        rawBitGridCols: 0,
-                        majorityBestSyncBits: nil,
-                        majorityMacroTileWidth: nil,
-                        topologyHypothesis: nil
+                        gridOffsetX: Int(gridOffset.x),
+                        gridOffsetY: Int(gridOffset.y),
+                        rawBitGridRows: rawExtractedScores.count,
+                        rawBitGridCols: rawExtractedScores.first?.count ?? 0,
+                        majorityBestSyncBits: maj?.bestSyncBitsMatched,
+                        majorityMacroTileWidth: maj?.macroTileWidth,
+                        topologyHypothesis: maj?.topologyHypothesis ?? gridScan.topologyHypothesis
                     )
+                    let fecPassed = await payloadCanDecode(payload)
+
+                    #if DEBUG
+                    let rows = rawExtractedScores.count
+                    let cols = rawExtractedScores.first?.count ?? 0
+                    print(
+                        "[WatermarkService] candidate result: gridOffset="
+                            + "(\(Int(gridOffset.x)),\(Int(gridOffset.y))) "
+                            + "rawBits=\(rows)x\(cols) votedBits=\(votedBits.count) "
+                            + "sync=\(gridScan.bestSyncBitsMatched)/32 "
+                            + "FEC=\(fecPassed ? "PASS" : "FAIL")"
+                    )
+                    #endif
+
+                    if fecPassed {
+                        await reportProgress(step: .extractOffsetScan, percentage: 0.80)
+                        await reportProgress(step: .extractBitGrid, percentage: 0.90)
+                        return candidateWork
+                    }
+
+                    if bestFailedWork == nil || validationScore(candidateWork) > validationScore(bestFailedWork!) {
+                        bestFailedWork = candidateWork
+                    }
                 }
 
-                // 3. data extraction
-                // IMPORTANT: must read from the deskewed Y channel — the offset was found on the
-                // geometrically-corrected image, so applying it to the raw (still rotated/scaled)
-                // yChannel would dis-align every macroblock and yield garbage bits.
-                // SOFT scores (signed diffs) instead of hard bits: after geometric attacks the
-                // per-block diffs are heavily attenuated, and confidence-weighted voting is what
-                // keeps the folded macro-tile inside the Hamming(8,4) correction budget.
-                let rawExtractedScores = await self.extractSoftBitsWithOffset(deskewedYChannel, offset: gridOffset)
+                await reportProgress(step: .extractOffsetScan, percentage: 0.80)
                 await reportProgress(step: .extractBitGrid, percentage: 0.90)
-
-                // 4. data recovery and decoding
-                let voting = await self.applySoftMajorityVotingWithDiagnostics(
-                    to: rawExtractedScores,
-                    preferredHypothesis: gridScan.topologyHypothesis
-                )
-                let votedBits = voting.bits
-
-                #if DEBUG
-                let rows = rawExtractedScores.count
-                let cols = rawExtractedScores.first?.count ?? 0
-                print("[WatermarkService] DEBUG extract: gridOffset=(\(Int(gridOffset.x)),\(Int(gridOffset.y))) rawBits=\(rows)x\(cols) votedBits=\(votedBits.count)")
-                #endif
-
-                let syncCount = await getSyncMarkerBits().count
-                let payload = votedBits.count >= syncCount ? Array(votedBits.dropFirst(syncCount)) : []
-                let maj = voting.diagnostics
-                return ExtractMatrixWorkResult(
-                    payloadBitsWithoutSync: payload,
-                    deskewAngleRadians: transformParams.angle,
-                    deskewScale: transformParams.scale,
-                    offsetScanBestSyncBits: gridScan.bestSyncBitsMatched,
-                    gridOffsetX: Int(gridOffset.x),
-                    gridOffsetY: Int(gridOffset.y),
-                    rawBitGridRows: rawExtractedScores.count,
-                    rawBitGridCols: rawExtractedScores.first?.count ?? 0,
-                    majorityBestSyncBits: maj?.bestSyncBitsMatched,
-                    majorityMacroTileWidth: maj?.macroTileWidth,
-                    topologyHypothesis: maj?.topologyHypothesis ?? gridScan.topologyHypothesis
+                return bestFailedWork ?? ExtractMatrixWorkResult(
+                    payloadBitsWithoutSync: [],
+                    deskewAngleRadians: 0,
+                    deskewScale: 1,
+                    offsetScanBestSyncBits: 0,
+                    gridOffsetX: nil,
+                    gridOffsetY: nil,
+                    rawBitGridRows: 0,
+                    rawBitGridCols: 0,
+                    majorityBestSyncBits: nil,
+                    majorityMacroTileWidth: nil,
+                    topologyHypothesis: nil
                 )
             }.value // wait for the background computation result
             extractWorkForHistory = work
