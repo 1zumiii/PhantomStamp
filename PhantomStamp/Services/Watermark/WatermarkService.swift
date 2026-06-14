@@ -531,7 +531,10 @@ class WatermarkService: WatermarkServiceProtocol {
                 await reportProgress(step: .extractBitGrid, percentage: 0.72)
 
                 // 4. data recovery and decoding
-                let voting = await self.applySoftMajorityVotingWithDiagnostics(to: rawExtractedScores)
+                let voting = await self.applySoftMajorityVotingWithDiagnostics(
+                    to: rawExtractedScores,
+                    preferredHypothesis: gridScan.topologyHypothesis
+                )
                 let votedBits = voting.bits
                 await reportProgress(step: .extractMajorityVoting, percentage: 0.85)
 

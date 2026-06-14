@@ -37,6 +37,7 @@ extension WatermarkService {
     func findGridOffsetAndSyncMarker(in matrix: FloatMatrix, onOffsetProgress: ((Double) -> Void)? = nil) -> GridOffsetScanResult {
         let syncMarker = getSyncMarkerBits()
         let tolerance = 4
+        let syncPatterns = (8...18).map { PackedSyncMarkerPattern(bits: syncMarker, width: $0) }
 
         // Performance guardrail:
         // Doing 64 offset scans over the whole image is expensive (each block requires DCT).
@@ -45,6 +46,7 @@ extension WatermarkService {
         // JPEG recompression tends to increase bit noise; expanding the search window improves the odds
         // of finding a higher-quality sync hit (at the cost of more DCT work).
         let searchBlockLimit = 45
+        let normalFastPathAccept = 31
 
         // Return the globally best match across all 64 pixel offsets.
         // We *do not* return the first window that crosses the tolerance threshold, because synthetic or noisy
@@ -56,88 +58,182 @@ extension WatermarkService {
         var bestDetails: (offsetX: Int, offsetY: Int, bx: Int, by: Int, w: Int, topology: ScoreGridTopologyHypothesis) = (0, 0, 0, 0, 0, .normal)
         #endif
 
-        for offsetY in 0..<DCTMatrix8x8.side {
-            for offsetX in 0..<DCTMatrix8x8.side {
-                if let onOffsetProgress {
-                    let idx = offsetY * DCTMatrix8x8.side + offsetX
-                    // Throttle: 64 offsets are enough; ~16 ticks feels smooth without flooding UI.
-                    if idx % 4 == 0 || idx == 63 {
-                        onOffsetProgress(Double(idx) / 63.0)
+        struct OffsetScoreGrid {
+            let offsetX: Int
+            let offsetY: Int
+            let scores: [[Float]]
+            let normalMatch: SyncScanMatch?
+        }
+
+        struct SyncScanMatch {
+            let matchCount: Int
+            let bx: Int
+            let by: Int
+            let w: Int
+            let hypothesis: ScoreGridTopologyHypothesis
+        }
+
+        func scanScoreGrid(
+            _ scoreGrid: [[Float]],
+            hypothesis: ScoreGridTopologyHypothesis
+        ) -> SyncScanMatch? {
+            let transformedScores = transformedSoftScoreGrid(scoreGrid, hypothesis: hypothesis)
+            let topologyRows = transformedScores.count
+            let topologyCols = transformedScores.first?.count ?? 0
+            if topologyRows < 4 || topologyCols < 8 { return nil }
+
+            let packedHardBits = PackedHardBitGrid(scores: transformedScores)
+
+            var localBest: SyncScanMatch?
+            for by in 0..<topologyRows {
+                for bx in 0..<topologyCols {
+                    for pattern in syncPatterns {
+                        let w = pattern.width
+                        // Reading 32 bits row-major with stride W needs enough columns/rows.
+                        let maxRowNeeded = by + pattern.chunks.count
+                        let maxColNeeded = bx + pattern.chunkLengths[0]
+                        if maxRowNeeded > topologyRows || maxColNeeded > topologyCols { continue }
+
+                        let matchCount = packedHardBits.matchCount(
+                            pattern: pattern,
+                            originX: bx,
+                            originY: by
+                        )
+
+                        if localBest == nil || matchCount > (localBest?.matchCount ?? -1) {
+                            localBest = SyncScanMatch(
+                                matchCount: matchCount,
+                                bx: bx,
+                                by: by,
+                                w: w,
+                                hypothesis: hypothesis
+                            )
+                        }
+                        if matchCount == 32 { return localBest }
                     }
                 }
+            }
+            return localBest
+        }
+
+        let offsetCount = DCTMatrix8x8.side * DCTMatrix8x8.side
+        var offsetResults = [OffsetScoreGrid?](repeating: nil, count: offsetCount)
+        let progressLock = NSLock()
+        var completedOffsets = 0
+
+        // Each physical offset reads the immutable deskewed plane and writes one disjoint result
+        // slot. GCD bounds actual parallelism to the device's available worker threads.
+        offsetResults.withUnsafeMutableBufferPointer { resultPtr in
+            DispatchQueue.concurrentPerform(iterations: offsetCount) { idx in
+                let offsetY = idx / DCTMatrix8x8.side
+                let offsetX = idx % DCTMatrix8x8.side
                 let maxRows = min(searchBlockLimit, (matrix.height - offsetY) / DCTMatrix8x8.side)
                 let maxCols = min(searchBlockLimit, (matrix.width - offsetX) / DCTMatrix8x8.side)
-                if maxRows < 4 || maxCols < 8 { continue }
 
-                // Pre-extract all signed scores under this (offsetX, offsetY) once, then run
-                // topology hypotheses and sliding windows purely in memory.
-                // This is the single biggest speedup: without it we'd redo DCT for every (bx,by,w) candidate.
-                var scoreGrid = [[Float]](repeating: [Float](repeating: .nan, count: maxCols), count: maxRows)
-                for r in 0..<maxRows {
-                    for c in 0..<maxCols {
-                        let block = extractSpatialBlock(from: matrix, x: offsetX + c * DCTMatrix8x8.side, y: offsetY + r * DCTMatrix8x8.side)
-                        // Poison-skip (same rule as `extractBitsWithOffset`): a block touched by the
-                        // deskew OOB sentinel is (near-)constant, so ALL its AC coefficients are ~0 and
-                        // `extractBitFromFrequencies` would return a deterministic, fabricated `1`.
-                        // Mark it NaN instead — it becomes a hard-bit abstention, so windows
-                        // overlapping the dead frame lose score instead of gaining fake matches.
-                        if isBlockPolluted(block) {
-                            scoreGrid[r][c] = .nan
-                            continue
+                if maxRows >= 4, maxCols >= 8 {
+                    var scoreGrid = [[Float]](
+                        repeating: [Float](repeating: .nan, count: maxCols),
+                        count: maxRows
+                    )
+                    for r in 0..<maxRows {
+                        for c in 0..<maxCols {
+                            let block = extractSpatialBlock(
+                                from: matrix,
+                                x: offsetX + c * DCTMatrix8x8.side,
+                                y: offsetY + r * DCTMatrix8x8.side
+                            )
+                            if isBlockPolluted(block) { continue }
+                            scoreGrid[r][c] = extractBitConfidence(performDCT(block))
                         }
-                        let freqBlock = performDCT(block)
-                        scoreGrid[r][c] = extractBitConfidence(freqBlock)
                     }
+
+                    resultPtr[idx] = OffsetScoreGrid(
+                        offsetX: offsetX,
+                        offsetY: offsetY,
+                        scores: scoreGrid,
+                        normalMatch: scanScoreGrid(scoreGrid, hypothesis: .normal)
+                    )
                 }
 
-                for hypothesis in ScoreGridTopologyHypothesis.allCases {
-                    let transformedScores = transformedSoftScoreGrid(scoreGrid, hypothesis: hypothesis)
-                    let topologyRows = transformedScores.count
-                    let topologyCols = transformedScores.first?.count ?? 0
-                    if topologyRows < 4 || topologyCols < 8 { continue }
+                progressLock.lock()
+                completedOffsets += 1
+                let completed = completedOffsets
+                if let onOffsetProgress, completed % 4 == 0 || completed == offsetCount {
+                    onOffsetProgress(Double(completed) / Double(offsetCount))
+                }
+                progressLock.unlock()
+            }
+        }
 
-                    var bitGrid = [[Int]](repeating: [], count: topologyRows)
-                    for r in 0..<topologyRows {
-                        bitGrid[r] = transformedScores[r].map { $0.isNaN ? -1 : ($0 >= 0 ? 1 : 0) }
+        let cachedOffsetScores = offsetResults.compactMap { $0 }
+        for cached in cachedOffsetScores {
+            guard let match = cached.normalMatch else { continue }
+            if match.matchCount > bestMatchCount {
+                bestMatchCount = match.matchCount
+                bestOffset = CGPoint(x: cached.offsetX, y: cached.offsetY)
+                bestTopology = match.hypothesis
+                #if DEBUG
+                bestDetails = (cached.offsetX, cached.offsetY, match.bx, match.by, match.w, match.hypothesis)
+                #endif
+            }
+            if match.matchCount == 32 {
+                #if DEBUG
+                print("[WatermarkService] DEBUG gridOffset best=32/32 offset=(\(cached.offsetX),\(cached.offsetY)) bx=\(match.bx) by=\(match.by) w=\(match.w) topology=\(match.hypothesis.rawValue)")
+                #endif
+                return GridOffsetScanResult(
+                    offset: CGPoint(x: cached.offsetX, y: cached.offsetY),
+                    bestSyncBitsMatched: 32,
+                    topologyHypothesis: match.hypothesis
+                )
+            }
+        }
+
+        if bestMatchCount >= normalFastPathAccept, let bestOffset {
+            #if DEBUG
+            print("[WatermarkService] DEBUG gridOffset normal-fast best=\(bestMatchCount)/32 offset=(\(bestDetails.offsetX),\(bestDetails.offsetY)) bx=\(bestDetails.bx) by=\(bestDetails.by) w=\(bestDetails.w)")
+            #endif
+            return GridOffsetScanResult(
+                offset: bestOffset,
+                bestSyncBitsMatched: bestMatchCount,
+                topologyHypothesis: .normal
+            )
+        }
+
+        var fallbackMatches = [SyncScanMatch?](repeating: nil, count: cachedOffsetScores.count)
+        fallbackMatches.withUnsafeMutableBufferPointer { matchPtr in
+            DispatchQueue.concurrentPerform(iterations: cachedOffsetScores.count) { idx in
+                let cached = cachedOffsetScores[idx]
+                var localBest: SyncScanMatch?
+                for hypothesis in ScoreGridTopologyHypothesis.allCases where hypothesis != .normal {
+                    guard let match = scanScoreGrid(cached.scores, hypothesis: hypothesis) else { continue }
+                    if localBest == nil || match.matchCount > (localBest?.matchCount ?? -1) {
+                        localBest = match
                     }
+                    if match.matchCount == 32 { break }
+                }
+                matchPtr[idx] = localBest
+            }
+        }
 
-                    for by in 0..<topologyRows {
-                        for bx in 0..<topologyCols {
-                            for w in 8...18 {
-                                // Reading 32 bits row-major with stride W needs enough columns/rows.
-                                let maxRowNeeded = by + (32 / w) + 1
-                                let maxColNeeded = bx + min(32, w)
-                                if maxRowNeeded > topologyRows || maxColNeeded > topologyCols { continue }
-
-                                var matchCount = 0
-                                for i in 0..<32 {
-                                    let r = by + (i / w)
-                                    let c = bx + (i % w)
-                                    if bitGrid[r][c] == syncMarker[i] { matchCount += 1 }
-                                }
-
-                                if matchCount > bestMatchCount {
-                                    bestMatchCount = matchCount
-                                    bestOffset = CGPoint(x: offsetX, y: offsetY)
-                                    bestTopology = hypothesis
-                                    #if DEBUG
-                                    bestDetails = (offsetX, offsetY, bx, by, w, hypothesis)
-                                    #endif
-                                }
-
-                                if matchCount == 32 {
-                                    #if DEBUG
-                                    print("[WatermarkService] DEBUG gridOffset best=32/32 offset=(\(offsetX),\(offsetY)) bx=\(bx) by=\(by) w=\(w) topology=\(hypothesis.rawValue)")
-                                    #endif
-                                    return GridOffsetScanResult(
-                                        offset: CGPoint(x: offsetX, y: offsetY),
-                                        bestSyncBitsMatched: 32,
-                                        topologyHypothesis: hypothesis
-                                    )
-                                }
-                            }
-                        }
-                    }
+        for (idx, cached) in cachedOffsetScores.enumerated() {
+            if let match = fallbackMatches[idx] {
+                if match.matchCount > bestMatchCount {
+                    bestMatchCount = match.matchCount
+                    bestOffset = CGPoint(x: cached.offsetX, y: cached.offsetY)
+                    bestTopology = match.hypothesis
+                    #if DEBUG
+                    bestDetails = (cached.offsetX, cached.offsetY, match.bx, match.by, match.w, match.hypothesis)
+                    #endif
+                }
+                if match.matchCount == 32 {
+                    #if DEBUG
+                    print("[WatermarkService] DEBUG gridOffset best=32/32 offset=(\(cached.offsetX),\(cached.offsetY)) bx=\(match.bx) by=\(match.by) w=\(match.w) topology=\(match.hypothesis.rawValue)")
+                    #endif
+                    return GridOffsetScanResult(
+                        offset: CGPoint(x: cached.offsetX, y: cached.offsetY),
+                        bestSyncBitsMatched: 32,
+                        topologyHypothesis: match.hypothesis
+                    )
                 }
             }
         }

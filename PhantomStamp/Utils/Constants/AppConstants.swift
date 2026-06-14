@@ -10,7 +10,7 @@ import Foundation
 
 enum AppConstants {
     
-    static let appVersionString = "v0.8.0"
+    static let appVersionString = "v0.9.1"
 
     // MARK: - SwiftData
 

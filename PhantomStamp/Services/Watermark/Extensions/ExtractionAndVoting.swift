@@ -40,6 +40,97 @@ enum ScoreGridTopologyHypothesis: String, CaseIterable, Sendable {
     }
 }
 
+/// Bit-packed hard-decision view used by sync-marker correlation.
+///
+/// Each candidate sync window previously performed 32 nested-array lookups. Packing each row into
+/// `UInt64` words reduces that hot loop to 2...4 XOR/popcount operations (depending on tile width).
+struct PackedSyncMarkerPattern {
+    let width: Int
+    let chunks: [UInt64]
+    let chunkLengths: [Int]
+
+    init(bits: [Int], width: Int) {
+        self.width = width
+        var chunks: [UInt64] = []
+        var lengths: [Int] = []
+        var start = 0
+        while start < bits.count {
+            let length = min(width, bits.count - start)
+            var packed: UInt64 = 0
+            for i in 0..<length where bits[start + i] == 1 {
+                packed |= UInt64(1) << UInt64(i)
+            }
+            chunks.append(packed)
+            lengths.append(length)
+            start += length
+        }
+        self.chunks = chunks
+        self.chunkLengths = lengths
+    }
+}
+
+struct PackedHardBitGrid {
+    let rows: Int
+    let cols: Int
+    private let wordsPerRow: Int
+    private let values: [UInt64]
+    private let valid: [UInt64]
+
+    init(scores: [[Float]]) {
+        rows = scores.count
+        cols = scores.first?.count ?? 0
+        wordsPerRow = (cols + 63) / 64
+        var packedValues = [UInt64](repeating: 0, count: rows * wordsPerRow)
+        var packedValid = [UInt64](repeating: 0, count: rows * wordsPerRow)
+
+        for r in 0..<rows {
+            for c in 0..<cols {
+                let score = scores[r][c]
+                guard !score.isNaN else { continue }
+                let index = r * wordsPerRow + c / 64
+                let mask = UInt64(1) << UInt64(c % 64)
+                packedValid[index] |= mask
+                if score >= 0 {
+                    packedValues[index] |= mask
+                }
+            }
+        }
+
+        values = packedValues
+        valid = packedValid
+    }
+
+    @inline(__always)
+    private func extract(_ words: [UInt64], row: Int, col: Int, length: Int) -> UInt64 {
+        let wordIndex = col / 64
+        let shift = col % 64
+        let base = row * wordsPerRow + wordIndex
+        var result = words[base] >> UInt64(shift)
+        if shift + length > 64 {
+            result |= words[base + 1] << UInt64(64 - shift)
+        }
+        let mask = (UInt64(1) << UInt64(length)) - 1
+        return result & mask
+    }
+
+    @inline(__always)
+    func matchCount(
+        pattern: PackedSyncMarkerPattern,
+        originX: Int,
+        originY: Int
+    ) -> Int {
+        var matched = 0
+        for chunkIndex in pattern.chunks.indices {
+            let length = pattern.chunkLengths[chunkIndex]
+            let observed = extract(values, row: originY + chunkIndex, col: originX, length: length)
+            let validMask = extract(valid, row: originY + chunkIndex, col: originX, length: length)
+            let mismatched = (observed ^ pattern.chunks[chunkIndex]) & validMask
+            matched += validMask.nonzeroBitCount - mismatched.nonzeroBitCount
+        }
+        return matched
+    }
+}
+
 /// Diagnostics from the macro-tile sync relocation + majority-voting fold.
 struct MajorityVotingDiagnostics: Sendable {
     /// Best 32-bit sync match score on the extracted bit grid (same scale as offset scan: out of 32).
@@ -226,11 +317,20 @@ extension WatermarkService {
     /// check therefore failed even on clean images (e.g. lenByte=121) and could PREFER a worse
     /// sync window whose garbage byte happened to land in 1...16. Real `decodeFEC` (SECDED:
     /// detects double-bit errors per codeword) is the only meaningful validator.
-    func applySoftMajorityVotingWithDiagnostics(to scores: [[Float]]) -> (bits: [Int], diagnostics: MajorityVotingDiagnostics?) {
+    func applySoftMajorityVotingWithDiagnostics(
+        to scores: [[Float]],
+        preferredHypothesis: ScoreGridTopologyHypothesis? = nil
+    ) -> (bits: [Int], diagnostics: MajorityVotingDiagnostics?) {
         var bestFallback: SoftMajorityVotingAttempt?
-        var bestDecoded: SoftMajorityVotingAttempt?
 
-        for hypothesis in ScoreGridTopologyHypothesis.allCases {
+        let hypotheses: [ScoreGridTopologyHypothesis] = {
+            guard let preferredHypothesis else {
+                return Array(ScoreGridTopologyHypothesis.allCases)
+            }
+            return [preferredHypothesis] + ScoreGridTopologyHypothesis.allCases.filter { $0 != preferredHypothesis }
+        }()
+
+        for hypothesis in hypotheses {
             let transformedScores = transformedSoftScoreGrid(scores, hypothesis: hypothesis)
             let attempt = applySoftMajorityVotingSingleTopologyWithDiagnostics(
                 to: transformedScores,
@@ -238,18 +338,14 @@ extension WatermarkService {
             )
 
             if attempt.fecDecoded {
-                if bestDecoded == nil ||
-                    (attempt.diagnostics?.bestSyncBitsMatched ?? -1) > (bestDecoded?.diagnostics?.bestSyncBitsMatched ?? -1) {
-                    bestDecoded = attempt
-                }
+                return (attempt.bits, attempt.diagnostics)
             } else if bestFallback == nil ||
                         (attempt.diagnostics?.bestSyncBitsMatched ?? -1) > (bestFallback?.diagnostics?.bestSyncBitsMatched ?? -1) {
                 bestFallback = attempt
             }
         }
 
-        let selected = bestDecoded ?? bestFallback
-        return (selected?.bits ?? [], selected?.diagnostics)
+        return (bestFallback?.bits ?? [], bestFallback?.diagnostics)
     }
 
     private struct SoftMajorityVotingAttempt {
@@ -277,6 +373,8 @@ extension WatermarkService {
         let syncMarker = getSyncMarkerBits()
         let tolerance = 4
         let syncCount = syncMarker.count // 32
+        let syncPatterns = (8...18).map { PackedSyncMarkerPattern(bits: syncMarker, width: $0) }
+        let packedHardBits = PackedHardBitGrid(scores: scores)
 
         // Hard view for sync-header correlation; -1 (abstain) never matches a marker bit.
         var hardBits = [[Int]](repeating: [], count: maxRows)
@@ -401,17 +499,17 @@ extension WatermarkService {
 
         scan: for by in 0..<maxRows {
             for bx in 0..<maxCols {
-                for w in 8...18 {
-                    let maxRowNeeded = by + (32 / w) + 1
-                    let maxColNeeded = bx + min(32, w)
+                for pattern in syncPatterns {
+                    let w = pattern.width
+                    let maxRowNeeded = by + pattern.chunks.count
+                    let maxColNeeded = bx + pattern.chunkLengths[0]
                     if maxRowNeeded > maxRows || maxColNeeded > maxCols { continue }
 
-                    var matchCount = 0
-                    for i in 0..<32 {
-                        let r = by + (i / w)
-                        let c = bx + (i % w)
-                        if hardBits[r][c] == syncMarker[i] { matchCount += 1 }
-                    }
+                    let matchCount = packedHardBits.matchCount(
+                        pattern: pattern,
+                        originX: bx,
+                        originY: by
+                    )
 
                     if matchCount >= (syncCount - tolerance) {
                         pushTopCandidate(Candidate(matchCount: matchCount, w: w, bx: bx, by: by))
