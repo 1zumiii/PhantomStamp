@@ -38,6 +38,38 @@ enum ScoreGridTopologyHypothesis: String, CaseIterable, Sendable {
             return false
         }
     }
+
+    var isMirrored: Bool {
+        switch self {
+        case .normalFlipped, .rotated90Flipped, .rotated180Flipped, .rotated270Flipped:
+            return true
+        case .normal, .rotated90, .rotated180, .rotated270:
+            return false
+        }
+    }
+
+    var displayName: String {
+        switch self {
+        case .normal: return "Normal"
+        case .normalFlipped: return "Mirrored"
+        case .rotated90: return "90° rotation"
+        case .rotated90Flipped: return "90° rotation + mirrored"
+        case .rotated180: return "180° rotation"
+        case .rotated180Flipped: return "180° rotation + mirrored"
+        case .rotated270: return "270° rotation"
+        case .rotated270Flipped: return "270° rotation + mirrored"
+        }
+    }
+
+    /// User-facing orientation of the input. The hypothesis itself is the inverse transform used
+    /// to normalize the recovered score grid, so pure 90/270-degree rotations swap here.
+    var detectedOrientationDisplayName: String {
+        switch self {
+        case .rotated90: return "270° rotation"
+        case .rotated270: return "90° rotation"
+        default: return displayName
+        }
+    }
 }
 
 /// Bit-packed hard-decision view used by sync-marker correlation.
@@ -137,6 +169,7 @@ struct MajorityVotingDiagnostics: Sendable {
     var bestSyncBitsMatched: Int
     var macroTileWidth: Int
     var votedMacroblockBitCount: Int
+    var topologyHypothesis: ScoreGridTopologyHypothesis
 }
 
 extension WatermarkService {
@@ -529,7 +562,8 @@ extension WatermarkService {
             let diag = MajorityVotingDiagnostics(
                 bestSyncBitsMatched: max(0, bestMatchCount),
                 macroTileWidth: bestW,
-                votedMacroblockBitCount: 0
+                votedMacroblockBitCount: 0,
+                topologyHypothesis: hypothesis
             )
             return SoftMajorityVotingAttempt(
                 bits: [],
@@ -560,7 +594,8 @@ extension WatermarkService {
                         let diag = MajorityVotingDiagnostics(
                             bestSyncBitsMatched: c.matchCount,
                             macroTileWidth: c.w,
-                            votedMacroblockBitCount: votedMacroblock.count
+                            votedMacroblockBitCount: votedMacroblock.count,
+                            topologyHypothesis: hypothesis
                         )
                         return SoftMajorityVotingAttempt(
                             bits: votedMacroblock,
@@ -585,7 +620,8 @@ extension WatermarkService {
         let diag = MajorityVotingDiagnostics(
             bestSyncBitsMatched: bestMatchCount,
             macroTileWidth: bestW,
-            votedMacroblockBitCount: voted.count
+            votedMacroblockBitCount: voted.count,
+            topologyHypothesis: hypothesis
         )
         return SoftMajorityVotingAttempt(
             bits: voted,

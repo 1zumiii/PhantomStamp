@@ -56,6 +56,7 @@ struct OperationDetailDisplay {
     var embedEmbeddingStrength: Double?
     var extractDeskewAngleDegrees: Double?
     var extractDeskewScale: Double?
+    var extractTopologyHypothesisRawValue: String?
     var extractGridOffsetXPx: Int?
     var extractGridOffsetYPx: Int?
     var extractMajoritySyncBits: Int?
@@ -83,6 +84,7 @@ struct OperationDetailDisplay {
         embedEmbeddingStrength: Double? = nil,
         extractDeskewAngleDegrees: Double? = nil,
         extractDeskewScale: Double? = nil,
+        extractTopologyHypothesisRawValue: String? = nil,
         extractGridOffsetXPx: Int? = nil,
         extractGridOffsetYPx: Int? = nil,
         extractMajoritySyncBits: Int? = nil,
@@ -108,6 +110,7 @@ struct OperationDetailDisplay {
         self.embedEmbeddingStrength = embedEmbeddingStrength
         self.extractDeskewAngleDegrees = extractDeskewAngleDegrees
         self.extractDeskewScale = extractDeskewScale
+        self.extractTopologyHypothesisRawValue = extractTopologyHypothesisRawValue
         self.extractGridOffsetXPx = extractGridOffsetXPx
         self.extractGridOffsetYPx = extractGridOffsetYPx
         self.extractMajoritySyncBits = extractMajoritySyncBits
@@ -156,19 +159,20 @@ extension OperationDetailDisplay {
             imagePixelWidth: iw,
             imagePixelHeight: ih,
             occurredAt: record.createdAt,
-            syncMatchCount: nil,
+            syncMatchCount: record.diagnostics?.syncMatchCount,
             embedVisited8x8BlockCount: nil,
             embedSmoothSkipped8x8BlockCount: nil,
             embedTextureVarianceThreshold: nil,
             embedEmbeddingStrength: nil,
-            extractDeskewAngleDegrees: nil,
-            extractDeskewScale: nil,
-            extractGridOffsetXPx: nil,
-            extractGridOffsetYPx: nil,
-            extractMajoritySyncBits: nil,
-            extractMacroTileWidth: nil,
-            extractRawBitGridRows: nil,
-            extractRawBitGridCols: nil,
+            extractDeskewAngleDegrees: record.diagnostics?.deskewAngleDegrees,
+            extractDeskewScale: record.diagnostics?.deskewScale,
+            extractTopologyHypothesisRawValue: record.diagnostics?.topologyHypothesisRawValue,
+            extractGridOffsetXPx: record.diagnostics?.gridOffsetXPx,
+            extractGridOffsetYPx: record.diagnostics?.gridOffsetYPx,
+            extractMajoritySyncBits: record.diagnostics?.majoritySyncBits,
+            extractMacroTileWidth: record.diagnostics?.macroTileWidth,
+            extractRawBitGridRows: record.diagnostics?.rawBitGridRows,
+            extractRawBitGridCols: record.diagnostics?.rawBitGridCols,
             persistedHistoryRecordId: nil
         )
     }
@@ -197,6 +201,7 @@ extension OperationDetailDisplay {
             embedEmbeddingStrength: record.embedEmbeddingStrength,
             extractDeskewAngleDegrees: record.extractDeskewAngleDegrees,
             extractDeskewScale: record.extractDeskewScale,
+            extractTopologyHypothesisRawValue: record.extractTopologyHypothesisRawValue,
             extractGridOffsetXPx: record.extractGridOffsetXPx,
             extractGridOffsetYPx: record.extractGridOffsetYPx,
             extractMajoritySyncBits: record.extractMajoritySyncBits,
@@ -310,7 +315,10 @@ extension OperationDetailDisplay {
     }
 
     private var extractGeometrySection: OperationDiagnosticsSectionModel? {
-        guard extractDeskewAngleDegrees != nil || extractDeskewScale != nil else { return nil }
+        guard extractDeskewAngleDegrees != nil
+                || extractDeskewScale != nil
+                || extractTopologyHypothesisRawValue != nil
+        else { return nil }
 
         var rows: [OperationDiagnosticsRow] = []
         if let angle = HistoryFormatters.formatDeskewAngle(degrees: extractDeskewAngleDegrees) {
@@ -318,6 +326,17 @@ extension OperationDetailDisplay {
         }
         if let scale = HistoryFormatters.formatDeskewScale(extractDeskewScale) {
             rows.append(OperationDiagnosticsRow(id: "scale", title: "Detected scale", value: scale, systemImage: "arrow.up.left.and.arrow.down.right"))
+        }
+        if let rawValue = extractTopologyHypothesisRawValue,
+           let topology = ScoreGridTopologyHypothesis(rawValue: rawValue)
+        {
+            rows.append(OperationDiagnosticsRow(
+                id: "topology",
+                title: "Detected orientation",
+                value: topology.detectedOrientationDisplayName,
+                systemImage: topology.isMirrored ? "arrow.left.and.right" : "rotate.right",
+                valueMonospaced: false
+            ))
         }
         let applied = HistoryFormatters.deskewWasApplied(
             angleDegrees: extractDeskewAngleDegrees,

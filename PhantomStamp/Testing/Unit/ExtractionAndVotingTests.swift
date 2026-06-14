@@ -132,9 +132,10 @@ enum ExtractionAndVotingTests {
 
             for hypothesis in ScoreGridTopologyHypothesis.allCases {
                 let observed = service.transformedSoftScoreGrid(canonicalScores, hypothesis: hypothesis)
-                let voted = service.applySoftMajorityVotingWithDiagnostics(to: observed).bits
-                let decoded = decodeVotedPayload(voted)
+                let result = service.applySoftMajorityVotingWithDiagnostics(to: observed)
+                let decoded = decodeVotedPayload(result.bits)
                 guard check(decoded == text) else { return (false, checks) }
+                guard check(result.diagnostics?.topologyHypothesis != nil) else { return (false, checks) }
             }
         }
 

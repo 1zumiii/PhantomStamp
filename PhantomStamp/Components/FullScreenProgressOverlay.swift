@@ -83,7 +83,7 @@ struct FullScreenWatermarkProgressOverlay: View {
                             .controlSize(.mini)
                             .tint(.secondary)
                         Spacer()
-                        Text("Keep the app open.")
+                        Text("Giving the pixels a moment.")
                             .font(.caption)
                             .foregroundStyle(.secondary)
                     }
@@ -197,4 +197,3 @@ struct FullScreenWatermarkProgressOverlay: View {
         FullScreenWatermarkProgressOverlay()
     }
 }
-

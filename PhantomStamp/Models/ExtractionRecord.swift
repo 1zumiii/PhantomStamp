@@ -6,6 +6,25 @@
 import SwiftUI
 import UIKit
 
+struct ExtractionDiagnosticsSnapshot: Equatable, Sendable {
+    var durationMs: Double
+    var syncMatchCount: Int?
+    var deskewAngleDegrees: Double?
+    var deskewScale: Double?
+    var topologyHypothesisRawValue: String?
+    var gridOffsetXPx: Int?
+    var gridOffsetYPx: Int?
+    var majoritySyncBits: Int?
+    var macroTileWidth: Int?
+    var rawBitGridRows: Int?
+    var rawBitGridCols: Int?
+}
+
+struct WatermarkExtractionResult: Equatable, Sendable {
+    var text: String
+    var diagnostics: ExtractionDiagnosticsSnapshot
+}
+
 enum ExtractionStatus: String, CaseIterable, Identifiable {
     case pending = "Pending"
     case extracted = "Extracted"
@@ -51,6 +70,7 @@ struct ExtractionRecord: Identifiable, Equatable {
     var failureReason: String?
     /// Wall-clock processing duration for extraction, when available.
     var durationMs: Double?
+    var diagnostics: ExtractionDiagnosticsSnapshot?
     var createdAt: Date
 
     init(
@@ -63,6 +83,7 @@ struct ExtractionRecord: Identifiable, Equatable {
         confidence: Double? = nil,
         failureReason: String? = nil,
         durationMs: Double? = nil,
+        diagnostics: ExtractionDiagnosticsSnapshot? = nil,
         createdAt: Date = Date()
     ) {
         self.id = id
@@ -74,7 +95,7 @@ struct ExtractionRecord: Identifiable, Equatable {
         self.confidence = confidence
         self.failureReason = failureReason
         self.durationMs = durationMs
+        self.diagnostics = diagnostics
         self.createdAt = createdAt
     }
 }
-

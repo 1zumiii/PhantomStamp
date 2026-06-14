@@ -195,16 +195,13 @@ final class HistoryViewModel: ObservableObject {
     }
 
     /// Deletes all records from SwiftData, then reloads from persistence
-    /// so the UI reflects the true SwiftData state even if a deletion partially fails.
+    /// so the UI reflects the true SwiftData state.
     func clearHistory(context: ModelContext) {
-        for record in records {
-            do {
-                try HistoryRecordService.deleteRecord(id: record.id, context: context)
-            } catch {
-                print("[HistoryViewModel] clearHistory failed for \(record.id): \(error)")
-            }
+        do {
+            try HistoryRecordService.deleteAllRecords(context: context)
+        } catch {
+            print("[HistoryViewModel] clearHistory failed: \(error)")
         }
-        // Reload from SwiftData rather than assuming all deletes succeeded
         loadRecords(context: context)
         showClearConfirmation = false
     }

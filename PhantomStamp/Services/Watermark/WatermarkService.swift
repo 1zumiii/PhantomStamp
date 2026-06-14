@@ -35,6 +35,7 @@ class WatermarkService: WatermarkServiceProtocol {
         var rawBitGridCols: Int
         var majorityBestSyncBits: Int?
         var majorityMacroTileWidth: Int?
+        var topologyHypothesis: ScoreGridTopologyHypothesis?
     }
 
     private func userAllowsWatermarkNotifications() async -> Bool {
@@ -181,10 +182,9 @@ class WatermarkService: WatermarkServiceProtocol {
         //
         // Empirically on large images, the "reassemble + RGB rebuild" stage can dominate,
         // so we reserve a meaningful slice of the bar for it to avoid the UI looking "stuck".
-        let prepEnd = 0.10          // validation + payload / macroblock
-        let colorEnd = 0.20         // YCbCr + slicing
-        let stripsEnd = 0.70        // concurrent strip embedding
-        // remaining 30% — reassemble Y + RGB rebuild
+        let prepEnd = 0.25
+        let colorEnd = 0.50
+        let stripsEnd = 0.75
 
         let historyStarted = CFAbsoluteTimeGetCurrent()
         let varianceGainCurveSnapshot: VarianceGainCurve? = await MainActor.run {
@@ -215,29 +215,21 @@ class WatermarkService: WatermarkServiceProtocol {
             if image.size.width < minSize || image.size.height < minSize {
                 throw WatermarkError.imageTooSmall
             }
-            reportProgress(step: .preparation, percentage: prepEnd * 0.20)
 
             // Convert the text to binary and apply Forward Error Correction (FEC)
-            reportProgress(step: .fecEncoding, percentage: prepEnd * 0.35)
             let eccBits = encodeFEC(text: text)
-            reportProgress(step: .fecEncoding, percentage: prepEnd * 0.55)
 
             // Concatenate the sync header, and form a complete single watermark period
             let syncBits = getSyncMarkerBits()
             let payloadBits = syncBits + eccBits
-            reportProgress(step: .macroblockBuild, percentage: prepEnd * 0.80)
             // Convert the one-dimensional data stream to a two-dimensional macroblock (to prevent rasterization issues)
             let macroblock = build2DTile(from: payloadBits)
-            reportProgress(step: .macroblockBuild, percentage: prepEnd)
+            reportProgress(step: .preparation, percentage: prepEnd)
 
             // ==========================================
             // Step 2: Color / layout → (prepEnd, colorEnd]
             // ==========================================
             reportProgress(step: .colorConversion, percentage: prepEnd)
-            // `convertToYCbCr` can take a long time on large images. Without an intermediate tick, the UI may
-            // appear to "start" around ~14–15% (next post after Y is ready) because the bar never paints 10%.
-            let colorMidDuringConvert = prepEnd + (colorEnd - prepEnd) * 0.22
-            reportProgress(step: .colorConversion, percentage: colorMidDuringConvert)
             guard var ycbcrImage = convertToYCbCr(image: image) else {
                 #if DEBUG
                 let pxW = Int(image.size.width * image.scale)
@@ -247,12 +239,11 @@ class WatermarkService: WatermarkServiceProtocol {
                 throw WatermarkError.processingError
             }
             let yChannel = ycbcrImage.Y
-            reportProgress(step: .colorConversion, percentage: prepEnd + (colorEnd - prepEnd) * 0.45)
 
             // slice the Y channel into multiple strips (the height must be a multiple of 8)
             let stripHeight = 80
             var imageStrips = sliceImage(yChannel, heightPerStrip: stripHeight)
-            reportProgress(step: .stripSlicing, percentage: colorEnd)
+            reportProgress(step: .colorConversion, percentage: colorEnd)
 
             // ==========================================
             // Step 3: Strip processing → (colorEnd, stripsEnd]
@@ -266,6 +257,7 @@ class WatermarkService: WatermarkServiceProtocol {
             )
 
             let stripCount = imageStrips.count
+            let stripProgressStride = max(1, (stripCount + 4) / 5)
             var embedVisited8x8Blocks = 0
             var embedSmoothSkipped8x8Blocks = 0
             try await withThrowingTaskGroup(of: (ImageStrip, Int, Int).self) { group in
@@ -293,7 +285,9 @@ class WatermarkService: WatermarkServiceProtocol {
                     embedVisited8x8Blocks += visited
                     embedSmoothSkipped8x8Blocks += skipped
                     completedStrips += 1
-                    if stripCount > 0 {
+                    if stripCount > 0,
+                       completedStrips % stripProgressStride == 0 || completedStrips == stripCount
+                    {
                         let t = colorEnd + stripSpan * Double(completedStrips) / Double(stripCount)
                         reportProgress(step: .processingStrips, percentage: t)
                     }
@@ -304,13 +298,11 @@ class WatermarkService: WatermarkServiceProtocol {
             // ==========================================
             // Step 4: Reassemble → (stripsEnd, 1.0]
             // ==========================================
-            reportProgress(step: .reassembling, percentage: stripsEnd)
+            reportProgress(step: .reassembling, percentage: 0.80)
             
             // overwrite the processed strips back to the original Y channel matrix.
             // the extra 1~7 pixels on the right side and bottom of the original matrix will be kept intact, and not be destroyed.
-            reportProgress(step: .reassembling, percentage: stripsEnd + (1 - stripsEnd) * 0.18)
             reassembleStrips(imageStrips, into: &ycbcrImage.Y)
-            reportProgress(step: .reassembling, percentage: stripsEnd + (1 - stripsEnd) * 0.52)
             
 
             // ==========================================
@@ -326,7 +318,7 @@ class WatermarkService: WatermarkServiceProtocol {
 
 
             // Final color conversion back to UIImage.
-            reportProgress(step: .rgbRebuild, percentage: stripsEnd + (1 - stripsEnd) * 0.72)
+            reportProgress(step: .rgbRebuild, percentage: 0.90)
 
             guard let finalImage = convertToUIImage(from: ycbcrImage) else {
                 #if DEBUG
@@ -334,7 +326,7 @@ class WatermarkService: WatermarkServiceProtocol {
                 #endif
                 throw WatermarkError.processingError
             }
-            reportProgress(step: .reassembling, percentage: 1)
+            reportProgress(step: .rgbRebuild, percentage: 1)
 
             if shouldHideProgressbar, reportsProgressNotifications {
                 NotificationCenter.default.post(name: AppConstants.Notifications.watermarkProgressOverlayDidEnd, object: nil)
@@ -388,52 +380,76 @@ class WatermarkService: WatermarkServiceProtocol {
     // Extract Watermark
     // ==========================================
     func extractWatermark(from image: UIImage) async throws -> String {
-        try await extractWatermark(from: image, sourceImageName: nil, shouldHideProgressbar: true)
+        try await performExtraction(
+            from: image,
+            sourceImageName: nil,
+            shouldHideProgressbar: true,
+            reportsProgressNotifications: true
+        ).text
     }
 
     func extractWatermark(from image: UIImage, sourceImageName: String?) async throws -> String {
-        try await extractWatermark(from: image, sourceImageName: sourceImageName, shouldHideProgressbar: true)
+        try await performExtraction(
+            from: image,
+            sourceImageName: sourceImageName,
+            shouldHideProgressbar: true,
+            reportsProgressNotifications: true
+        ).text
     }
 
     /// Extract watermark from a single image.
     /// - Parameter shouldHideProgressbar: If false, the overlay will stay visible (useful for multi-file sequential processing).
     func extractWatermark(from image: UIImage, shouldHideProgressbar: Bool = true) async throws -> String {
-        try await extractWatermark(from: image, sourceImageName: nil, shouldHideProgressbar: shouldHideProgressbar)
+        try await performExtraction(
+            from: image,
+            sourceImageName: nil,
+            shouldHideProgressbar: shouldHideProgressbar,
+            reportsProgressNotifications: true
+        ).text
     }
 
     /// Extract watermark from a single image with source file name for history display.
     func extractWatermark(from image: UIImage, sourceImageName: String?, shouldHideProgressbar: Bool = true) async throws -> String {
-        try await extractWatermark(
+        try await performExtraction(
             from: image,
             sourceImageName: sourceImageName,
             shouldHideProgressbar: shouldHideProgressbar,
+            reportsProgressNotifications: true
+        ).text
+    }
+
+    func extractWatermarkWithDiagnostics(
+        from image: UIImage,
+        sourceImageName: String?
+    ) async throws -> WatermarkExtractionResult {
+        try await performExtraction(
+            from: image,
+            sourceImageName: sourceImageName,
+            shouldHideProgressbar: true,
             reportsProgressNotifications: true
         )
     }
 
     /// Extract without posting production overlay / per-step progress notifications.
     func extractWatermarkSilently(from image: UIImage) async throws -> String {
-        try await extractWatermark(
+        try await performExtraction(
             from: image,
             sourceImageName: nil,
             shouldHideProgressbar: false,
             reportsProgressNotifications: false
-        )
+        ).text
     }
 
-    private func extractWatermark(
+    private func performExtraction(
         from image: UIImage,
         sourceImageName: String?,
         shouldHideProgressbar: Bool,
         reportsProgressNotifications: Bool
-    ) async throws -> String {
+    ) async throws -> WatermarkExtractionResult {
         if shouldHideProgressbar, reportsProgressNotifications {
             NotificationCenter.default.post(name: AppConstants.Notifications.watermarkProgressOverlayDidStart, object: nil)
         }
-        if reportsProgressNotifications {
-            // ensure the ViewModel has enough time to process the AsyncSequence notifications, and let SwiftUI completely render the progress bar on the screen.
-            try? await Task.sleep(nanoseconds: 300_000_000)
-        }
+        if reportsProgressNotifications { await Task.yield() }
 
         let throttler = ProgressThrottler()
         
@@ -457,7 +473,6 @@ class WatermarkService: WatermarkServiceProtocol {
 
         do {
             reportProgress(step: .extractPreparation, percentage: 0)
-            reportProgress(step: .extractPreparation, percentage: 0.06)
 
             // important fix: use Task.detached to force the heavy matrix computation to run in the background concurrency pool
             let work = try await Task.detached(priority: .userInitiated) { [weak self] in
@@ -468,7 +483,7 @@ class WatermarkService: WatermarkServiceProtocol {
                     throw WatermarkError.processingError
                 }
                 let yChannel = ycbcrImage.Y
-                await reportProgress(step: .extractConvertToYCbCr, percentage: 0.12)
+                await reportProgress(step: .extractConvertToYCbCr, percentage: 0.20)
 
 
                 // ==========================================
@@ -488,22 +503,20 @@ class WatermarkService: WatermarkServiceProtocol {
                     print("[WatermarkService] geometric transformation too small, skipping deskewing.")
                 }
                 #endif
-                await reportProgress(step: .extractDetectTransforms, percentage: 0.20)
-
                 // ==========================================
                 // [New Feature] Spatial Domain Inverse Interpolation Correction (Deskewing)
                 // ==========================================
                 let deskewedYChannel = await self.deskewImage(yChannel, angle: transformParams.angle, scale: transformParams.scale)
-                await reportProgress(step: .extractDeskew, percentage: 0.28)
+                await reportProgress(step: .extractDetectTransforms, percentage: 0.40)
 
 
                 // 2. physical and logical alignment
                 let gridScan = await self.findGridOffsetAndSyncMarker(in: deskewedYChannel, onOffsetProgress: { t in
-                    // Map alignment scan into [0.12, 0.55].
-                    let pct = 0.12 + (0.55 - 0.12) * min(max(t, 0), 1)
+                    let coarse = floor(min(max(t, 0), 1) * 4) / 4
+                    let pct = 0.40 + 0.40 * coarse
                     reportProgress(step: .extractOffsetScan, percentage: pct)
                 })
-                await reportProgress(step: .extractOffsetScan, percentage: 0.55)
+                await reportProgress(step: .extractOffsetScan, percentage: 0.80)
 
                 guard let gridOffset = gridScan.offset else {
                     return ExtractMatrixWorkResult(
@@ -516,7 +529,8 @@ class WatermarkService: WatermarkServiceProtocol {
                         rawBitGridRows: 0,
                         rawBitGridCols: 0,
                         majorityBestSyncBits: nil,
-                        majorityMacroTileWidth: nil
+                        majorityMacroTileWidth: nil,
+                        topologyHypothesis: nil
                     )
                 }
 
@@ -528,7 +542,7 @@ class WatermarkService: WatermarkServiceProtocol {
                 // per-block diffs are heavily attenuated, and confidence-weighted voting is what
                 // keeps the folded macro-tile inside the Hamming(8,4) correction budget.
                 let rawExtractedScores = await self.extractSoftBitsWithOffset(deskewedYChannel, offset: gridOffset)
-                await reportProgress(step: .extractBitGrid, percentage: 0.72)
+                await reportProgress(step: .extractBitGrid, percentage: 0.90)
 
                 // 4. data recovery and decoding
                 let voting = await self.applySoftMajorityVotingWithDiagnostics(
@@ -536,7 +550,6 @@ class WatermarkService: WatermarkServiceProtocol {
                     preferredHypothesis: gridScan.topologyHypothesis
                 )
                 let votedBits = voting.bits
-                await reportProgress(step: .extractMajorityVoting, percentage: 0.85)
 
                 #if DEBUG
                 let rows = rawExtractedScores.count
@@ -557,7 +570,8 @@ class WatermarkService: WatermarkServiceProtocol {
                     rawBitGridRows: rawExtractedScores.count,
                     rawBitGridCols: rawExtractedScores.first?.count ?? 0,
                     majorityBestSyncBits: maj?.bestSyncBitsMatched,
-                    majorityMacroTileWidth: maj?.macroTileWidth
+                    majorityMacroTileWidth: maj?.macroTileWidth,
+                    topologyHypothesis: maj?.topologyHypothesis ?? gridScan.topologyHypothesis
                 )
             }.value // wait for the background computation result
             extractWorkForHistory = work
@@ -590,7 +604,7 @@ class WatermarkService: WatermarkServiceProtocol {
                 return codewordBits
             }
 
-            reportProgress(step: .extractDecodeFEC, percentage: 0.90)
+            reportProgress(step: .extractDecodeFEC, percentage: 0.95)
             
             for lenGuess in 1...16 {
                 let eccCount = eccBitCount(messageLengthBytes: lenGuess)
@@ -619,7 +633,13 @@ class WatermarkService: WatermarkServiceProtocol {
                             )
                         }
                     }
-                    return correctedText
+                    return WatermarkExtractionResult(
+                        text: correctedText,
+                        diagnostics: extractionDiagnostics(
+                            from: work,
+                            durationMs: (CFAbsoluteTimeGetCurrent() - historyStarted) * 1000
+                        )
+                    )
                 }
             }
 
@@ -764,10 +784,19 @@ class WatermarkService: WatermarkServiceProtocol {
     /// Sequentially extract watermark from multiple images (best effort).
     /// - Returns: `[String?]` aligned with input order; failures produce `nil` but do not stop the batch.
     func extractWatermarkBestEffort(from images: [UIImage]) async -> [String?] {
-        await extractWatermarkBestEffort(from: images, sourceImageNames: nil)
+        await extractWatermarkBestEffortWithDiagnostics(from: images, sourceImageNames: nil)
+            .map { $0?.text }
     }
 
     func extractWatermarkBestEffort(from images: [UIImage], sourceImageNames: [String]?) async -> [String?] {
+        await extractWatermarkBestEffortWithDiagnostics(from: images, sourceImageNames: sourceImageNames)
+            .map { $0?.text }
+    }
+
+    func extractWatermarkBestEffortWithDiagnostics(
+        from images: [UIImage],
+        sourceImageNames: [String]?
+    ) async -> [WatermarkExtractionResult?] {
         guard !images.isEmpty else { return [] }
 
         batchUserNotificationDepth += 1
@@ -780,7 +809,7 @@ class WatermarkService: WatermarkServiceProtocol {
             userInfo: ["payload": BatchProgressPayload(completed: 0, total: images.count, current: 0)]
         )
 
-        var outputs: [String?] = Array(repeating: nil, count: images.count)
+        var outputs: [WatermarkExtractionResult?] = Array(repeating: nil, count: images.count)
 
         for (idx, img) in images.enumerated() {
             NotificationCenter.default.post(
@@ -790,7 +819,12 @@ class WatermarkService: WatermarkServiceProtocol {
             )
             do {
                 let name = sourceImageNames?.indices.contains(idx) == true ? sourceImageNames?[idx] : nil
-                let extracted = try await extractWatermark(from: img, sourceImageName: name, shouldHideProgressbar: false)
+                let extracted = try await performExtraction(
+                    from: img,
+                    sourceImageName: name,
+                    shouldHideProgressbar: false,
+                    reportsProgressNotifications: true
+                )
                 outputs[idx] = extracted
             } catch {
                 outputs[idx] = nil
@@ -907,6 +941,7 @@ class WatermarkService: WatermarkServiceProtocol {
                     Double($0.deskewAngleRadians) * 180.0 / .pi
                 },
                 extractDeskewScale: work.map { Double($0.deskewScale) },
+                extractTopologyHypothesisRawValue: work?.topologyHypothesis?.rawValue,
                 extractGridOffsetXPx: work?.gridOffsetX,
                 extractGridOffsetYPx: work?.gridOffsetY,
                 extractMajoritySyncBits: work?.majorityBestSyncBits,
@@ -917,6 +952,25 @@ class WatermarkService: WatermarkServiceProtocol {
             HistoryRecordService.insertAndSave(record, context: ctx)
         }
     }
+
+    private func extractionDiagnostics(
+        from work: ExtractMatrixWorkResult,
+        durationMs: Double
+    ) -> ExtractionDiagnosticsSnapshot {
+        ExtractionDiagnosticsSnapshot(
+            durationMs: durationMs,
+            syncMatchCount: work.offsetScanBestSyncBits,
+            deskewAngleDegrees: Double(work.deskewAngleRadians) * 180.0 / .pi,
+            deskewScale: Double(work.deskewScale),
+            topologyHypothesisRawValue: work.topologyHypothesis?.rawValue,
+            gridOffsetXPx: work.gridOffsetX,
+            gridOffsetYPx: work.gridOffsetY,
+            majoritySyncBits: work.majorityBestSyncBits,
+            macroTileWidth: work.majorityMacroTileWidth,
+            rawBitGridRows: work.rawBitGridRows > 0 ? work.rawBitGridRows : nil,
+            rawBitGridCols: work.rawBitGridCols > 0 ? work.rawBitGridCols : nil
+        )
+    }
     
     // MARK: - Progress Throttler
     final class ProgressThrottler: @unchecked Sendable {
@@ -925,11 +979,15 @@ class WatermarkService: WatermarkServiceProtocol {
         private let lock = NSLock()
         
         func shouldReport(_ pct: Double) -> Bool {
-        
-            if pct <= 0.0 || pct >= 1.0 { return true }
-            
             lock.lock()
             defer { lock.unlock() }
+
+            guard pct > lastPct + 1e-9 else { return false }
+            if pct <= 0.0 || pct >= 1.0 {
+                lastTime = CFAbsoluteTimeGetCurrent()
+                lastPct = pct
+                return true
+            }
             
             let now = CFAbsoluteTimeGetCurrent()
             if now - lastTime > 0.05 || (pct - lastPct) >= 0.01 {

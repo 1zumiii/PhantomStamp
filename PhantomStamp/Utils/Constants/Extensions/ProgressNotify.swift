@@ -36,28 +36,44 @@ extension AppConstants {
     // Fixed all possible operation stages
     enum WatermarkStep: String {
         // Embedding pipeline (frequency-domain watermark).
-        case preparation = "Preparing payload"
-        case fecEncoding = "Applying FEC"
-        case macroblockBuild = "Building 2D tile"
+        case preparation = "Packing the secret into a tiny suitcase"
+        case fecEncoding = "Adding a little protection for the journey"
+        case macroblockBuild = "Teaching the message its hiding pattern"
 
-        case colorConversion = "Extracting luminance (Y)"
-        case stripSlicing = "Slicing luminance into strips"
+        case colorConversion = "Finding a quiet corner among the colors"
+        case stripSlicing = "Making room between the pixels"
 
-        case processingStrips = "Embedding bits into DCT blocks"
+        case processingStrips = "Teaching the pixels to keep a secret"
 
-        case reassembling = "Reassembling luminance"
-        case rgbRebuild = "Rebuilding final image"
+        case reassembling = "Putting the picture back together"
+        case rgbRebuild = "Polishing the last few pixels"
 
         // Extraction pipeline (bit recovery + decode).
-        case extractPreparation = "Preparing extraction"
-        case extractConvertToYCbCr = "Convert To YCbCr"
-        case extractOffsetScan = "Perform offset scan"
-        case extractBitGrid = "Extract Bits"
-        case extractMajorityVoting = "Apply Majority Voting"
-        case extractDecodeFEC = "Decode FEC"
+        case extractPreparation = "Listening for something hidden"
+        case extractConvertToYCbCr = "Looking beneath the colors"
+        case extractOffsetScan = "Following the faint pixel trail"
+        case extractBitGrid = "Gathering the scattered clues"
+        case extractMajorityVoting = "Letting the clues compare notes"
+        case extractDecodeFEC = "Opening the message"
 
-        case extractDetectTransforms = "Detect Geometric Transforms"
-        case extractDeskew = "Deskew Image"
+        case extractDetectTransforms = "Checking which way the picture is facing"
+        case extractDeskew = "Straightening the picture frame"
+
+        var isExtraction: Bool {
+            switch self {
+            case .extractPreparation,
+                 .extractConvertToYCbCr,
+                 .extractOffsetScan,
+                 .extractBitGrid,
+                 .extractMajorityVoting,
+                 .extractDecodeFEC,
+                 .extractDetectTransforms,
+                 .extractDeskew:
+                return true
+            default:
+                return false
+            }
+        }
     }
 }
 

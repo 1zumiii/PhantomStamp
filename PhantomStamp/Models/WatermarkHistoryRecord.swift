@@ -72,6 +72,8 @@ final class WatermarkHistoryRecord {
     var extractDeskewAngleDegrees: Double?
     /// Detected isotropic scale applied during deskew (1.0 = identity).
     var extractDeskewScale: Double?
+    /// Final D4 topology hypothesis selected by FEC (rotation / mirrored orientation).
+    var extractTopologyHypothesisRawValue: String?
     /// Chosen physical pixel offset of the 8×8 grid (sub-block alignment).
     var extractGridOffsetXPx: Int?
     var extractGridOffsetYPx: Int?
@@ -103,6 +105,7 @@ final class WatermarkHistoryRecord {
         embedEmbeddingStrength: Double? = nil,
         extractDeskewAngleDegrees: Double? = nil,
         extractDeskewScale: Double? = nil,
+        extractTopologyHypothesisRawValue: String? = nil,
         extractGridOffsetXPx: Int? = nil,
         extractGridOffsetYPx: Int? = nil,
         extractMajoritySyncBits: Int? = nil,
@@ -129,6 +132,7 @@ final class WatermarkHistoryRecord {
         self.embedEmbeddingStrength = embedEmbeddingStrength
         self.extractDeskewAngleDegrees = extractDeskewAngleDegrees
         self.extractDeskewScale = extractDeskewScale
+        self.extractTopologyHypothesisRawValue = extractTopologyHypothesisRawValue
         self.extractGridOffsetXPx = extractGridOffsetXPx
         self.extractGridOffsetYPx = extractGridOffsetYPx
         self.extractMajoritySyncBits = extractMajoritySyncBits
