@@ -62,6 +62,9 @@ struct ExtractionRecord: Identifiable, Equatable {
     var imageName: String
     /// Input image (the stamped / possibly watermarked source).
     var image: UIImage?
+    /// Original source dimensions, retained even when `image` is compacted to a display preview.
+    var imagePixelWidth: Int?
+    var imagePixelHeight: Int?
     /// Output image after extraction (e.g. watermark removed / recovered image), when available.
     var extractedImage: UIImage?
     var status: ExtractionStatus
@@ -77,6 +80,8 @@ struct ExtractionRecord: Identifiable, Equatable {
         id: UUID = UUID(),
         imageName: String,
         image: UIImage? = nil,
+        imagePixelWidth: Int? = nil,
+        imagePixelHeight: Int? = nil,
         extractedImage: UIImage? = nil,
         status: ExtractionStatus = .pending,
         message: String? = nil,
@@ -89,6 +94,8 @@ struct ExtractionRecord: Identifiable, Equatable {
         self.id = id
         self.imageName = imageName
         self.image = image
+        self.imagePixelWidth = imagePixelWidth
+        self.imagePixelHeight = imagePixelHeight
         self.extractedImage = extractedImage
         self.status = status
         self.message = message

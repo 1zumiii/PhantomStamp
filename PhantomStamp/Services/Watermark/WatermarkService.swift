@@ -8,6 +8,38 @@ import Accelerate
 import SwiftData
 
 class WatermarkService: WatermarkServiceProtocol {
+    nonisolated private final class ProgressDrainObserver: @unchecked Sendable {
+        private let lock = NSLock()
+        private var token: NSObjectProtocol?
+        private var isCancelled = false
+
+        func install(_ token: NSObjectProtocol) {
+            lock.lock()
+            if isCancelled {
+                lock.unlock()
+                NotificationCenter.default.removeObserver(token)
+                return
+            }
+            self.token = token
+            lock.unlock()
+        }
+
+        func cancel() {
+            lock.lock()
+            isCancelled = true
+            let token = self.token
+            self.token = nil
+            lock.unlock()
+            if let token {
+                NotificationCenter.default.removeObserver(token)
+            }
+        }
+
+        deinit {
+            cancel()
+        }
+    }
+
     /// Stateless image/DSP implementation. Keeping it outside the service prevents UI-facing
     /// orchestration state from leaking into detached algorithm work.
     nonisolated let algorithms = WatermarkAlgorithmCore()
@@ -63,23 +95,40 @@ class WatermarkService: WatermarkServiceProtocol {
             await work()
         }
     }
-    private func awaitPerFileProgressDrain(current: Int, timeoutSeconds: Double = 60.0) async -> Bool {
-        // If the overlay isn't listening (e.g. tests or headless runs), don't block forever.
+    private func makePerFileProgressDrainEvents(current: Int) -> AsyncStream<Void> {
+        let name = AppConstants.Notifications.watermarkPerFileProgressDidDrain
+        return AsyncStream(bufferingPolicy: .bufferingNewest(1)) { continuation in
+            let observer = ProgressDrainObserver()
+            let token = NotificationCenter.default.addObserver(
+                forName: name,
+                object: nil,
+                queue: nil
+            ) { notification in
+                guard let payload = notification.userInfo?["payload"] as? PerFileProgressDrainPayload,
+                      payload.current == current
+                else { return }
+                continuation.yield(())
+                continuation.finish()
+            }
+            observer.install(token)
+            continuation.onTermination = { @Sendable _ in
+                observer.cancel()
+            }
+        }
+    }
+
+    private func awaitPerFileProgressDrain(
+        events: AsyncStream<Void>,
+        timeoutSeconds: Double = 5.0
+    ) async -> Bool {
+        // The stream is created before processing starts, so an early UI ACK is buffered instead
+        // of being lost. The short timeout only protects tests/headless runs.
         let deadlineNs = UInt64(timeoutSeconds * 1_000_000_000)
 
         return await withTaskGroup(of: Bool.self) { group in
             group.addTask {
-                // `AppConstants.Notifications` may be main-actor isolated under Swift 6 default isolation.
-                let name = await MainActor.run { AppConstants.Notifications.watermarkPerFileProgressDidDrain }
-                let stream = NotificationCenter.default.notifications(
-                    named: name,
-                    object: nil
-                )
-                for await n in stream {
-                    guard let payload = n.userInfo?["payload"] as? PerFileProgressDrainPayload else { continue }
-                    if payload.current == current {
-                        return true
-                    }
+                for await _ in events {
+                    return true
                 }
                 return false
             }
@@ -767,10 +816,6 @@ class WatermarkService: WatermarkServiceProtocol {
                     bits: eccBits,
                     expectedMessageLengthBytes: lenGuess
                 ) {
-                    reportProgress(step: .extractDecodeFEC, percentage: 1.0)
-                    if shouldHideProgressbar, reportsProgressNotifications {
-                        NotificationCenter.default.post(name: AppConstants.Notifications.watermarkProgressOverlayDidEnd, object: nil)
-                    }
                     await persistExtractHistoryIfNeeded(
                         succeeded: true,
                         image: image,
@@ -780,6 +825,12 @@ class WatermarkService: WatermarkServiceProtocol {
                         startedAt: historyStarted,
                         work: work
                     )
+                    // History thumbnail generation and persistence are part of the operation.
+                    // Only publish 100% after that work is complete.
+                    reportProgress(step: .extractDecodeFEC, percentage: 1.0)
+                    if shouldHideProgressbar, reportsProgressNotifications {
+                        NotificationCenter.default.post(name: AppConstants.Notifications.watermarkProgressOverlayDidEnd, object: nil)
+                    }
                     if reportsProgressNotifications, !shouldSuppressSingleOperationNotification {
                         await deliverWatermarkNotificationIfAllowed {
                             await WatermarkOperationNotificationService.notifySingleExtractFinished(
@@ -801,11 +852,6 @@ class WatermarkService: WatermarkServiceProtocol {
 
             throw WatermarkError.extractFailed
         } catch {
-            if shouldHideProgressbar, reportsProgressNotifications {
-                NotificationCenter.default.post(name: AppConstants.Notifications.watermarkProgressOverlayDidEnd, object: nil)
-            }
-            // Ensure the bar completes before ending for UX.
-            reportProgress(step: .extractDecodeFEC, percentage: 1.0)
             await persistExtractHistoryIfNeeded(
                 succeeded: false,
                 image: image,
@@ -815,6 +861,11 @@ class WatermarkService: WatermarkServiceProtocol {
                 startedAt: historyStarted,
                 work: extractWorkForHistory
             )
+            // Ensure finalization is reflected before the overlay reaches completion.
+            reportProgress(step: .extractDecodeFEC, percentage: 1.0)
+            if shouldHideProgressbar, reportsProgressNotifications {
+                NotificationCenter.default.post(name: AppConstants.Notifications.watermarkProgressOverlayDidEnd, object: nil)
+            }
             if reportsProgressNotifications, !shouldSuppressSingleOperationNotification {
                 await deliverWatermarkNotificationIfAllowed {
                     await WatermarkOperationNotificationService.notifySingleExtractFinished(success: false, extractedText: nil, error: error)
@@ -858,10 +909,11 @@ class WatermarkService: WatermarkServiceProtocol {
                     userInfo: ["payload": BatchProgressPayload(completed: idx, total: images.count, current: idx)]
                 )
                 let name = sourceImageNames?.indices.contains(idx) == true ? sourceImageNames?[idx] : nil
+                let drainEvents = makePerFileProgressDrainEvents(current: idx)
                 let watermarked = try await embedWatermark(into: img, text: text, sourceImageName: name, shouldHideProgressbar: false)
                 outputs.append(watermarked)
                 // Pace batch: wait until the per-file progress bar is fully displayed.
-                _ = await awaitPerFileProgressDrain(current: idx)
+                _ = await awaitPerFileProgressDrain(events: drainEvents)
                 NotificationCenter.default.post(
                     name: AppConstants.Notifications.watermarkBatchProgress,
                     object: nil,
@@ -914,9 +966,10 @@ class WatermarkService: WatermarkServiceProtocol {
                     userInfo: ["payload": BatchProgressPayload(completed: idx, total: images.count, current: idx)]
                 )
                 let name = sourceImageNames?.indices.contains(idx) == true ? sourceImageNames?[idx] : nil
+                let drainEvents = makePerFileProgressDrainEvents(current: idx)
                 let extracted = try await extractWatermark(from: img, sourceImageName: name, shouldHideProgressbar: false)
                 outputs.append(extracted)
-                _ = await awaitPerFileProgressDrain(current: idx)
+                _ = await awaitPerFileProgressDrain(events: drainEvents)
                 NotificationCenter.default.post(
                     name: AppConstants.Notifications.watermarkBatchProgress,
                     object: nil,
@@ -976,6 +1029,7 @@ class WatermarkService: WatermarkServiceProtocol {
                 object: nil,
                 userInfo: ["payload": BatchProgressPayload(completed: idx, total: images.count, current: idx)]
             )
+            let drainEvents = makePerFileProgressDrainEvents(current: idx)
             do {
                 let name = sourceImageNames?.indices.contains(idx) == true ? sourceImageNames?[idx] : nil
                 let extracted = try await performExtraction(
@@ -988,7 +1042,7 @@ class WatermarkService: WatermarkServiceProtocol {
             } catch {
                 outputs[idx] = nil
             }
-            _ = await awaitPerFileProgressDrain(current: idx)
+            _ = await awaitPerFileProgressDrain(events: drainEvents)
             NotificationCenter.default.post(
                 name: AppConstants.Notifications.watermarkBatchProgress,
                 object: nil,

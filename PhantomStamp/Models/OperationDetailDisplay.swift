@@ -139,14 +139,11 @@ extension OperationDetailDisplay {
         case .extracted: detailStatus = .success
         case .failed: detailStatus = .failed
         }
-        let iw: Int?
-        let ih: Int?
-        if let img = record.image {
-            iw = Int((img.size.width * img.scale).rounded())
-            ih = Int((img.size.height * img.scale).rounded())
-        } else {
-            iw = nil
-            ih = nil
+        let iw = record.imagePixelWidth ?? record.image.map {
+            Int(($0.size.width * $0.scale).rounded())
+        }
+        let ih = record.imagePixelHeight ?? record.image.map {
+            Int(($0.size.height * $0.scale).rounded())
         }
         self.init(
             imageName: record.imageName,

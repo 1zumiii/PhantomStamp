@@ -231,6 +231,49 @@ enum WatermarkLocalDamageAttackTests {
     }
 
     @MainActor
+    static func runBatchExtractionAndPrint(fileCount: Int = 3) async {
+        #if DEBUG
+        guard let image = ImagePipelineTests.loadBundledTestUIImage() else {
+            print("[WatermarkLocalDamageAttackTests] FAIL batch extraction: bundled image missing")
+            return
+        }
+
+        let suite = UserDefaults(
+            suiteName: "phantomstamp.testing.batch-extraction.\(UUID().uuidString)"
+        )!
+        let settings = UserSettingsStore(defaults: suite)
+        settings.textureVarianceThreshold = -1
+        settings.autoLogWatermarkEmbedToHistory = false
+        let service = WatermarkService()
+        service.settingsStore = settings
+        let expectedText = "Batch OK"
+
+        guard let watermarked = try? await service.embedWatermarkSilently(
+            into: image,
+            text: expectedText
+        ) else {
+            print("[WatermarkLocalDamageAttackTests] FAIL batch extraction: embedding failed")
+            return
+        }
+
+        let count = max(2, fileCount)
+        let started = CFAbsoluteTimeGetCurrent()
+        let results = await service.extractWatermarkBestEffortWithDiagnostics(
+            from: Array(repeating: watermarked, count: count),
+            sourceImageNames: (0..<count).map { "Batch-\($0 + 1).png" }
+        )
+        let elapsed = CFAbsoluteTimeGetCurrent() - started
+        let passed = results.allSatisfy { $0?.text == expectedText }
+        print(
+            "[WatermarkLocalDamageAttackTests] \(passed ? "PASS" : "FAIL") "
+                + "batch extraction files=\(count) "
+                + "elapsed=\(String(format: "%.3f", elapsed))s "
+                + "success=\(results.compactMap { $0 }.count)/\(count)"
+        )
+        #endif
+    }
+
+    @MainActor
     static func runDownscaledScribbleOnBundledTestImg(
         scale: CGFloat = 0.518
     ) async -> DownscaledDamageReport {

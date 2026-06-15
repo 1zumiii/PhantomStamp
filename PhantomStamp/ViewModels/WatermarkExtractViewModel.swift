@@ -9,6 +9,7 @@ import UIKit
 @MainActor
 @Observable
 final class WatermarkExtractViewModel {
+    private static let retainedPreviewMaxPixelEdge: CGFloat = 1_200
     private let watermarkService: any WatermarkServiceProtocol
 
     init(watermarkService: any WatermarkServiceProtocol) {
@@ -51,6 +52,8 @@ final class WatermarkExtractViewModel {
             ExtractionRecord(
                 imageName: $0.displayName,
                 image: $0.image,
+                imagePixelWidth: $0.width,
+                imagePixelHeight: $0.height,
                 status: .pending
             )
         }
@@ -113,11 +116,13 @@ final class WatermarkExtractViewModel {
                 records[index].durationMs = (CFAbsoluteTimeGetCurrent() - t0) * 1000
                 records[index].diagnostics = nil
             }
+            compactRecordImage(at: index)
             return
         }
 
-        let images = indexImagePairs.map(\.image)
+        var images = indexImagePairs.map(\.image)
         let names = indexImagePairs.map { records[$0.index].imageName }
+        let recordIndexes = indexImagePairs.map(\.index)
         let detailedResults: [WatermarkExtractionResult?]?
         let fallbackResults: [String?]?
         if let svc = watermarkService as? WatermarkService {
@@ -131,8 +136,13 @@ final class WatermarkExtractViewModel {
             fallbackResults = await watermarkService.extractWatermarkBestEffort(from: images)
         }
 
-        for pairIndex in images.indices {
-            let recordIndex = indexImagePairs[pairIndex].index
+        // The page records are the last owners of the original 4K images after these temporary
+        // batch arrays are cleared. Replace each processed source with a bounded preview below.
+        images.removeAll(keepingCapacity: false)
+        indexImagePairs.removeAll(keepingCapacity: false)
+
+        for pairIndex in recordIndexes.indices {
+            let recordIndex = recordIndexes[pairIndex]
             let detailed = detailedResults?[pairIndex]
             let extractedText = detailed?.text ?? fallbackResults?[pairIndex]
             if let extractedText {
@@ -149,6 +159,33 @@ final class WatermarkExtractViewModel {
                 records[recordIndex].failureReason = "Failed to extract watermark from this image."
                 records[recordIndex].durationMs = nil
                 records[recordIndex].diagnostics = nil
+            }
+            compactRecordImage(at: recordIndex)
+        }
+    }
+
+    private func compactRecordImage(at index: Int) {
+        guard records.indices.contains(index), let source = records[index].image else { return }
+
+        let pixelWidth = Int((source.size.width * source.scale).rounded())
+        let pixelHeight = Int((source.size.height * source.scale).rounded())
+        records[index].imagePixelWidth = records[index].imagePixelWidth ?? pixelWidth
+        records[index].imagePixelHeight = records[index].imagePixelHeight ?? pixelHeight
+
+        let longestEdge = max(pixelWidth, pixelHeight)
+        guard longestEdge > Int(Self.retainedPreviewMaxPixelEdge) else { return }
+
+        records[index].image = autoreleasepool {
+            let scale = Self.retainedPreviewMaxPixelEdge / CGFloat(longestEdge)
+            let target = CGSize(
+                width: max(1, floor(CGFloat(pixelWidth) * scale)),
+                height: max(1, floor(CGFloat(pixelHeight) * scale))
+            )
+            let format = UIGraphicsImageRendererFormat()
+            format.scale = 1
+            format.opaque = true
+            return UIGraphicsImageRenderer(size: target, format: format).image { _ in
+                source.draw(in: CGRect(origin: .zero, size: target))
             }
         }
     }

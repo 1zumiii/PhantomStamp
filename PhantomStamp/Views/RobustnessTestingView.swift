@@ -293,10 +293,6 @@ struct RobustnessTestingView: View {
 
                 Divider().opacity(0.75)
 
-                manipRotationSection
-
-                Divider().opacity(0.75)
-
                 manipResizeSection
             }
         }

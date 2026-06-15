@@ -66,6 +66,9 @@ struct PhantomStampApp: App {
                             padding: padding
                         )
                     }
+                    if ProcessInfo.processInfo.arguments.contains("--run-batch-extract-test") {
+                        await WatermarkLocalDamageAttackTests.runBatchExtractionAndPrint()
+                    }
                     if ProcessInfo.processInfo.arguments.contains("--run-downscaled-damage-test") {
                         await WatermarkLocalDamageAttackTests.runDownscaledScribbleAndPrint()
                     }
