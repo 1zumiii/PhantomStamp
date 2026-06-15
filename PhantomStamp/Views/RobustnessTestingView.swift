@@ -37,7 +37,9 @@ struct RobustnessTestingView: View {
             .padding(.vertical, 12)
         }
         .scrollIndicators(.hidden)
-        .background(Color(uiColor: .systemGroupedBackground))
+        .background {
+            PhantomThemeBackdrop()
+        }
         .navigationTitle("Robustness Tests")
         .navigationBarTitleDisplayMode(.large)
         .alert(vm.alertTitle, isPresented: $vm.showAlert) {
@@ -587,7 +589,7 @@ struct RobustnessTestingView: View {
         .padding(16)
         .background {
             RoundedRectangle(cornerRadius: 18, style: .continuous)
-                .fill(Color(uiColor: .secondarySystemGroupedBackground))
+                .fill(Color.phantomCardBackground)
         }
         .overlay {
             RoundedRectangle(cornerRadius: 18, style: .continuous)

@@ -21,7 +21,7 @@ struct UploadedImagesOverflowSheet: View {
         }
         .presentationDetents([.medium, .large])
         // Opaque grouped chrome matches half-height sheet; avoids contrast clash with row surfaces.
-        .presentationBackground(Color(uiColor: .systemGroupedBackground))
+        .presentationBackground(Color.phantomPageBackground)
         .presentationDragIndicator(.visible)
     }
 

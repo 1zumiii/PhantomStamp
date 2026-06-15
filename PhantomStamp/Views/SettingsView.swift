@@ -9,23 +9,45 @@ struct SettingsView: View {
     let watermarkService: any WatermarkServiceProtocol
     @Bindable var settingsStore: UserSettingsStore
 
-    // Matches the light-purple accent in the prototype
-    private let accentPurple = Color(red: 0.47, green: 0.38, blue: 0.85)
-    // Matches the blue toggle ON colour in the prototype
-    private let toggleBlue   = Color(red: 0.25, green: 0.52, blue: 0.96)
+    private let accentPurple = Color.phantomAccent
+    private let toggleBlue = Color.phantomAccent
 
     var body: some View {
         NavigationStack {
             Form {
                 pageHeaderSection
                 generalSection
+                appearanceSection
                 watermarkDefaultsSection
                 aboutSection
                 testingSection
             }
+            .scrollContentBackground(.hidden)
+            .background {
+                PhantomThemeBackdrop()
+            }
             .navigationTitle(AppConstants.Copy.Settings.navigationTitle)
             .navigationBarTitleDisplayMode(.large)
         }
+    }
+
+    private var appearanceSection: some View {
+        Section {
+            toggleRow(
+                systemImage: AppConstants.Symbol.settingsDarkTheme,
+                title: AppConstants.Copy.Settings.toggleDarkTheme,
+                isOn: $settingsStore.darkThemeEnabled
+            )
+        } header: {
+            sectionHeader(
+                title: AppConstants.Copy.Settings.sectionAppearance,
+                systemImage: AppConstants.Symbol.settingsAppearance,
+                tint: accentPurple
+            )
+        } footer: {
+            Text(AppConstants.Copy.Settings.footnoteDarkTheme)
+        }
+        .listRowBackground(Color.phantomCardBackground)
     }
 
     // MARK: - Page Header
@@ -72,6 +94,7 @@ struct SettingsView: View {
                 tint: accentPurple
             )
         }
+        .listRowBackground(Color.phantomCardBackground)
     }
 
     // MARK: - Watermark Defaults
@@ -92,6 +115,7 @@ struct SettingsView: View {
         } footer: {
             Text(AppConstants.Copy.Settings.footnoteWatermarkDefaults)
         }
+        .listRowBackground(Color.phantomCardBackground)
     }
 
     private var watermarkTextFieldRow: some View {
@@ -115,6 +139,16 @@ struct SettingsView: View {
             .font(.subheadline)
             .autocorrectionDisabled()
             .textInputAutocapitalization(.never)
+            .padding(.horizontal, 12)
+            .padding(.vertical, 10)
+            .background {
+                RoundedRectangle(cornerRadius: 10, style: .continuous)
+                    .fill(Color.phantomInputBackground)
+            }
+            .overlay {
+                RoundedRectangle(cornerRadius: 10, style: .continuous)
+                    .strokeBorder(Color.primary.opacity(0.14), lineWidth: 1)
+            }
 
             Text("8–16 characters. Leave empty to disable the default.")
                 .font(.caption)
@@ -188,7 +222,7 @@ struct SettingsView: View {
             .padding(4)
             .background {
                 RoundedRectangle(cornerRadius: 10, style: .continuous)
-                    .fill(Color(uiColor: .tertiarySystemGroupedBackground))
+                    .fill(Color.phantomElevatedBackground)
             }
         }
         .padding(.vertical, 4)
@@ -213,6 +247,7 @@ struct SettingsView: View {
                 tint: .blue
             )
         }
+        .listRowBackground(Color.phantomCardBackground)
     }
 
     // MARK: - Testing
@@ -231,6 +266,7 @@ struct SettingsView: View {
                 tint: .green
             )
         }
+        .listRowBackground(Color.phantomCardBackground)
     }
 
     // MARK: - Row helpers

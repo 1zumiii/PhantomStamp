@@ -36,7 +36,9 @@ struct WatermarkExtractUI: View {
             .padding(.vertical, 10)
         }
         .scrollIndicators(.hidden)
-        .background(Color(uiColor: .systemGroupedBackground))
+        .background {
+            PhantomThemeBackdrop()
+        }
         .navigationTitle("Extract Watermark")
         .navigationBarTitleDisplayMode(.large)
         .alert("Could not load images", isPresented: pickerErrorBinding, actions: {
@@ -62,7 +64,7 @@ struct WatermarkExtractUI: View {
                 .padding(.vertical, 6)
                 .background {
                     Capsule(style: .continuous)
-                        .fill(Color.accentColor.opacity(0.14))
+                        .fill(Color.phantomAccent.opacity(0.14))
                 }
 
             Text("Recover hidden watermark data.")
@@ -89,7 +91,7 @@ struct WatermarkExtractUI: View {
             ) {
                 ZStack {
                     RoundedRectangle(cornerRadius: 22, style: .continuous)
-                        .fill(Color(uiColor: .secondarySystemGroupedBackground))
+                        .fill(Color.phantomCardBackground)
 
                     RoundedRectangle(cornerRadius: 22, style: .continuous)
                         .strokeBorder(
@@ -100,7 +102,7 @@ struct WatermarkExtractUI: View {
                     VStack(spacing: 10) {
                         Image(systemName: "photo.badge.plus")
                             .font(.title2)
-                            .foregroundStyle(Color.accentColor)
+                            .foregroundStyle(Color.phantomAccent)
 
                         Text("Tap to upload a watermarked photo")
                             .font(.headline.weight(.semibold))
@@ -120,7 +122,7 @@ struct WatermarkExtractUI: View {
         .padding(18)
         .background {
             RoundedRectangle(cornerRadius: 18, style: .continuous)
-                .fill(Color(uiColor: .secondarySystemGroupedBackground))
+                .fill(Color.phantomCardBackground)
         }
         .overlay {
             RoundedRectangle(cornerRadius: 18, style: .continuous)
@@ -176,7 +178,7 @@ struct WatermarkExtractUI: View {
                         .padding(14)
                         .background {
                             RoundedRectangle(cornerRadius: 14, style: .continuous)
-                                .fill(Color(uiColor: .secondarySystemGroupedBackground))
+                                .fill(Color.phantomCardBackground)
                         }
                     }
                     .buttonStyle(.plain)
@@ -204,7 +206,7 @@ struct WatermarkExtractUI: View {
         .padding(16)
         .background {
             RoundedRectangle(cornerRadius: 14, style: .continuous)
-                .fill(Color(uiColor: .secondarySystemGroupedBackground))
+                .fill(Color.phantomCardBackground)
         }
     }
 
@@ -222,7 +224,7 @@ struct WatermarkExtractUI: View {
             .padding(.vertical, 14)
             .background {
                 RoundedRectangle(cornerRadius: 14, style: .continuous)
-                    .fill(Color.accentColor)
+                    .fill(PhantomTheme.actionGradient)
             }
         }
         .buttonStyle(.plain)

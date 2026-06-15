@@ -42,7 +42,7 @@ struct FullScreenWatermarkProgressOverlay: View {
                         HStack(spacing: 12) {
                             Image(systemName: "wand.and.stars")
                                 .font(.title2)
-                                .foregroundStyle(Color.accentColor)
+                                .foregroundStyle(Color.phantomAccent)
                                 .symbolEffect(.pulse, options: .repeating)
 
                             VStack(alignment: .leading, spacing: 2) {
@@ -63,7 +63,7 @@ struct FullScreenWatermarkProgressOverlay: View {
                         }
 
                         ProgressView(value: vm.progress, total: 1.0)
-                            .tint(.accentColor)
+                            .tint(.phantomAccent)
                             .overlay {
                                 GeometryReader { geo in
                                     let w = geo.size.width
@@ -102,7 +102,7 @@ struct FullScreenWatermarkProgressOverlay: View {
                     .frame(maxWidth: 420)
                     .background {
                         RoundedRectangle(cornerRadius: 20, style: .continuous)
-                            .fill(Color(uiColor: .secondarySystemGroupedBackground))
+                            .fill(Color.phantomCardBackground)
                     }
                     .overlay {
                         RoundedRectangle(cornerRadius: 20, style: .continuous)
@@ -201,7 +201,7 @@ struct FullScreenWatermarkProgressOverlay: View {
                 .trim(from: 0, to: p)
                 .stroke(
                     LinearGradient(
-                        colors: [Color.accentColor.opacity(0.55), Color.accentColor],
+                        colors: [Color.phantomAccent.opacity(0.55), Color.phantomAccent],
                         startPoint: .topLeading,
                         endPoint: .bottomTrailing
                     ),
@@ -220,7 +220,7 @@ struct FullScreenWatermarkProgressOverlay: View {
 
 #Preview {
     ZStack {
-        Color(uiColor: .systemGroupedBackground).ignoresSafeArea()
+        Color.phantomPageBackground.ignoresSafeArea()
         FullScreenWatermarkProgressOverlay()
     }
 }

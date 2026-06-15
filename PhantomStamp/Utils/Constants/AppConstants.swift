@@ -47,6 +47,8 @@ enum AppConstants {
         static let settingsHistory           = "clock.arrow.circlepath"
         static let settingsNotifications     = "bell.badge"
         static let settingsSaveToPhotos      = "square.and.arrow.down.on.square"
+        static let settingsAppearance        = "moon.stars"
+        static let settingsDarkTheme         = "circle.lefthalf.filled"
         static let settingsWatermarkDefaults = "rectangle.badge.checkmark"
         static let settingsAbout             = "info.circle"
         static let settingsTesting           = "checklist"
@@ -115,7 +117,7 @@ enum AppConstants {
             // ── Existing constants (unchanged) ──
             static let navigationTitle      = "Settings"
             static let sectionHistory       = "History"
-            static let sectionAppearance    = "Layout"
+            static let sectionAppearance    = "Appearance"
             static let sectionNotifications = "Notifications"
             static let toggleAutoLogWatermarkEmbed         = "Auto Log Watermark Embed"
             static let footnoteAutoLogWatermarkEmbed       = "When off, successful watermark embedding is not saved to SwiftData history. Stored in UserDefaults."
@@ -139,6 +141,8 @@ enum AppConstants {
             static let toggleSaveHistory  = "Save history"
             static let toggleShowAlerts   = "Show alerts"
             static let toggleSaveToPhotos = "Save to Photos"
+            static let toggleDarkTheme    = "Deep theme"
+            static let footnoteDarkTheme  = "Uses a layered indigo palette inspired by the Insert more action."
 
             // Watermark Defaults rows
             static let labelDefaultWatermarkText = "Default Watermark text"

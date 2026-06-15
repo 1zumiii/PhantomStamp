@@ -18,6 +18,7 @@ extension AppConstants {
         static let compactHistoryList = "phantomstamp.settings.compactHistoryList"
         /// User toggle for local notifications after embed/extract complete (`WatermarkOperationNotificationService`).
         static let watermarkOperationNotifications = "phantomstamp.settings.watermarkOperationNotifications"
+        static let darkThemeEnabled = "phantomstamp.settings.darkThemeEnabled"
 
         // Watermark Defaults — added for SettingsView
         static let defaultWatermarkText = "phantomstamp.settings.defaultWatermarkText"
@@ -39,6 +40,7 @@ extension AppConstants {
         static let autoLogWatermarkEmbed = true
         static let compactHistoryList    = false
         static let watermarkOperationNotifications = true
+        static let darkThemeEnabled = false
 
         // Watermark Defaults — added for SettingsView
         static let defaultWatermarkText: String = ""

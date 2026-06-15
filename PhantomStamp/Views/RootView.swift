@@ -51,6 +51,8 @@ struct RootView: View {
     ]
 
     ZStack {
+      PhantomThemeBackdrop()
+
       VStack(spacing: 0) {
         ZStack {
           ForEach(items) { item in
@@ -79,6 +81,8 @@ struct RootView: View {
         historyListRefreshToken += 1
       }
     }
+    .tint(.phantomAccent)
+    .preferredColorScheme(settingsStore.darkThemeEnabled ? .dark : .light)
   }
 
   /// Binds SwiftData + settings to the shared `WatermarkService` singleton.

@@ -92,7 +92,7 @@ struct PhantomGhost: View {
 
 #Preview {
     ZStack {
-        Color(uiColor: .systemGroupedBackground)
+        Color.phantomPageBackground
         PhantomGhost()
             .frame(width: 110)
     }

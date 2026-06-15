@@ -28,7 +28,9 @@ struct ExtractionDetailView: View {
             .padding(.vertical, 16)
         }
         .scrollIndicators(.hidden)
-        .background(Color(uiColor: .systemGroupedBackground))
+        .background {
+            PhantomThemeBackdrop()
+        }
         .navigationTitle(display.navigationTitleName)
         .navigationBarTitleDisplayMode(.large)
         .toolbar {
@@ -176,12 +178,12 @@ struct ExtractionDetailView: View {
         HStack(alignment: .center) {
             Label(operationTitle, systemImage: operationIcon)
                 .font(.subheadline.weight(.semibold))
-                .foregroundStyle(Color.accentColor)
+                .foregroundStyle(Color.phantomAccent)
                 .padding(.horizontal, 14)
                 .padding(.vertical, 8)
                 .background {
                     Capsule(style: .continuous)
-                        .fill(Color.accentColor.opacity(0.15))
+                        .fill(Color.phantomAccent.opacity(0.15))
                 }
 
             Spacer(minLength: 12)
@@ -224,7 +226,7 @@ struct ExtractionDetailView: View {
                             .frame(width: 36, height: 36)
                             .background {
                                 RoundedRectangle(cornerRadius: 10, style: .continuous)
-                                    .fill(Color(uiColor: .systemBackground).opacity(0.55))
+                                    .fill(Color.phantomElevatedBackground)
                             }
                     }
                     .buttonStyle(.plain)
@@ -236,7 +238,7 @@ struct ExtractionDetailView: View {
         .padding(16)
         .background {
             RoundedRectangle(cornerRadius: 12, style: .continuous)
-                .fill(Color(uiColor: .secondarySystemGroupedBackground))
+                .fill(Color.phantomCardBackground)
         }
     }
 
@@ -256,7 +258,7 @@ struct ExtractionDetailView: View {
             .padding(16)
             .background {
                 RoundedRectangle(cornerRadius: 12, style: .continuous)
-                    .fill(Color(uiColor: .secondarySystemGroupedBackground))
+                    .fill(Color.phantomCardBackground)
             }
         }
     }

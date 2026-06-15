@@ -84,7 +84,7 @@ struct VarianceGainCurveEditor: View {
         .frame(height: plotHeight)
         .background {
           RoundedRectangle(cornerRadius: 12, style: .continuous)
-            .fill(Color(uiColor: .tertiarySystemGroupedBackground))
+            .fill(Color.phantomElevatedBackground)
         }
 
       presetRow

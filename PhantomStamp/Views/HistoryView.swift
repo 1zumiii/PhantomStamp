@@ -36,6 +36,9 @@ struct HistoryView: View {
                         .transition(.move(edge: .bottom).combined(with: .opacity))
                 }
             }
+            .background {
+                PhantomThemeBackdrop()
+            }
             .animation(.spring(response: 0.45, dampingFraction: 0.82), value: viewModel.showSaveSuccessToast)
             .sensoryFeedback(.success, trigger: viewModel.saveSuccessFeedbackTrigger)
             .navigationTitle("History")
@@ -117,7 +120,7 @@ struct HistoryView: View {
                             .padding(.vertical, 8)
                             .background {
                                 Capsule(style: .continuous)
-                                    .fill(selected ? Color.accentColor : Color.clear)
+                                    .fill(selected ? Color.phantomAccent : Color.clear)
                             }
                             .overlay {
                                 Capsule(style: .continuous)
@@ -132,7 +135,7 @@ struct HistoryView: View {
             .padding(.vertical,10)
         }
         .frame(maxWidth: .infinity)
-        .background(Color(uiColor: .systemGroupedBackground))
+        .background(Color.clear)
     }
 
     @ViewBuilder
@@ -171,25 +174,25 @@ struct HistoryView: View {
                 }
                 .listStyle(.plain)
                 .scrollContentBackground(.hidden)
-                .background(Color(uiColor: .systemGroupedBackground))
+                .background(Color.clear)
             }
         }
     }
 
     private var historyEmptyState: some View {
         ZStack {
-            Color(uiColor: .systemGroupedBackground)
+            Color.clear
 
             if viewModel.records.isEmpty {
                 VStack(spacing: 18) {
                     ZStack {
                         Circle()
-                            .fill(Color.accentColor.opacity(0.10))
+                            .fill(Color.phantomAccent.opacity(0.10))
                             .frame(width: 86, height: 86)
 
                         Image(systemName: "clock.arrow.circlepath")
                             .font(.system(size: 38, weight: .medium))
-                            .foregroundStyle(Color.accentColor.opacity(0.78))
+                            .foregroundStyle(Color.phantomAccent.opacity(0.78))
                     }
 
                     VStack(spacing: 7) {
@@ -329,7 +332,7 @@ private struct WatermarkHistoryCardRow: View {
             }
         }
         .frame(height: 110)
-        .background(Color(uiColor: .secondarySystemGroupedBackground))
+        .background(Color.phantomCardBackground)
         .overlay(alignment: .trailing) {
             Rectangle()
                 .fill(record.status == .success ? Color.green.opacity(0.55) : Color.orange.opacity(0.55))

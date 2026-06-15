@@ -54,7 +54,7 @@ struct OperationDiagnosticsTable: View {
             }
             .background {
                 RoundedRectangle(cornerRadius: 12, style: .continuous)
-                    .fill(Color(uiColor: .secondarySystemGroupedBackground))
+                    .fill(Color.phantomCardBackground)
             }
         }
     }

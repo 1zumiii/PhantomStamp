@@ -26,6 +26,9 @@ final class UserSettingsStore {
     @ObservationIgnored
     private var _watermarkOperationNotificationsEnabled: AppUserDefault<Bool>
 
+    @ObservationIgnored
+    private var _darkThemeEnabled: AppUserDefault<Bool>
+
     var autoLogWatermarkEmbedToHistory: Bool {
         get {
             access(keyPath: \.autoLogWatermarkEmbedToHistory)
@@ -58,6 +61,18 @@ final class UserSettingsStore {
         set {
             withMutation(keyPath: \.watermarkOperationNotificationsEnabled) {
                 _watermarkOperationNotificationsEnabled.wrappedValue = newValue
+            }
+        }
+    }
+
+    var darkThemeEnabled: Bool {
+        get {
+            access(keyPath: \.darkThemeEnabled)
+            return _darkThemeEnabled.wrappedValue
+        }
+        set {
+            withMutation(keyPath: \.darkThemeEnabled) {
+                _darkThemeEnabled.wrappedValue = newValue
             }
         }
     }
@@ -177,6 +192,11 @@ final class UserSettingsStore {
         _watermarkOperationNotificationsEnabled = AppUserDefault(
             key: AppConstants.UserDefaultsKey.watermarkOperationNotifications,
             defaultValue: AppConstants.SettingsDefault.watermarkOperationNotifications,
+            defaults: defaults
+        )
+        _darkThemeEnabled = AppUserDefault(
+            key: AppConstants.UserDefaultsKey.darkThemeEnabled,
+            defaultValue: AppConstants.SettingsDefault.darkThemeEnabled,
             defaults: defaults
         )
         // New

@@ -74,7 +74,7 @@ struct BottomNavBar: View {
             .padding(.horizontal, 12)
             .frame(height: Self.barHeight)
             .frame(maxWidth: .infinity)
-            .background(Color(uiColor: .systemBackground).opacity(0.98))
+            .background(Color.phantomNavigationBackground.opacity(0.98))
         }
         .frame(maxWidth: .infinity)
     }
@@ -95,7 +95,7 @@ struct BottomNavBar: View {
                     .font(.caption2.weight(.semibold))
                     .lineLimit(1)
             }
-            .foregroundStyle(isSelected ? Color.accentColor : Color.secondary)
+            .foregroundStyle(isSelected ? Color.phantomAccent : Color.secondary)
             .frame(maxWidth: .infinity)
             .padding(.vertical, 6)
             .contentShape(Rectangle())
@@ -143,4 +143,3 @@ struct BottomNavBar: View {
         BottomNavBar(items: items, selection: $sel)
     }
 }
-

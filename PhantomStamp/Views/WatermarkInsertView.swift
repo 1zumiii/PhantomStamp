@@ -100,7 +100,9 @@ struct WatermarkInsertView: View {
         )
         .navigationTitle("Embed Watermark")
         .scrollIndicators(.hidden)
-        .background(Color(uiColor: .systemGroupedBackground))
+        .background {
+            PhantomThemeBackdrop()
+        }
         .sheet(isPresented: $showTextureReferenceGuide) {
             TextureReferenceGuideSheet()
                 .presentationDetents([.medium, .large])
@@ -231,7 +233,7 @@ struct WatermarkInsertView: View {
                 .padding(.vertical, 6)
                 .background {
                     Capsule(style: .continuous)
-                        .fill(Color.accentColor.opacity(0.14))
+                        .fill(Color.phantomAccent.opacity(0.14))
                 }
 
             Text("Add photos & payload")
@@ -293,7 +295,7 @@ struct WatermarkInsertView: View {
         }
         .padding(18)
         .background {
-            shape.fill(Color(uiColor: .secondarySystemGroupedBackground))
+            shape.fill(Color.phantomCardBackground)
         }
         .overlay {
             shape.strokeBorder(Color.primary.opacity(0.06), lineWidth: 1)
@@ -316,7 +318,7 @@ struct WatermarkInsertView: View {
             label: {
                 ZStack {
                     RoundedRectangle(cornerRadius: 22, style: .continuous)
-                        .fill(Color(uiColor: .secondarySystemGroupedBackground))
+                        .fill(Color.phantomCardBackground)
 
                     RoundedRectangle(cornerRadius: 22, style: .continuous)
                         .strokeBorder(
@@ -327,7 +329,7 @@ struct WatermarkInsertView: View {
                     VStack(spacing: 10) {
                         Image(systemName: "photo.badge.plus")
                             .font(.title2)
-                            .foregroundStyle(Color.accentColor)
+                            .foregroundStyle(Color.phantomAccent)
                         Text(isAdvancedMode ? "Tap to choose a photo" : "Tap to choose photos")
                             .font(.headline.weight(.semibold))
                             .foregroundStyle(.primary)
@@ -443,7 +445,7 @@ struct WatermarkInsertView: View {
                             Text("Texture reference guide")
                                 .font(.subheadline.weight(.semibold))
                         }
-                        .foregroundStyle(Color.accentColor)
+                        .foregroundStyle(Color.phantomAccent)
                     }
                     .buttonStyle(.plain)
                     .padding(.top, 4)
@@ -625,22 +627,13 @@ struct WatermarkInsertView: View {
                         .padding(.vertical, 14)
                         .background {
                             RoundedRectangle(cornerRadius: 14, style: .continuous)
-                                .fill(
-                                    LinearGradient(
-                                        colors: [
-                                            Color(red: 0.38, green: 0.22, blue: 0.72),
-                                            Color(red: 0.18, green: 0.42, blue: 0.78),
-                                        ],
-                                        startPoint: .leading,
-                                        endPoint: .trailing
-                                    )
-                                )
+                                .fill(PhantomTheme.actionGradient)
                                 .overlay {
                                     RoundedRectangle(cornerRadius: 14, style: .continuous)
                                         .strokeBorder(Color.white.opacity(0.28), lineWidth: 1)
                                 }
                         }
-                        .shadow(color: Color(red: 0.35, green: 0.2, blue: 0.65).opacity(0.45), radius: 16, x: 0, y: 8)
+                        .shadow(color: Color.phantomAccent.opacity(0.42), radius: 16, x: 0, y: 8)
                     }
                     .buttonStyle(.plain)
                     .padding(.horizontal, 20)
@@ -691,7 +684,7 @@ struct WatermarkInsertView: View {
                 .padding(.vertical, 10)
                 .background {
                     RoundedRectangle(cornerRadius: 10, style: .continuous)
-                        .fill(Color(uiColor: .tertiarySystemGroupedBackground))
+                        .fill(Color.phantomInputBackground)
                 }
                 .overlay {
                     RoundedRectangle(cornerRadius: 10, style: .continuous)
@@ -712,7 +705,7 @@ struct WatermarkInsertView: View {
         .padding(18)
         .background {
             RoundedRectangle(cornerRadius: 18, style: .continuous)
-                .fill(Color(uiColor: .secondarySystemGroupedBackground))
+                .fill(Color.phantomCardBackground)
         }
         .overlay {
             RoundedRectangle(cornerRadius: 18, style: .continuous)
@@ -747,7 +740,7 @@ struct WatermarkInsertView: View {
                     .padding(.horizontal, 20)
                     .padding(.bottom, 18)
                 }
-                .background(Color(uiColor: .systemGroupedBackground))
+                .background(Color.phantomPageBackground)
                 .toolbar {
                     ToolbarItem(placement: .topBarTrailing) {
                         Button("Done") { dismiss() }
@@ -770,7 +763,7 @@ struct WatermarkInsertView: View {
             .padding(14)
             .background {
                 RoundedRectangle(cornerRadius: 12, style: .continuous)
-                    .fill(Color(uiColor: .secondarySystemGroupedBackground))
+                    .fill(Color.phantomCardBackground)
             }
         }
     }
@@ -801,15 +794,7 @@ struct WatermarkInsertView: View {
 
     /// Bright gradient when ready or running.
     private var embedFABGradient: LinearGradient {
-        LinearGradient(
-            colors: [
-                Color(red: 0.32, green: 0.55, blue: 1.00),
-                Color(red: 0.35, green: 0.85, blue: 0.95),
-                Color(red: 0.88, green: 0.42, blue: 0.98),
-            ],
-            startPoint: .topLeading,
-            endPoint: .bottomTrailing
-        )
+        PhantomTheme.brightActionGradient
     }
 
     @ViewBuilder
@@ -818,7 +803,7 @@ struct WatermarkInsertView: View {
         if vm.canStartEmbed || vm.isEmbedding {
             shape.fill(embedFABGradient)
         } else {
-            shape.fill(Color(uiColor: .tertiarySystemGroupedBackground))
+            shape.fill(Color.phantomElevatedBackground)
         }
     }
 
@@ -910,7 +895,7 @@ private struct UploadedThumbnailStrip: View {
     private static let stripMinHeight: CGFloat = 62
     private static let scrollableMinCount = 5
     private static let scrollFadeWidth: CGFloat = 6
-    private static let cardBackground = Color(uiColor: .secondarySystemGroupedBackground)
+    private static let cardBackground = Color.phantomCardBackground
 
     var body: some View {
         Group {
@@ -996,7 +981,7 @@ private struct UploadedThumbnailStrip: View {
 
     private func manageUploadedChip(totalCount: Int) -> some View {
         RoundedRectangle(cornerRadius: 14, style: .continuous)
-            .fill(Color(uiColor: .tertiarySystemGroupedBackground))
+            .fill(Color.phantomElevatedBackground)
             .overlay {
                 RoundedRectangle(cornerRadius: 14, style: .continuous)
                     .strokeBorder(Color.primary.opacity(0.12), lineWidth: 1)
@@ -1013,7 +998,7 @@ private struct UploadedThumbnailStrip: View {
                         .font(.caption2.weight(.bold))
                         .foregroundStyle(.white)
                         .padding(4)
-                        .background(Circle().fill(Color.accentColor))
+                        .background(Circle().fill(Color.phantomAccent))
                         .offset(x: 4, y: -4)
                 }
             }

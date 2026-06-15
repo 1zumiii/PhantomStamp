@@ -45,7 +45,7 @@ struct HistoryEntryCardRow: View {
                 if let watermarkName = meta.watermarkName {
                     Label(watermarkName, systemImage: "seal.fill")
                         .font(.caption.weight(.semibold))
-                        .foregroundStyle(Color.accentColor)
+                        .foregroundStyle(Color.phantomAccent)
                         .labelStyle(.titleAndIcon)
                         .lineLimit(1)
                 } else {
@@ -64,7 +64,7 @@ struct HistoryEntryCardRow: View {
         .padding(14)
         .background {
             RoundedRectangle(cornerRadius: 18, style: .continuous)
-                .fill(Color(uiColor: .secondarySystemGroupedBackground))
+                .fill(Color.phantomCardBackground)
         }
         .overlay {
             RoundedRectangle(cornerRadius: 18, style: .continuous)
@@ -166,6 +166,5 @@ private struct HistoryPreviewStyle {
         HistoryEntryCardRow(entry: entry, compact: true)
     }
     .padding()
-    .background(Color(uiColor: .systemGroupedBackground))
+    .background(Color.phantomPageBackground)
 }
-
