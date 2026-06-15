@@ -40,8 +40,8 @@ struct AdvancedReticleCrosshair: View {
             // Dark outline for contrast on bright regions (e.g. sky).
             context.stroke(horizontal, with: .color(.black.opacity(0.72)), lineWidth: 2.25)
             context.stroke(vertical, with: .color(.black.opacity(0.72)), lineWidth: 2.25)
-            context.stroke(horizontal, with: .color(.phantomAccent.opacity(0.95)), lineWidth: 1.1)
-            context.stroke(vertical, with: .color(.phantomAccent.opacity(0.95)), lineWidth: 1.1)
+            context.stroke(horizontal, with: .color(.phantomAdvancedStrength.opacity(0.95)), lineWidth: 1.1)
+            context.stroke(vertical, with: .color(.phantomAdvancedStrength.opacity(0.95)), lineWidth: 1.1)
 
             let frame = CGRect(
                 x: centerX - blockW * 0.5,

@@ -28,7 +28,7 @@ struct VarianceGainCurveStats: View {
             .font(.caption2)
         }
         .font(.caption.weight(.semibold))
-        .foregroundStyle(Color.phantomAccent.opacity(0.9))
+        .foregroundStyle(Color.phantomAdvancedTexture.opacity(0.9))
 
         Spacer()
 
@@ -48,7 +48,7 @@ struct VarianceGainCurveStats: View {
         systemImage: "hand.draw"
       )
         .font(.caption2)
-        .foregroundStyle(Color.phantomAccent.opacity(0.82))
+        .foregroundStyle(Color.phantomAdvancedTexture.opacity(0.82))
         .fixedSize(horizontal: false, vertical: true)
     }
     .padding(.horizontal, 2)
@@ -76,7 +76,7 @@ struct VarianceGainCurveEditor: View {
 
   private let plotHeight: CGFloat = 148
   private let axisInset = EdgeInsets(top: 10, leading: 36, bottom: 22, trailing: 12)
-  private let curvePurple = Color.phantomAccent
+  private let curvePurple = Color.phantomAdvancedTexture
 
   var body: some View {
     VStack(alignment: .leading, spacing: 10) {

@@ -96,6 +96,21 @@ extension Color {
         dark: UIColor(red: 0.69, green: 0.62, blue: 1.00, alpha: 1)
     )
 
+    static let phantomAdvancedSoft = adaptiveColor(
+        light: UIColor(red: 0.00, green: 0.48, blue: 1.00, alpha: 1),
+        dark: UIColor(red: 0.40, green: 0.70, blue: 1.00, alpha: 1)
+    )
+
+    static let phantomAdvancedTexture = adaptiveColor(
+        light: UIColor(red: 0.58, green: 0.32, blue: 0.94, alpha: 1),
+        dark: UIColor(red: 0.75, green: 0.63, blue: 1.00, alpha: 1)
+    )
+
+    static let phantomAdvancedStrength = adaptiveColor(
+        light: UIColor(red: 1.00, green: 0.58, blue: 0.00, alpha: 1),
+        dark: UIColor(red: 1.00, green: 0.72, blue: 0.34, alpha: 1)
+    )
+
     static let phantomBackdropBase = adaptiveColor(
         light: .systemGroupedBackground,
         dark: UIColor(red: 0.100, green: 0.085, blue: 0.170, alpha: 1)

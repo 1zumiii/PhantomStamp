@@ -412,7 +412,7 @@ struct WatermarkInsertView: View {
                         title: "Protect smooth areas",
                         detail: "Keep skies, skin, walls, and other even areas cleaner. Move right to protect more of the image.",
                         systemImage: "shield.lefthalf.filled",
-                        tint: .phantomAccent
+                        tint: .phantomAdvancedSoft
                     )
 
                     VarianceThresholdControl(
@@ -445,7 +445,7 @@ struct WatermarkInsertView: View {
                             Text("Texture reference guide")
                                 .font(.subheadline.weight(.semibold))
                         }
-                        .foregroundStyle(Color.phantomAccent)
+                        .foregroundStyle(Color.phantomAdvancedSoft)
                     }
                     .buttonStyle(.plain)
                     .padding(.top, 4)
@@ -456,7 +456,7 @@ struct WatermarkInsertView: View {
                         title: "Balance detail and resilience",
                         detail: "Choose how quickly strength rises with texture. A higher curve survives edits better; a lower curve stays subtler.",
                         systemImage: "point.3.connected.trianglepath.dotted",
-                        tint: .phantomAccent
+                        tint: .phantomAdvancedTexture
                     )
 
                     VarianceGainCurveEditor(
@@ -474,7 +474,7 @@ struct WatermarkInsertView: View {
                         title: "Set overall strength",
                         detail: "Higher values survive more editing. Lower values are harder to notice.",
                         systemImage: "dial.high",
-                        tint: .phantomAccent
+                        tint: .phantomAdvancedStrength
                     )
 
                     EmbeddingIntensityControl(

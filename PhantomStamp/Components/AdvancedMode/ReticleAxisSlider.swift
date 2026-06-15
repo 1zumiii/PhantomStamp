@@ -76,7 +76,7 @@ struct ReticleAxisSlider: View {
     let range: ClosedRange<Double>
     let blockCount: Int
     let axis: ReticleSliderAxis
-    var accentColor: Color = .phantomAccent
+    var accentColor: Color = .phantomAdvancedStrength
     var isEnabled: Bool = true
 
     var body: some View {
