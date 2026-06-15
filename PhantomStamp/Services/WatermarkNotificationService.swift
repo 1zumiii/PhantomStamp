@@ -65,14 +65,14 @@ enum WatermarkOperationNotificationService {
             await schedule(
                 title: AppConstants.Copy.WatermarkPush.embedSingleSuccessTitle,
                 body: AppConstants.Copy.WatermarkPush.embedSingleSuccessBody,
-                delay: 8
+                delay: 3
             )
         } else {
             let body = error?.localizedDescription ?? AppConstants.Copy.WatermarkPush.genericErrorBody
             await schedule(
                 title: AppConstants.Copy.WatermarkPush.embedSingleFailureTitle,
                 body: trimBody(body),
-                delay: 8
+                delay: 1
             )
         }
     }
@@ -83,14 +83,14 @@ enum WatermarkOperationNotificationService {
             await schedule(
                 title: AppConstants.Copy.WatermarkPush.extractSingleSuccessTitle,
                 body: body,
-                delay: 8
+                delay: 1
             )
         } else {
             let body = error?.localizedDescription ?? AppConstants.Copy.WatermarkPush.genericErrorBody
             await schedule(
                 title: AppConstants.Copy.WatermarkPush.extractSingleFailureTitle,
                 body: trimBody(body),
-                delay: 8
+                delay: 1
             )
         }
     }
