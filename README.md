@@ -79,7 +79,7 @@ PhantomStamp employs a rigorous, automated **Smart Step Boundary Scan** to evalu
 
 ### 5.1 Geometric Resilience (Intensity = 4.0 - 5.0)
 
-* **Static Precision:** Utilizing a Sub-pixel Parabolic Fitting combined with a Matched Gaussian Prior Filter, the extraction drift is practically eliminated (Angle Error $\le 0.002^\circ$, Scale Relative Error $\le 0.0003$).
+* **Static Precision:** Utilizing a Grandke Interpolator combined with a Matched Gaussian Prior Filter, the extraction drift is practically eliminated (Angle Error $\le 0.002^\circ$, Scale Relative Error $\le 0.0003$).
 * **Rotation Resilience:** Operates flawlessly within $(-45^\circ, 45^\circ)$. To break the theoretical 4-fold symmetry ambiguity inherent to cross-shaped FFT spectra, an elegant heuristic retry mechanism is integrated into the FEC layer, testing orthogonal hypotheses to achieve full $360^\circ$ immunity.
 * **Scaling Resilience:** Demonstrates highly asymmetric robustness tailored for real-world screenshot attacks. It survives severe image upscaling up to **1.50x**, while gracefully degrading below **0.85x** as the downsampled frequency peaks are pushed out of the Gaussian prior's safety envelope and masked by natural image noise.
 
