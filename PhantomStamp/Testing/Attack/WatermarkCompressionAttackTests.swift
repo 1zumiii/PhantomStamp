@@ -59,7 +59,7 @@ enum WatermarkCompressionAttackTests {
             )
         }
 
-        let expectedText = "Successful"
+        let expectedText = WatermarkAttackTestHarness.referencePayload
 
         let watermarked: UIImage
         do {
@@ -129,7 +129,7 @@ enum WatermarkCompressionAttackTests {
             )
         }
 
-        let expectedText = "Successful"
+        let expectedText = WatermarkAttackTestHarness.referencePayload
 
         let watermarked: UIImage
         do {

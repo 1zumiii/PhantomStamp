@@ -182,11 +182,7 @@ struct WatermarkInsertView: View {
         Binding(
             get: { vm.watermarkPayload },
             set: { newValue in
-                if newValue.count > WatermarkInsertViewModel.payloadMaxLength {
-                    vm.watermarkPayload = String(newValue.prefix(WatermarkInsertViewModel.payloadMaxLength))
-                } else {
-                    vm.watermarkPayload = newValue
-                }
+                vm.watermarkPayload = WatermarkPayloadLimits.sanitizingUserInput(newValue)
             }
         )
     }
@@ -240,7 +236,7 @@ struct WatermarkInsertView: View {
                 .font(.title2.weight(.semibold))
                 .foregroundStyle(.primary)
 
-            Text("Pick one or more images, enter \(WatermarkInsertViewModel.payloadMinLength)–\(WatermarkInsertViewModel.payloadMaxLength) characters for the watermark, then tap the sparkle button.")
+            Text("Pick one or more images, enter an \(WatermarkInsertViewModel.payloadMinCharacterCount)–\(WatermarkInsertViewModel.payloadMaxCharacterCount) character watermark ID, then tap the sparkle button.")
                 .font(.subheadline)
                 .foregroundStyle(.secondary)
                 .fixedSize(horizontal: false, vertical: true)
@@ -670,8 +666,9 @@ struct WatermarkInsertView: View {
                     .focused($isPayloadFocused)
                     .submitLabel(.done)
                     .onSubmit { isPayloadFocused = false }
-                    .textInputAutocapitalization(.sentences)
-                    .autocorrectionDisabled(false)
+                    .textInputAutocapitalization(.never)
+                    .autocorrectionDisabled()
+                    .keyboardType(.asciiCapable)
                     .textFieldStyle(.plain)
                     .disabled(vm.isEmbedding || vm.showSuccessOverlay)
 
@@ -769,7 +766,7 @@ struct WatermarkInsertView: View {
     }
 
     private var payloadCountLabel: String {
-        "\(vm.trimmedPayload.count)/\(WatermarkInsertViewModel.payloadMaxLength)"
+        "\(vm.trimmedPayload.count)/\(WatermarkInsertViewModel.payloadMaxCharacterCount)"
     }
 
     private var payloadCountColor: Color {
@@ -778,7 +775,7 @@ struct WatermarkInsertView: View {
 
     /// Guidance only (counts live on the right inside the field container).
     private var payloadHintBelowField: String {
-        "Required: \(WatermarkInsertViewModel.payloadMinLength)–\(WatermarkInsertViewModel.payloadMaxLength) non-empty characters after trimming spaces."
+        "Allowed: 8–16 ASCII letters, numbers, or . _ - @"
     }
 
     private var embedFABReady: Bool {

@@ -11,6 +11,9 @@
 import UIKit
 
 enum WatermarkAttackTestHarness {
+  /// Canonical payload used by documented robustness sweeps.
+  /// 15 ASCII characters/bytes -> 17x17 DCT-block tile -> 136px spatial period.
+  static let referencePayload = "DesignedByOrion"
 
   @MainActor
   static func wire(service: WatermarkService, settingsStore: UserSettingsStore) {

@@ -53,6 +53,7 @@ extension WatermarkServiceProtocol {
 
 enum WatermarkError: Error {
     case imageTooSmall
+    case invalidPayloadLength
     case extractFailed
     case processingError
 }
@@ -62,6 +63,8 @@ extension WatermarkError: LocalizedError {
         switch self {
         case .imageTooSmall:
             return "Image size is too small, cannot meet the minimum requirements for watermark processing."
+        case .invalidPayloadLength:
+            return "Watermark payload must contain 8 to 16 ASCII letters, numbers, or . _ - @ characters."
         case .extractFailed:
             return "Failed to extract watermark from the current image (Image does not contain valid watermark or is severely damaged)."
         case .processingError:

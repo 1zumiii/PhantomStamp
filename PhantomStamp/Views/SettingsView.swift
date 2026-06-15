@@ -120,14 +120,14 @@ struct SettingsView: View {
 
     private var watermarkTextFieldRow: some View {
         let count = settingsStore.defaultWatermarkText.count
-        let isInRange = count == 0 || (count >= WatermarkInsertViewModel.payloadMinLength && count <= WatermarkInsertViewModel.payloadMaxLength)
+        let isInRange = count == 0 || WatermarkPayloadLimits.isValidUserPayload(settingsStore.defaultWatermarkText)
 
         return VStack(alignment: .leading, spacing: 6) {
             HStack(alignment: .firstTextBaseline) {
                 Text(AppConstants.Copy.Settings.labelDefaultWatermarkText)
                     .font(.subheadline.weight(.medium))
                 Spacer()
-                Text("\(count)/\(WatermarkInsertViewModel.payloadMaxLength)")
+                Text("\(count)/\(WatermarkInsertViewModel.payloadMaxCharacterCount)")
                     .font(.caption.monospacedDigit().weight(.medium))
                     .foregroundStyle(isInRange ? Color.secondary : Color.red)
             }
@@ -139,6 +139,7 @@ struct SettingsView: View {
             .font(.subheadline)
             .autocorrectionDisabled()
             .textInputAutocapitalization(.never)
+            .keyboardType(.asciiCapable)
             .padding(.horizontal, 12)
             .padding(.vertical, 10)
             .background {
@@ -150,7 +151,7 @@ struct SettingsView: View {
                     .strokeBorder(Color.primary.opacity(0.14), lineWidth: 1)
             }
 
-            Text("8–16 characters. Leave empty to disable the default.")
+            Text("8–16 ASCII letters, numbers, or . _ - @. Leave empty to disable the default.")
                 .font(.caption)
                 .foregroundStyle(isInRange ? Color.secondary : Color.red)
         }
@@ -161,11 +162,8 @@ struct SettingsView: View {
         Binding(
             get: { settingsStore.defaultWatermarkText },
             set: { newValue in
-                if newValue.count > WatermarkInsertViewModel.payloadMaxLength {
-                    settingsStore.defaultWatermarkText = String(newValue.prefix(WatermarkInsertViewModel.payloadMaxLength))
-                } else {
-                    settingsStore.defaultWatermarkText = newValue
-                }
+                settingsStore.defaultWatermarkText =
+                    WatermarkPayloadLimits.sanitizingUserInput(newValue)
             }
         )
     }

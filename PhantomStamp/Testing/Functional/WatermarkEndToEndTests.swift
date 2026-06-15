@@ -49,8 +49,8 @@ enum WatermarkEndToEndTests {
             )
         }
 
-        // Keep <= 16 bytes to satisfy current encodeFEC cap.
-        let text = "Successful" // 3 chars, UTF-8 <= 16 bytes
+        // A shorter valid payload also exercises the variable tile period.
+        let text = "Successful" // 10 ASCII characters.
         let service = WatermarkService()
 
         let collector = ProgressCollector()
@@ -236,4 +236,3 @@ private final class ProgressCollector {
         return embedRequired.isSubset(of: steps) || extractRequired.isSubset(of: steps)
     }
 }
-

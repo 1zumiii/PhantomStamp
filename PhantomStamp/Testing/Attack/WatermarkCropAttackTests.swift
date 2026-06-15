@@ -105,7 +105,7 @@ enum WatermarkCropAttackTests {
             )
         }
 
-        let expectedText = "Successful"
+        let expectedText = WatermarkAttackTestHarness.referencePayload
 
         let watermarked: UIImage
         do {
@@ -174,7 +174,7 @@ enum WatermarkCropAttackTests {
             return Report(imageLoaded: false, embedSucceeded: false, cases: [])
         }
 
-        let expectedText = "Successful"
+        let expectedText = WatermarkAttackTestHarness.referencePayload
 
         let watermarked: UIImage
         do {
@@ -237,7 +237,7 @@ enum WatermarkCropAttackTests {
             )
         }
 
-        let expectedText = "Successful"
+        let expectedText = WatermarkAttackTestHarness.referencePayload
 
         let watermarked: UIImage
         do {

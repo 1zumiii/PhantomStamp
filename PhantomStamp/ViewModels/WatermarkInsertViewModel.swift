@@ -37,8 +37,8 @@ final class WatermarkInsertViewModel {
     var embedErrorMessage: String?
     var showEmbedErrorAlert: Bool = false
 
-    static let payloadMinLength = 8
-    static let payloadMaxLength = 16
+    static let payloadMinCharacterCount = WatermarkPayloadLimits.minimumCharacterCount
+    static let payloadMaxCharacterCount = WatermarkPayloadLimits.maximumCharacterCount
     static let maxSelectedImageCount = 9
 
     init(watermarkService: any WatermarkServiceProtocol) {
@@ -50,11 +50,9 @@ final class WatermarkInsertViewModel {
         watermarkPayload.trimmingCharacters(in: .whitespacesAndNewlines)
     }
 
-    /// True when length is within bounds (empty is invalid).
+    /// True when the payload follows the product-level ASCII identifier contract.
     var isPayloadLengthValid: Bool {
-        let t = trimmedPayload
-        guard !t.isEmpty else { return false }
-        return t.count >= Self.payloadMinLength && t.count <= Self.payloadMaxLength
+        WatermarkPayloadLimits.isValidUserPayload(trimmedPayload)
     }
 
     var canStartEmbed: Bool {

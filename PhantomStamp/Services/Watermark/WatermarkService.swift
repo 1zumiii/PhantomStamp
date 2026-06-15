@@ -298,6 +298,9 @@ class WatermarkService: WatermarkServiceProtocol {
             if image.size.width < minSize || image.size.height < minSize {
                 throw WatermarkError.imageTooSmall
             }
+            guard WatermarkPayloadLimits.isValidUserPayload(text) else {
+                throw WatermarkError.invalidPayloadLength
+            }
 
             // Convert the text to binary and apply Forward Error Correction (FEC)
             let eccBits = encodeFEC(text: text)

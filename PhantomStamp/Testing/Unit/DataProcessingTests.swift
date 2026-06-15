@@ -24,6 +24,9 @@ enum DataProcessingTests {
         var syncMarkerShapePassed: Bool
         var build2DTileDimsPassed: Bool
         var build2DTilePaddingPassed: Bool
+        var variableLengthRoundTripsPassed: Bool
+        var variableTilePeriodsPassed: Bool
+        var asciiInputRulesPassed: Bool
 
         var encodedBitCount: Int
         var correctedSampleDecoded: String?
@@ -47,8 +50,8 @@ enum DataProcessingTests {
             && decodeFEC(bits: encAscii, expectedMessageLengthBytes: msgAscii.utf8.count) == msgAscii
             && decodeFEC(bits: encAscii, expectedMessageLengthBytes: msgAscii.utf8.count + 1) == nil
 
-        // 3) Round-trip (UTF-8 multibyte). Keep <= 16 bytes.
-        let msgUtf8 = "Successful"
+        // 3) Round-trip (actual multibyte UTF-8). Four CJK characters = 12 UTF-8 bytes.
+        let msgUtf8 = "水印测试"
         let encUtf8 = encodeFEC(text: msgUtf8)
         let decUtf8 = decodeFEC(bits: encUtf8)
         let roundTripUtf8Passed = (decUtf8 == msgUtf8)
@@ -92,6 +95,43 @@ enum DataProcessingTests {
         let expectedSide = Int(ceil(sqrt(Double(tileBits.count))))
         let build2DTilePaddingPassed = tile.bits.count == expectedSide * expectedSide
 
+        // 8) Payloads remain variable-length. The length header lets extraction recover each
+        // exact message without padding every payload to 16 bytes.
+        let variableCases: [(text: String, expectedTileSide: Int)] = [
+            ("12345678", 14),
+            ("Successful", 15),
+            ("DesignedByOrion", 17),
+            ("1234567890123456", 18)
+        ]
+        let variableLengthRoundTripsPassed = variableCases.allSatisfy { testCase in
+            let encoded = encodeFEC(text: testCase.text)
+            return decodeFEC(bits: encoded) == testCase.text
+                && decodeFEC(
+                    bits: encoded,
+                    expectedMessageLengthBytes: testCase.text.utf8.count
+                ) == testCase.text
+        }
+        let variableTilePeriodsPassed = variableCases.allSatisfy { testCase in
+            let encoded = encodeFEC(text: testCase.text)
+            let payloadTile = build2DTile(from: getSyncMarkerBits() + encoded)
+            return payloadTile.bitsWide == testCase.expectedTileSide
+                && payloadTile.bitsHigh == testCase.expectedTileSide
+        }
+
+        // 9) The low-level codec remains UTF-8 capable, while product entry points expose a
+        // deterministic ASCII identifier alphabet.
+        let exactBudget = "Abcd1234._-@WXYZ"
+        let sanitized = WatermarkPayloadLimits.sanitizingUserInput(
+            "水印 Abcd1234._-@WXYZ!"
+        )
+        let asciiInputRulesPassed =
+            WatermarkPayloadLimits.utf8ByteCount(of: msgUtf8) == 12
+            && WatermarkPayloadLimits.isValidUserPayload(exactBudget)
+            && !WatermarkPayloadLimits.isValidUserPayload(msgUtf8)
+            && !WatermarkPayloadLimits.isValidUserPayload("Contains Space")
+            && sanitized == exactBudget
+            && sanitized.count == WatermarkPayloadLimits.maximumCharacterCount
+
         return Report(
             encodeRejectsOverLimitPassed: encodeRejectsOverLimitPassed,
             roundTripAsciiPassed: roundTripAsciiPassed,
@@ -101,6 +141,9 @@ enum DataProcessingTests {
             syncMarkerShapePassed: syncMarkerShapePassed,
             build2DTileDimsPassed: build2DTileDimsPassed,
             build2DTilePaddingPassed: build2DTilePaddingPassed,
+            variableLengthRoundTripsPassed: variableLengthRoundTripsPassed,
+            variableTilePeriodsPassed: variableTilePeriodsPassed,
+            asciiInputRulesPassed: asciiInputRulesPassed,
             encodedBitCount: encAscii.count,
             correctedSampleDecoded: corrected,
             doubleErrorSampleDecoded: doubleDecoded,
@@ -122,6 +165,9 @@ enum DataProcessingTests {
             && r.syncMarkerShapePassed
             && r.build2DTileDimsPassed
             && r.build2DTilePaddingPassed
+            && r.variableLengthRoundTripsPassed
+            && r.variableTilePeriodsPassed
+            && r.asciiInputRulesPassed
 
         let status = passed ? "PASS" : "FAIL"
         print("[DataProcessingTests] \(status) Data / FEC / Tile")
@@ -133,6 +179,9 @@ enum DataProcessingTests {
         print("  - sync marker shape (32b):  \(r.syncMarkerShapePassed ? "PASS" : "FAIL")")
         print("  - build2DTile dims square:  \(r.build2DTileDimsPassed ? "PASS" : "FAIL")")
         print("  - build2DTile padding:      \(r.build2DTilePaddingPassed ? "PASS" : "FAIL")")
+        print("  - variable-length decode:   \(r.variableLengthRoundTripsPassed ? "PASS" : "FAIL")")
+        print("  - variable tile periods:    \(r.variableTilePeriodsPassed ? "PASS" : "FAIL")")
+        print("  - ASCII input rules:        \(r.asciiInputRulesPassed ? "PASS" : "FAIL")")
         print("  - metrics: encBits=\(r.encodedBitCount) tile=\(r.tileSide)x\(r.tileSide) tileBits=\(r.tileBitCount)")
         #endif
     }

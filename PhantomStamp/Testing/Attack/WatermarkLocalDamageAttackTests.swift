@@ -52,7 +52,7 @@ enum WatermarkLocalDamageAttackTests {
         settings.textureVarianceThreshold = -1
         let service = WatermarkService()
         service.settingsStore = settings
-        let expectedText = "Successful"
+        let expectedText = WatermarkAttackTestHarness.referencePayload
 
         guard let watermarked = try? await service.embedWatermarkSilently(
             into: image,
@@ -124,7 +124,7 @@ enum WatermarkLocalDamageAttackTests {
         settings.textureVarianceThreshold = -1
         let service = WatermarkService()
         service.settingsStore = settings
-        let expectedText = "Successful"
+        let expectedText = WatermarkAttackTestHarness.referencePayload
 
         guard let watermarked = try? await service.embedWatermarkSilently(
             into: image,
@@ -201,7 +201,7 @@ enum WatermarkLocalDamageAttackTests {
         settings.textureVarianceThreshold = -1
         let service = WatermarkService()
         service.settingsStore = settings
-        let expectedText = "Successful"
+        let expectedText = WatermarkAttackTestHarness.referencePayload
 
         guard let watermarked = try? await service.embedWatermarkSilently(
             into: image,
@@ -293,7 +293,7 @@ enum WatermarkLocalDamageAttackTests {
         settings.textureVarianceThreshold = -1
         let service = WatermarkService()
         service.settingsStore = settings
-        let expectedText = "Successful"
+        let expectedText = WatermarkAttackTestHarness.referencePayload
 
         guard let watermarked = try? await service.embedWatermarkSilently(
             into: image,
@@ -326,7 +326,7 @@ enum WatermarkLocalDamageAttackTests {
             && report.embedSucceeded
             && report.rejectedFalsePositive
         let disposition: String
-        if report.extractedText == "Successful" {
+        if report.extractedText == WatermarkAttackTestHarness.referencePayload {
             disposition = "correct extraction"
         } else if report.extractedText == nil {
             disposition = "safe rejection"

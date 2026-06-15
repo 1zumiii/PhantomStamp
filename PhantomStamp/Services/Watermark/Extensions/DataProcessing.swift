@@ -7,13 +7,55 @@
 
 import Foundation
 
+nonisolated enum WatermarkPayloadLimits {
+    static let minimumCharacterCount = 8
+    static let maximumCharacterCount = 16
+    static let allowedPunctuation = "._-@"
+
+    static func utf8ByteCount(of text: String) -> Int {
+        text.utf8.count
+    }
+
+    static func isValidUserPayload(_ text: String) -> Bool {
+        let characters = text.count
+        guard (minimumCharacterCount...maximumCharacterCount).contains(characters) else {
+            return false
+        }
+        return text.unicodeScalars.allSatisfy(isAllowedUserScalar)
+    }
+
+    /// Keeps the product-level payload alphabet deliberately small and deterministic.
+    /// The low-level FEC codec remains UTF-8 capable, but UI/service entry points accept only
+    /// ASCII identifiers so character count, byte count, and extraction length always agree.
+    static func sanitizingUserInput(_ text: String) -> String {
+        let filteredScalars = text.unicodeScalars.filter(isAllowedUserScalar)
+        return String(String.UnicodeScalarView(filteredScalars)).prefixString(
+            maximumCharacters: maximumCharacterCount
+        )
+    }
+
+    private static func isAllowedUserScalar(_ scalar: Unicode.Scalar) -> Bool {
+        switch scalar.value {
+        case 48...57, 65...90, 97...122:
+            return true
+        default:
+            return allowedPunctuation.unicodeScalars.contains(scalar)
+        }
+    }
+}
+
+nonisolated private extension String {
+    func prefixString(maximumCharacters: Int) -> String {
+        String(prefix(maximumCharacters))
+    }
+}
+
 nonisolated func encodeFEC(text: String) -> [Int] {
     let bytes = Array(text.utf8)
     
     // Hard cap: keep payload small enough for a compact 2D tile.
     // This is a backend safety net even if the UI also limits input length.
-    let maxPayloadBytes = 16
-    guard bytes.count <= maxPayloadBytes else {
+    guard bytes.count <= WatermarkPayloadLimits.maximumCharacterCount else {
         return []
     }
     
