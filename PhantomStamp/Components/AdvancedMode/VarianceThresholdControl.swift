@@ -77,14 +77,14 @@ private struct VarianceHistogramThresholdOverlay: View {
 
             var shaded = Path()
             shaded.addRect(CGRect(x: inset, y: 0, width: max(0, thresholdX - inset), height: canvasSize.height))
-            context.fill(shaded, with: .color(Color.blue.opacity(0.07)))
+            context.fill(shaded, with: .color(Color.phantomAccent.opacity(0.10)))
 
             var cutLine = Path()
             cutLine.move(to: CGPoint(x: thresholdX, y: 2))
             cutLine.addLine(to: CGPoint(x: thresholdX, y: canvasSize.height - 2))
             context.stroke(
                 cutLine,
-                with: .color(Color.orange.opacity(0.6)),
+                with: .color(Color.phantomAccent.opacity(0.68)),
                 style: StrokeStyle(lineWidth: 1.5, dash: [4, 3])
             )
         }
@@ -127,7 +127,7 @@ struct VarianceThresholdStats: View {
                         .font(.caption2)
                 }
                 .font(.caption.weight(.semibold))
-                .foregroundStyle(Color.blue.opacity(0.85))
+                .foregroundStyle(Color.phantomAccent.opacity(0.90))
 
                 Spacer()
 
@@ -188,7 +188,7 @@ struct VarianceThresholdControl: View {
                     value: $liveSigma,
                     range: 0...SigmaTrackGeometry.sigmaMax,
                     step: 0.1,
-                    tint: .orange,
+                    tint: .phantomAccent,
                     isEnabled: isEnabled,
                     onEditingChanged: { handleEditingChanged($0) }
                 )
@@ -200,7 +200,7 @@ struct VarianceThresholdControl: View {
                     value: $liveSigma,
                     range: 0...SigmaTrackGeometry.sigmaMax,
                     step: 0.1,
-                    tint: .orange,
+                    tint: .phantomAccent,
                     isEnabled: isEnabled,
                     onEditingChanged: { handleEditingChanged($0) }
                 )

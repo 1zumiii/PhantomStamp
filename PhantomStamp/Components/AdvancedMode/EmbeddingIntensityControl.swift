@@ -51,7 +51,7 @@ private struct AmplitudeHistogramBars: View, Equatable {
                 )
                 context.fill(
                     Path(roundedRect: rect, cornerRadius: 1.5),
-                    with: .color(Color.orange.opacity(0.22))
+                    with: .color(Color.phantomAccent.opacity(0.24))
                 )
             }
         }
@@ -74,14 +74,14 @@ private struct AmplitudeHistogramIntensityOverlay: View {
 
             var shaded = Path()
             shaded.addRect(CGRect(x: inset, y: 0, width: max(0, thresholdX - inset), height: canvasSize.height))
-            context.fill(shaded, with: .color(Color.orange.opacity(0.08)))
+            context.fill(shaded, with: .color(Color.phantomAccent.opacity(0.10)))
 
             var cutLine = Path()
             cutLine.move(to: CGPoint(x: thresholdX, y: 2))
             cutLine.addLine(to: CGPoint(x: thresholdX, y: canvasSize.height - 2))
             context.stroke(
                 cutLine,
-                with: .color(Color.orange.opacity(0.65)),
+                with: .color(Color.phantomAccent.opacity(0.68)),
                 style: StrokeStyle(lineWidth: 1.5, dash: [4, 3])
             )
         }
@@ -104,7 +104,7 @@ struct AmplitudeIntensityStats: View {
                         .font(.caption2)
                 }
                 .font(.caption.weight(.semibold))
-                .foregroundStyle(Color.orange.opacity(0.9))
+                .foregroundStyle(Color.phantomAccent.opacity(0.90))
 
                 Spacer()
 
@@ -162,7 +162,7 @@ struct EmbeddingIntensityControl: View {
                     value: $liveIntensity,
                     range: 0...BlockEmbedAmplitude.intensityMax,
                     step: BlockEmbedAmplitude.intensityStep,
-                    tint: .orange,
+                    tint: .phantomAccent,
                     isEnabled: isEnabled,
                     onEditingChanged: { handleEditingChanged($0) }
                 )
@@ -177,7 +177,7 @@ struct EmbeddingIntensityControl: View {
                     value: $liveIntensity,
                     range: 0...BlockEmbedAmplitude.intensityMax,
                     step: BlockEmbedAmplitude.intensityStep,
-                    tint: .orange,
+                    tint: .phantomAccent,
                     isEnabled: isEnabled,
                     onEditingChanged: { handleEditingChanged($0) }
                 )

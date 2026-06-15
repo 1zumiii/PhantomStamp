@@ -7,7 +7,7 @@
 
 import Foundation
 
-func encodeFEC(text: String) -> [Int] {
+nonisolated func encodeFEC(text: String) -> [Int] {
     let bytes = Array(text.utf8)
     
     // Hard cap: keep payload small enough for a compact 2D tile.
@@ -34,7 +34,7 @@ func encodeFEC(text: String) -> [Int] {
     return interleaveBits(codewordBits, columns: 8)
 }
 
-func decodeFEC(bits: [Int]) -> String? {
+nonisolated func decodeFEC(bits: [Int]) -> String? {
     // At minimum we need one byte length header => 8 bits => two Hamming(8,4) codewords => 16 bits,
     // plus interleaving may pad to full blocks.
     guard bits.count >= 16 else {
@@ -74,7 +74,7 @@ func decodeFEC(bits: [Int]) -> String? {
     return String(bytes: bytes, encoding: .utf8)
 }
 
-func getSyncMarkerBits() -> [Int] {
+nonisolated func getSyncMarkerBits() -> [Int] {
     // fixed sync header, used to identify the start of the watermark
     // length 32 bits, use a pattern with obvious high/low changes
     return [
@@ -85,7 +85,7 @@ func getSyncMarkerBits() -> [Int] {
     ]
 }
 
-func build2DTile(from bits: [Int]) -> Macroblock2D {
+nonisolated func build2DTile(from bits: [Int]) -> Macroblock2D {
     var tile = Macroblock2D()
     
     guard !bits.isEmpty else {
@@ -109,7 +109,7 @@ func build2DTile(from bits: [Int]) -> Macroblock2D {
     return tile
 }
 
-private func byteToBits(_ byte: UInt8) -> [Int] {
+nonisolated private func byteToBits(_ byte: UInt8) -> [Int] {
     var bits: [Int] = []
     
     for i in stride(from: 7, through: 0, by: -1) {
@@ -120,7 +120,7 @@ private func byteToBits(_ byte: UInt8) -> [Int] {
     return bits
 }
 
-private func bitsToByte(_ bits: [Int]) -> UInt8 {
+nonisolated private func bitsToByte(_ bits: [Int]) -> UInt8 {
     var byte: UInt8 = 0
     
     for bit in bits.prefix(8) {
@@ -135,7 +135,7 @@ private func bitsToByte(_ bits: [Int]) -> UInt8 {
 
 /// Encodes a raw bitstream using extended Hamming(8,4) (SECDED).
 /// Input length is padded to a multiple of 4 bits.
-private func hamming84Encode(bitStream: [Int]) -> [Int] {
+nonisolated private func hamming84Encode(bitStream: [Int]) -> [Int] {
     var bits = bitStream
     let pad = (4 - (bits.count % 4)) % 4
     if pad != 0 { bits.append(contentsOf: Array(repeating: 0, count: pad)) }
@@ -163,7 +163,7 @@ private func hamming84Encode(bitStream: [Int]) -> [Int] {
 }
 
 /// Decodes an extended Hamming(8,4) bitstream. Returns `nil` on detected double-bit errors.
-private func hamming84Decode(bitStream: [Int]) -> [Int]? {
+nonisolated private func hamming84Decode(bitStream: [Int]) -> [Int]? {
     guard bitStream.count >= 8 else { return [] }
 
     let cwCount = bitStream.count / 8
@@ -205,7 +205,7 @@ private func hamming84Decode(bitStream: [Int]) -> [Int]? {
 /// Simple block interleaver at codeword granularity.
 /// Treats the stream as `codewordCount` codewords, each `codewordBitWidth` bits.
 /// Bit-level block interleaver (Row-in, Column-out)
-private func interleaveBits(_ bits: [Int], columns: Int) -> [Int] {
+nonisolated private func interleaveBits(_ bits: [Int], columns: Int) -> [Int] {
     guard !bits.isEmpty, columns > 1 else { return bits }
     
     // each row stores a complete Hamming code (columns = 8)
@@ -231,7 +231,7 @@ private func interleaveBits(_ bits: [Int], columns: Int) -> [Int] {
     return out
 }
 
-private func deinterleaveBits(_ bits: [Int], columns: Int) -> [Int] {
+nonisolated private func deinterleaveBits(_ bits: [Int], columns: Int) -> [Int] {
     guard !bits.isEmpty, columns > 1 else { return bits }
     
     let rows = bits.count / columns
@@ -249,10 +249,10 @@ private func deinterleaveBits(_ bits: [Int], columns: Int) -> [Int] {
 }
 
 @inline(__always)
-private func clampBit(_ x: Int) -> Int { x == 0 ? 0 : 1 }
+nonisolated private func clampBit(_ x: Int) -> Int { x == 0 ? 0 : 1 }
 
 @inline(__always)
-private func parityEven(_ bits: Int...) -> Int {
+nonisolated private func parityEven(_ bits: Int...) -> Int {
     var p = 0
     // calculate the parity of the bits
     for b in bits { p ^= (b & 1) }

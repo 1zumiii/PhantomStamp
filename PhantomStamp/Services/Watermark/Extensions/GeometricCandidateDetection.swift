@@ -27,7 +27,7 @@ private struct GeometricWindowEstimate: Sendable {
     var originY: Int
 }
 
-extension WatermarkService {
+nonisolated extension WatermarkService {
     /// Returns a small, ordered hypothesis set for downstream Sync/FEC validation.
     ///
     /// The first pass uses the center and four spatial corners. Four edge-midpoint windows are

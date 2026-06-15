@@ -9,7 +9,7 @@ import Accelerate
 import Foundation
 import UIKit
 
-extension WatermarkService {
+nonisolated extension WatermarkService {
 
     /// Converts an image to separate **Y**, **Cb**, and **Cr** planes (**full-resolution**, equivalent to **4:4:4** sampling).
     /// - Storage is **8-bit** per sample (`UInt8`), matching typical encoder layouts and reducing peak memory vs full-float planes.

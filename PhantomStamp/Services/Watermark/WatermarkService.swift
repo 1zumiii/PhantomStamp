@@ -495,7 +495,7 @@ class WatermarkService: WatermarkServiceProtocol {
                 guard let self = self else { throw WatermarkError.processingError }
 
                 // 1. image preprocessing
-                guard let ycbcrImage = await self.convertToYCbCr(image: image) else {
+                guard let ycbcrImage = self.convertToYCbCr(image: image) else {
                     throw WatermarkError.processingError
                 }
                 let yChannel = ycbcrImage.Y
@@ -510,7 +510,7 @@ class WatermarkService: WatermarkServiceProtocol {
 
                 // DFT is a proposal generator, not an authority. Spatially separated FFT windows
                 // form transform consensuses, while identity is always retained as a fallback.
-                let transformCandidates = await self.detectGeometricTransformCandidates(in: yChannel)
+                let transformCandidates = self.detectGeometricTransformCandidates(in: yChannel)
                 await reportProgress(step: .extractDetectTransforms, percentage: 0.40)
 
                 func validationScore(_ work: ExtractMatrixWorkResult) -> Int {
@@ -533,7 +533,7 @@ class WatermarkService: WatermarkServiceProtocol {
                     )
                     #endif
 
-                    let deskewedYChannel = await self.deskewImage(
+                    let deskewedYChannel = self.deskewImage(
                         yChannel,
                         angle: transformParams.angle,
                         scale: transformParams.scale
@@ -541,7 +541,7 @@ class WatermarkService: WatermarkServiceProtocol {
 
                     // 2. physical and logical alignment. Each offset now probes multiple spatial
                     // regions, so a local edit cannot blind validation merely by covering one corner.
-                    let gridScan = await self.findGridOffsetAndSyncMarker(
+                    let gridScan = self.findGridOffsetAndSyncMarker(
                         in: deskewedYChannel,
                         onOffsetProgress: { t in
                             let coarse = floor(min(max(t, 0), 1) * 4) / 4
@@ -575,18 +575,18 @@ class WatermarkService: WatermarkServiceProtocol {
                     }
 
                     // 3. data extraction from this candidate's corrected plane.
-                    let rawExtractedScores = await self.extractSoftBitsWithOffset(
+                    let rawExtractedScores = self.extractSoftBitsWithOffset(
                         deskewedYChannel,
                         offset: gridOffset
                     )
 
                     // 4. sync-gated recovery and FEC validation.
-                    let voting = await self.applySoftMajorityVotingWithDiagnostics(
+                    let voting = self.applySoftMajorityVotingWithDiagnostics(
                         to: rawExtractedScores,
                         preferredHypothesis: gridScan.topologyHypothesis
                     )
                     let votedBits = voting.bits
-                    let syncCount = await getSyncMarkerBits().count
+                    let syncCount = getSyncMarkerBits().count
                     let payload = votedBits.count >= syncCount
                         ? Array(votedBits.dropFirst(syncCount))
                         : []
@@ -760,6 +760,7 @@ class WatermarkService: WatermarkServiceProtocol {
             object: nil,
             userInfo: ["payload": BatchProgressPayload(completed: 0, total: images.count, current: 0)]
         )
+        await awaitProgressOverlayPresentation()
 
         var outputs: [UIImage] = []
         outputs.reserveCapacity(images.count)
@@ -815,6 +816,7 @@ class WatermarkService: WatermarkServiceProtocol {
             object: nil,
             userInfo: ["payload": BatchProgressPayload(completed: 0, total: images.count, current: 0)]
         )
+        await awaitProgressOverlayPresentation()
 
         var outputs: [String] = []
         outputs.reserveCapacity(images.count)
@@ -879,6 +881,7 @@ class WatermarkService: WatermarkServiceProtocol {
             object: nil,
             userInfo: ["payload": BatchProgressPayload(completed: 0, total: images.count, current: 0)]
         )
+        await awaitProgressOverlayPresentation()
 
         var outputs: [WatermarkExtractionResult?] = Array(repeating: nil, count: images.count)
 

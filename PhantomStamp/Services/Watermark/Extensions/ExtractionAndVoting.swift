@@ -176,7 +176,7 @@ struct MajorityVotingDiagnostics: Sendable {
     var totalRepetitionCount: Int
 }
 
-extension WatermarkService {
+nonisolated extension WatermarkService {
     /// Applies one of the eight D4 topology hypotheses to a score grid.
     ///
     /// The `Flipped` variants are horizontal mirrors after the corresponding rotation. Combined

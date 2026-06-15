@@ -25,7 +25,7 @@
 import Foundation
 import Accelerate
 
-extension WatermarkService {
+nonisolated extension WatermarkService {
 
     // ==========================================
     // MARK: - Sync Template Geometric Constants

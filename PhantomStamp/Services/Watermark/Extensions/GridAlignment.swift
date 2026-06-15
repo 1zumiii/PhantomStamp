@@ -21,7 +21,7 @@ struct GridOffsetScanResult: Sendable {
     var topologyHypothesis: ScoreGridTopologyHypothesis = .normal
 }
 
-extension WatermarkService {
+nonisolated extension WatermarkService {
     /// Convenience overload for 8-bit planes (tests / non-deskewed paths): promotes to Float once,
     /// then runs the precision-preserving scan below.
     func findGridOffsetAndSyncMarker(in matrix: Matrix, onOffsetProgress: ((Double) -> Void)? = nil) -> GridOffsetScanResult {

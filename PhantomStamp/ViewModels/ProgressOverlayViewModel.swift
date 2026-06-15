@@ -347,6 +347,12 @@ final class FullScreenWatermarkProgressOverlayViewModel {
     }
 
     func handleBatchProgress(_ payload: BatchProgressPayload) {
+        if case .hidden = state {
+            // Batch and start notifications are consumed by separate async streams. If the batch
+            // event wins the race, start here so presentationSequence still produces a readiness ACK.
+            startIfNeeded()
+        }
+
         let nextCurrent = max(0, payload.current)
         var b = state.batch
         b.current = nextCurrent

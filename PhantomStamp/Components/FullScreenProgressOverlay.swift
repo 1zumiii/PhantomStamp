@@ -172,8 +172,9 @@ struct FullScreenWatermarkProgressOverlay: View {
         }
         .onChange(of: vm.presentationSequence) { _, _ in
             Task { @MainActor in
-                // Let SwiftUI commit the visible overlay before releasing CPU-heavy producers.
-                try? await Task.sleep(nanoseconds: 45_000_000)
+                // Release CPU-heavy producers only after the 180 ms entrance transition has
+                // completed, so the overlay never has to animate while extraction is ramping up.
+                try? await Task.sleep(nanoseconds: 220_000_000)
                 guard vm.isVisible else { return }
                 NotificationCenter.default.post(
                     name: AppConstants.Notifications.watermarkProgressOverlayDidPresent,
