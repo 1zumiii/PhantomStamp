@@ -85,7 +85,7 @@ PhantomStamp includes automated boundary sweeps for geometric attacks, JPEG reco
 ### 5.1 Geometric Resilience (Intensity = 4.0 - 5.0)
 
 * **Static Precision:** In the controlled detector measurements used for the documented sweep, angle error reached approximately $\le 0.002^\circ$ and relative scale error approximately $\le 0.0003$. Natural-image interference and later resampling can produce larger end-to-end errors.
-* **Rotation Resilience:** The geometric detector normalizes the fourfold spectrum ambiguity into a residual angle near $[-45^\circ, 45^\circ]$. The downstream topology search covers the associated quarter turns and mirror variants, providing full-circle hypothesis coverage without claiming that every image and angle must decode successfully.
+* **Rotation Resilience:** The geometric detector normalizes the fourfold spectrum ambiguity into a residual angle in the open interval $(-45^\circ, 45^\circ)$. The downstream topology search covers the associated quarter turns and mirror variants, providing full-circle hypothesis coverage without claiming that every image and angle must decode successfully.
 * **Scaling Resilience:** At synchronization-template intensity 5.0 on the reference asset, the observed passing envelope was approximately **0.85x to 1.50x**. Results outside that range, and isolated failures inside it, depend on image content and resampling phase.
 
 ### 5.2 Resampling and Non-Monotonic Failure Regions
