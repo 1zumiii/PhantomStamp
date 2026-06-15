@@ -12,7 +12,7 @@ import Accelerate
 
 /// Row-major **8-bit** samples (`data[y * width + x]`). Used for full **Y** (and pass-through **Cb**/**Cr**) planes.
 /// Promote to `Float` only inside **8×8** blocks before **DCT**.
-struct Matrix {
+nonisolated struct Matrix: Sendable {
     var width: Int = 0
     var height: Int = 0
     var data: [UInt8] = []
@@ -27,7 +27,7 @@ struct Matrix {
 /// bilinear-interpolated values straight into `extractSpatialBlock` → `performDCT` untouched.
 ///
 /// The embedding pipeline and all image I/O keep using the 8-bit ``Matrix``.
-struct FloatMatrix {
+nonisolated struct FloatMatrix: Sendable {
     var width: Int = 0
     var height: Int = 0
     var data: [Float] = []
@@ -55,8 +55,8 @@ struct FloatMatrix {
 
 /// One **8×8** tile of `Float` samples in **row-major** order: index `r * 8 + c` is spatial row `r`, column `c`.
 ///
-/// The same layout holds **DCT coefficients** after ``WatermarkService/performDCT(_:)``, with `(u, v)` mapped to `(row, col)`.
-struct DCTMatrix8x8 {
+/// The same layout holds **DCT coefficients** after ``WatermarkAlgorithmCore/performDCT(_:)``, with `(u, v)` mapped to `(row, col)`.
+nonisolated struct DCTMatrix8x8: Sendable {
     static let side = 8
     static let elementCount = 64
 
@@ -81,14 +81,14 @@ struct DCTMatrix8x8 {
 }
 
 /// Full-resolution **YCbCr** planes for RGB round-trip. All frequency-domain embedding runs on **`Y` only**; **Cb**/**Cr** stay untouched.
-struct YCbCrImage {
+nonisolated struct YCbCrImage: Sendable {
     var Y: Matrix = Matrix()
     var Cb: Matrix = Matrix()
     var Cr: Matrix = Matrix()
 }
 
 /// One strip of **luma (Y)** pixels for parallel tile processing. **Chrominance is not stored here.**
-struct ImageStrip {
+nonisolated struct ImageStrip: Sendable {
     var width: Int = 0
     var height: Int = 0
     /// Absolute **x** origin of this strip in the parent **Y** plane (pixels).
@@ -131,7 +131,7 @@ struct ImageStrip {
 }
 
 /// Payload bits laid on an **8×8 macro-cell** grid (one bit index per **8×8** image cell). Used with absolute image coordinates from strips.
-struct Macroblock2D {
+nonisolated struct Macroblock2D: Sendable {
     /// Macro lattice width in **cells** (each cell spans **8×8** pixels).
     var bitsWide: Int = 0
     /// Macro lattice height in **cells**.
@@ -158,7 +158,7 @@ struct Macroblock2D {
 }
 
 /// Used for dynamic-sized 2D float matrices in spatial domain (e.g. Y channel full image, 512x512 spatial sync template).
-struct FFTFloatMatrix {
+nonisolated struct FFTFloatMatrix: Sendable {
     let width: Int
     let height: Int
     var values: [Float]
@@ -188,7 +188,7 @@ struct FFTFloatMatrix {
 }
 
 /// Complex matrix designed for 2D-FFT/DFT (separate complex format, perfectly compatible with iOS vDSP API).
-struct FFTComplexMatrix {
+nonisolated struct FFTComplexMatrix: Sendable {
     let width: Int
     let height: Int
     

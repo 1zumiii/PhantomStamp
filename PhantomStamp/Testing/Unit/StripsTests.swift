@@ -48,7 +48,7 @@ enum StripsTests {
             }
         }
 
-        let strips = service.sliceImage(m, heightPerStrip: 10) // safeStripHeight should round down to 8
+        let strips = service.algorithms.sliceImage(m, heightPerStrip: 10) // safeStripHeight should round down to 8
 
         var checks = 0
         func check(_ cond: Bool) -> Bool { checks += 1; return cond }
@@ -108,7 +108,7 @@ enum StripsTests {
         let validWidth = (original.width / 8) * 8
         let validHeight = (original.height / 8) * 8
 
-        var strips = service.sliceImage(original, heightPerStrip: 10)
+        var strips = service.algorithms.sliceImage(original, heightPerStrip: 10)
 
         var checks = 0
         func check(_ cond: Bool) -> Bool { checks += 1; return cond }
@@ -122,10 +122,10 @@ enum StripsTests {
             return out
         }.reversed()
 
-        for p in processed { service.updateStripInPlace(&strips, with: p) }
+        for p in processed { service.algorithms.updateStripInPlace(&strips, with: p) }
 
         var reassembled = original
-        service.reassembleStrips(strips, into: &reassembled)
+        service.algorithms.reassembleStrips(strips, into: &reassembled)
 
         for (i, s) in strips.enumerated() {
             let expected = UInt8(10 + i)

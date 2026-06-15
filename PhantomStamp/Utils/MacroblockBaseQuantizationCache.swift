@@ -8,7 +8,7 @@
 import UIKit
 
 /// Row-major base adaptive quantization step per 8×8 block (before strength / global multiplier).
-struct MacroblockBaseQuantizationCache: Sendable {
+nonisolated struct MacroblockBaseQuantizationCache: Sendable {
     let maxBlocksX: Int
     let maxBlocksY: Int
     let grid: [[Float]]
@@ -36,7 +36,7 @@ struct MacroblockBaseQuantizationCache: Sendable {
     }
 }
 
-extension WatermarkService {
+nonisolated extension WatermarkAlgorithmCore {
     nonisolated func buildMacroblockBaseQuantizationCache(from image: UIImage) -> MacroblockBaseQuantizationCache? {
         guard let ycbcr = convertToYCbCr(image: image) else { return nil }
         let yChannel = ycbcr.Y

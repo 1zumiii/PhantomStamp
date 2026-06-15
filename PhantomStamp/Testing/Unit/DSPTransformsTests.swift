@@ -29,14 +29,14 @@ enum DSPTransformsTests {
 
         let constantValue: Float = 42
         let constant = DCTMatrix8x8(values: [Float](repeating: constantValue, count: DCTMatrix8x8.elementCount))
-        let vConst = service.calculateVariance(constant)
+        let vConst = service.algorithms.calculateVariance(constant)
         let varianceConstantPassed = WatermarkTestUtils.approxEqual(vConst, 0, eps: 1e-6)
 
         let ramp = DCTMatrix8x8(values: (0..<DCTMatrix8x8.elementCount).map { Float($0) })
-        let vRamp = service.calculateVariance(ramp)
+        let vRamp = service.algorithms.calculateVariance(ramp)
         let varianceRampPassed = WatermarkTestUtils.approxEqual(vRamp, 341.25, eps: 1e-4)
 
-        let freqConst = service.performDCT(constant)
+        let freqConst = service.algorithms.performDCT(constant)
         var maxNonDCAbs: Float = 0
         for u in 0..<DCTMatrix8x8.side {
             for v in 0..<DCTMatrix8x8.side {
@@ -47,23 +47,23 @@ enum DSPTransformsTests {
         let dctConstantDcOnlyPassed = maxNonDCAbs <= 1e-3
 
         let randomBlock = DCTMatrix8x8(values: WatermarkTestUtils.makeDeterministicBlock(seed: 0xC0FFEE))
-        let roundTripped = service.performIDCT(service.performDCT(randomBlock))
+        let roundTripped = service.algorithms.performIDCT(service.algorithms.performDCT(randomBlock))
         let (maxAbsError, mae) = WatermarkTestUtils.errorMetrics(a: randomBlock.values, b: roundTripped.values)
         let dctIdctRoundTripPassed = maxAbsError <= 1e-2 && mae <= 5e-3
 
         // Embed/extract sanity (frequency-domain + pipeline)
-        var freqForEmbed = service.performDCT(randomBlock)
-        service.embedBitIntoFrequencies(&freqForEmbed, bit: 1)
-        let extracted1 = service.extractBitFromFrequencies(freqForEmbed)
-        service.embedBitIntoFrequencies(&freqForEmbed, bit: 0)
-        let extracted0 = service.extractBitFromFrequencies(freqForEmbed)
+        var freqForEmbed = service.algorithms.performDCT(randomBlock)
+        service.algorithms.embedBitIntoFrequencies(&freqForEmbed, bit: 1)
+        let extracted1 = service.algorithms.extractBitFromFrequencies(freqForEmbed)
+        service.algorithms.embedBitIntoFrequencies(&freqForEmbed, bit: 0)
+        let extracted0 = service.algorithms.extractBitFromFrequencies(freqForEmbed)
         let embedExtractPassed = (extracted1 == 1) && (extracted0 == 0)
 
-        var freqPipe = service.performDCT(randomBlock)
-        service.embedBitIntoFrequencies(&freqPipe, bit: 1)
-        let pixelsAfter = service.performIDCT(freqPipe)
-        let freqAfter = service.performDCT(pixelsAfter)
-        let extractedAfter = service.extractBitFromFrequencies(freqAfter)
+        var freqPipe = service.algorithms.performDCT(randomBlock)
+        service.algorithms.embedBitIntoFrequencies(&freqPipe, bit: 1)
+        let pixelsAfter = service.algorithms.performIDCT(freqPipe)
+        let freqAfter = service.algorithms.performDCT(pixelsAfter)
+        let extractedAfter = service.algorithms.extractBitFromFrequencies(freqAfter)
         let embedPipelinePassed = (extractedAfter == 1)
 
         return Report(

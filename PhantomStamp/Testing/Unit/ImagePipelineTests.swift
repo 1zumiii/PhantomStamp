@@ -46,8 +46,8 @@ enum ImagePipelineTests {
     static func validateYCbCrRoundTrip(image: UIImage) -> YCbCrRoundTripReport? {
         guard let before = rasterizeBGRAUpSrgb(image: image) else { return nil }
         let service = WatermarkService()
-        guard let ycbcr = service.convertToYCbCr(image: image),
-              let reconstructed = service.convertToUIImage(from: ycbcr),
+        guard let ycbcr = service.algorithms.convertToYCbCr(image: image),
+              let reconstructed = service.algorithms.convertToUIImage(from: ycbcr),
               let after = rasterizeBGRAUpSrgb(image: reconstructed),
               before.width == after.width,
               before.height == after.height,

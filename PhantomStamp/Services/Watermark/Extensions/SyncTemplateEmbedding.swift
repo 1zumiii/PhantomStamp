@@ -9,7 +9,7 @@ import Foundation
 import UIKit
 
 
-extension WatermarkService {
+nonisolated extension WatermarkAlgorithmCore {
     
     // ==========================================
     // MARK: - Core Function 1: Spatial Tiling
@@ -66,7 +66,7 @@ extension WatermarkService {
     
     /// Loads the pre-computed 512x512 spatial domain synchronization template from the bundle.
     func loadSpatialSyncTemplate() -> FFTFloatMatrix {
-        return WatermarkService.cachedSyncTemplate
+        return WatermarkAlgorithmCore.cachedSyncTemplate
     }
     
     /// Maps global image coordinates to local 512x512 template coordinates.

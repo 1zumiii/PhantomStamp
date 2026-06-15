@@ -69,8 +69,8 @@ enum WatermarkLocalDamageAttackTests {
 
         let damaged = drawHighContrastScribble(on: watermarked)
         let identityPresent: Bool
-        if let ycbcr = service.convertToYCbCr(image: damaged) {
-            identityPresent = service.detectGeometricTransformCandidates(in: ycbcr.Y)
+        if let ycbcr = service.algorithms.convertToYCbCr(image: damaged) {
+            identityPresent = service.algorithms.detectGeometricTransformCandidates(in: ycbcr.Y)
                 .contains(where: \.isIdentity)
         } else {
             identityPresent = false
@@ -142,8 +142,8 @@ enum WatermarkLocalDamageAttackTests {
 
         let rotated = rotate(image: watermarked, degrees: degrees)
         let transformCandidate: GeometricTransformCandidate?
-        if let ycbcr = service.convertToYCbCr(image: rotated) {
-            transformCandidate = service.detectGeometricTransformCandidates(in: ycbcr.Y)
+        if let ycbcr = service.algorithms.convertToYCbCr(image: rotated) {
+            transformCandidate = service.algorithms.detectGeometricTransformCandidates(in: ycbcr.Y)
                 .first(where: { !$0.isIdentity })
         } else {
             transformCandidate = nil

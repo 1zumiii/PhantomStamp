@@ -8,7 +8,7 @@
 import Accelerate
 import Foundation
 
-extension WatermarkService {
+nonisolated extension WatermarkAlgorithmCore {
     /// Computes the population variance of an 8×8 spatial block (Float samples).
     ///
     /// - Note: This uses population variance (divide by N=64), which is what we typically want
@@ -63,7 +63,7 @@ extension WatermarkService {
 
 // MARK: - vDSP-based 8×8 DCT/IDCT
 
-private enum DCT8x8vDSP {
+nonisolated private enum DCT8x8vDSP {
     private static let n = DCTMatrix8x8.side
     private static let lengthN = vDSP_Length(n)
 
@@ -170,4 +170,3 @@ private enum DCT8x8vDSP {
         }
     }
 }
-

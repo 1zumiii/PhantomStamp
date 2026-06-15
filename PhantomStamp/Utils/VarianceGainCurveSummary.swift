@@ -7,7 +7,7 @@
 
 import Foundation
 
-struct VarianceGainCurveSummary: Sendable {
+nonisolated struct VarianceGainCurveSummary: Sendable {
   static let gainBinCount = 50
 
   let totalBlocks: Int

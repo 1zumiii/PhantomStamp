@@ -7,7 +7,7 @@
 
 import Foundation
 
-struct AmplitudeHistogramSummary: Sendable {
+nonisolated struct AmplitudeHistogramSummary: Sendable {
     static let binCount = 50
 
     let totalBlocks: Int

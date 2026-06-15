@@ -8,7 +8,7 @@
 import CoreGraphics
 import UIKit
 
-enum CanvasPreviewMapping {
+nonisolated enum CanvasPreviewMapping {
     /// Renders exactly what SwiftUI `scaledToFill` shows in `containerSize` (points),
     /// at `displayScale` pixels — 1:1 with the on-screen canvas and variance grid.
     static func renderDisplayMatchedPreview(
@@ -89,7 +89,7 @@ enum CanvasPreviewMapping {
 }
 
 /// Shared block-center math so crosshair lines and slider cursor tips land on the same coordinate.
-enum ReticleBlockGeometry {
+nonisolated enum ReticleBlockGeometry {
     /// Default reticle index near the top-leading `marginFraction` boundary (e.g. 10% inset).
     static func defaultBlockIndex(blockCount: Int, marginFraction: CGFloat = 0.10) -> Int {
         guard blockCount > 1 else { return 0 }

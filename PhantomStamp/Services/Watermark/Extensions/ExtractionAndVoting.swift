@@ -20,7 +20,7 @@ import Foundation
 ///
 /// The DCT payload bit is encoded as `abs(C(1,2)) - abs(C(2,1))`. A 90-degree axis swap
 /// exchanges those two coefficients, so all 90/270-degree hypotheses must invert score polarity.
-enum ScoreGridTopologyHypothesis: String, CaseIterable, Sendable {
+nonisolated enum ScoreGridTopologyHypothesis: String, CaseIterable, Sendable {
     case normal
     case normalFlipped
     case rotated90
@@ -76,7 +76,7 @@ enum ScoreGridTopologyHypothesis: String, CaseIterable, Sendable {
 ///
 /// Each candidate sync window previously performed 32 nested-array lookups. Packing each row into
 /// `UInt64` words reduces that hot loop to 2...4 XOR/popcount operations (depending on tile width).
-struct PackedSyncMarkerPattern {
+nonisolated struct PackedSyncMarkerPattern: Sendable {
     let width: Int
     let chunks: [UInt64]
     let chunkLengths: [Int]
@@ -101,7 +101,7 @@ struct PackedSyncMarkerPattern {
     }
 }
 
-struct PackedHardBitGrid {
+nonisolated struct PackedHardBitGrid: Sendable {
     let rows: Int
     let cols: Int
     private let wordsPerRow: Int
@@ -164,7 +164,7 @@ struct PackedHardBitGrid {
 }
 
 /// Diagnostics from the macro-tile sync relocation + majority-voting fold.
-struct MajorityVotingDiagnostics: Sendable {
+nonisolated struct MajorityVotingDiagnostics: Sendable {
     /// Best 32-bit sync match score on the extracted bit grid (same scale as offset scan: out of 32).
     var bestSyncBitsMatched: Int
     var macroTileWidth: Int
@@ -176,7 +176,7 @@ struct MajorityVotingDiagnostics: Sendable {
     var totalRepetitionCount: Int
 }
 
-nonisolated extension WatermarkService {
+nonisolated extension WatermarkAlgorithmCore {
     /// Applies one of the eight D4 topology hypotheses to a score grid.
     ///
     /// The `Flipped` variants are horizontal mirrors after the corresponding rotation. Combined
@@ -301,6 +301,7 @@ nonisolated extension WatermarkService {
         var flatScores = [Float](repeating: .nan, count: maxRows * maxCols)
 
         flatScores.withUnsafeMutableBufferPointer { scorePtr in
+            let scores = DisjointWriteBuffer(scorePtr)
             DispatchQueue.concurrentPerform(iterations: maxRows) { r in
                 for c in 0..<maxCols {
                     let block = extractSpatialBlock(from: matrix, x: startX + c * DCTMatrix8x8.side, y: startY + r * DCTMatrix8x8.side)
@@ -309,7 +310,7 @@ nonisolated extension WatermarkService {
                         let freqBlock = performDCT(block)
                         // DEBUG probe: sample the first 40 blocks in the "middle row" of the grid (the image center survives any rotation/scaling deskew)
                         let enableDebug = (r == maxRows / 2 && c < 40)
-                        scorePtr[r * maxCols + c] = extractBitConfidence(freqBlock, isDebug: enableDebug)
+                        scores[r * maxCols + c] = extractBitConfidence(freqBlock, isDebug: enableDebug)
                     }
                 }
             }
@@ -682,7 +683,7 @@ nonisolated extension WatermarkService {
 /// - pad rawBits to multiple of 4
 /// - Hamming(8,4): 4 raw bits -> 8 coded bits
 /// - interleaving keeps bit count unchanged (may pad to full blocks, but here coded bits are always multiple of 8)
-private func expectedEccBitCount(messageLengthBytes: Int) -> Int {
+nonisolated private func expectedEccBitCount(messageLengthBytes: Int) -> Int {
     let rawBits = 8 + messageLengthBytes * 8
     let paddedRaw = ((rawBits + 3) / 4) * 4
     let codewordBits = (paddedRaw / 4) * 8

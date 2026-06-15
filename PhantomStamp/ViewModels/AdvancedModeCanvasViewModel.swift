@@ -255,8 +255,8 @@ final class AdvancedModeCanvasViewModel {
 
             let caches = await Task.detached(priority: .userInitiated) {
                 (
-                    service.buildMacroblockVarianceCache(from: preview),
-                    service.buildMacroblockBaseQuantizationCache(from: preview)
+                    service.algorithms.buildMacroblockVarianceCache(from: preview),
+                    service.algorithms.buildMacroblockBaseQuantizationCache(from: preview)
                 )
             }.value
             let cache = caches.0

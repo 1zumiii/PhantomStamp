@@ -8,7 +8,7 @@
 import Foundation
 
 /// One anchor on the variance–gain plane. `normalizedX` is fixed per preset layout; user drags `gain`.
-struct VarianceGainControlPoint: Equatable, Codable, Sendable {
+nonisolated struct VarianceGainControlPoint: Equatable, Codable, Sendable {
   /// Position along [0, maxVariance], normalized 0…1.
   var normalizedX: Double
   /// Intensity multiplier 0…1 (0%…100%).
@@ -16,7 +16,7 @@ struct VarianceGainControlPoint: Equatable, Codable, Sendable {
 }
 
 /// Piecewise monotonic cubic spline mapping physical variance to per-block embed gain.
-struct VarianceGainCurve: Equatable, Codable, Sendable {
+nonisolated struct VarianceGainCurve: Equatable, Codable, Sendable {
   /// X-axis ceiling: physical variance (σ=10 → 100).
   var maxVariance: Double
   /// Sorted by `normalizedX`; must include endpoints at 0 and 1.

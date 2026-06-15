@@ -62,7 +62,7 @@ enum ExtractionAndVotingTests {
                 }
             }
 
-            let grid = service.extractBitsWithOffset(m, offset: CGPoint(x: offsetX, y: offsetY))
+            let grid = service.algorithms.extractBitsWithOffset(m, offset: CGPoint(x: offsetX, y: offsetY))
             guard check(grid.count == rows) else { return (false, checks) }
             guard check(grid.first?.count == cols) else { return (false, checks) }
 
@@ -100,7 +100,7 @@ enum ExtractionAndVotingTests {
                 }
             }
 
-            let voted = service.applyMajorityVoting(to: grid)
+            let voted = service.algorithms.applyMajorityVoting(to: grid)
             guard check(voted.count == w * w) else { return (false, checks) }
             for i in 0..<(w * w) {
                 guard check(voted[i] == macro[i]) else { return (false, checks) }
@@ -110,7 +110,7 @@ enum ExtractionAndVotingTests {
         // Part C: fail closed if sync missing
         do {
             let grid = [[Int]](repeating: [Int](repeating: 0, count: 20), count: 20)
-            guard check(service.applyMajorityVoting(to: grid).isEmpty) else { return (false, checks) }
+            guard check(service.algorithms.applyMajorityVoting(to: grid).isEmpty) else { return (false, checks) }
         }
 
         // Part D: 8-way topology ambiguity is resolved by the FEC-backed soft-voting path.
@@ -131,8 +131,8 @@ enum ExtractionAndVotingTests {
             }
 
             for hypothesis in ScoreGridTopologyHypothesis.allCases {
-                let observed = service.transformedSoftScoreGrid(canonicalScores, hypothesis: hypothesis)
-                let result = service.applySoftMajorityVotingWithDiagnostics(to: observed)
+                let observed = service.algorithms.transformedSoftScoreGrid(canonicalScores, hypothesis: hypothesis)
+                let result = service.algorithms.applySoftMajorityVotingWithDiagnostics(to: observed)
                 let decoded = decodeVotedPayload(result.bits)
                 guard check(decoded == text) else { return (false, checks) }
                 guard check(result.diagnostics?.topologyHypothesis != nil) else { return (false, checks) }
@@ -156,9 +156,9 @@ enum ExtractionAndVotingTests {
         for i in 0..<spatial.values.count {
             spatial.values[i] = rng.nextUnitFloat() * 160.0 + 40.0
         }
-        var freq = service.performDCT(spatial)
-        service.embedBitIntoFrequencies(&freq, bit: bit)
-        return service.performIDCT(freq)
+        var freq = service.algorithms.performDCT(spatial)
+        service.algorithms.embedBitIntoFrequencies(&freq, bit: bit)
+        return service.algorithms.performIDCT(freq)
     }
 
     private static func writeSpatialBlock(_ matrix: inout Matrix, _ block: DCTMatrix8x8, x: Int, y: Int) {

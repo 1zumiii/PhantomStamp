@@ -36,7 +36,7 @@ extension AppConstants {
         static let syncTemplateIntensity = "phantomstamp.settings.syncTemplateIntensity"
     }
 
-    enum SettingsDefault {
+    nonisolated enum SettingsDefault {
         static let autoLogWatermarkEmbed = true
         static let compactHistoryList    = false
         static let watermarkOperationNotifications = true
@@ -66,12 +66,12 @@ extension AppConstants {
     /// skipped: they are embedded with the adaptive-Q global multiplier scaled by this factor.
     /// The bit stays physically present (sync correlation and majority voting never lose whole
     /// repetitions in flat regions) while the ripple amplitude stays visually negligible.
-    enum SmoothProtection {
+    nonisolated enum SmoothProtection {
         static let reductionFactor: Float = 0.3
     }
 
     /// Settings slider range for embedding strength (global Q multiplier).
-    enum EmbeddingStrength {
+    nonisolated enum EmbeddingStrength {
         static let min: Double = 0
         static let max: Double = 10
         static let step: Double = 0.5

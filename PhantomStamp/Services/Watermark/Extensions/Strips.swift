@@ -7,7 +7,7 @@
 
 import Foundation
 
-extension WatermarkService {
+nonisolated extension WatermarkAlgorithmCore {
     /// Slices an image into strips of a specified height (height is rounded down to a multiple of 8).
     /// Extra pixels on the right/bottom that do not fit an 8×8 grid are discarded in the strips.
     func sliceImage(_ channel: Matrix, heightPerStrip: Int) -> [ImageStrip] {
@@ -86,4 +86,3 @@ extension WatermarkService {
         }
     }
 }
-

@@ -7,7 +7,7 @@
 
 import UIKit
 
-enum BlockEmbedAmplitude {
+nonisolated enum BlockEmbedAmplitude {
     /// Payload macroblock strength in `embedBitIntoFrequencies` (non-sync/header cells).
     static let payloadStrength: Float = 2.0
 

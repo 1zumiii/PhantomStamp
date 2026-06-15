@@ -9,7 +9,7 @@ import Accelerate
 import UIKit
 
 /// Row-major variance grid: `grid[blockY][blockX]` matches the embed pipeline's 8×8 tiling.
-struct MacroblockVarianceCache: Sendable {
+nonisolated struct MacroblockVarianceCache: Sendable {
     let maxBlocksX: Int
     let maxBlocksY: Int
     let grid: [[Float]]
@@ -21,7 +21,7 @@ struct MacroblockVarianceCache: Sendable {
         return grid[blockY][blockX]
     }
 
-    /// Builds population variance for every full 8×8 block in the luma plane (same formula as ``WatermarkService/calculateVariance(_:)``).
+    /// Builds population variance for every full 8×8 block in the luma plane (same formula as ``WatermarkAlgorithmCore/calculateVariance(_:)``).
     static func build(from yChannel: Matrix) -> MacroblockVarianceCache? {
         let maxBlocksX = yChannel.width / DCTMatrix8x8.side
         let maxBlocksY = yChannel.height / DCTMatrix8x8.side
@@ -70,7 +70,7 @@ struct MacroblockVarianceCache: Sendable {
     }
 }
 
-extension WatermarkService {
+nonisolated extension WatermarkAlgorithmCore {
     /// One-shot variance grid for Advanced Mode preview (uses the same Y-plane path as embedding).
     nonisolated func buildMacroblockVarianceCache(from image: UIImage) -> MacroblockVarianceCache? {
         guard let ycbcr = convertToYCbCr(image: image) else { return nil }

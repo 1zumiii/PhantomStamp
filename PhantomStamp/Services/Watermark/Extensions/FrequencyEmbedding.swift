@@ -8,7 +8,7 @@
 import Foundation
 import UIKit
 
-extension WatermarkService {
+nonisolated extension WatermarkAlgorithmCore {
     // ==========================================
     // Strip embedding
     // ==========================================
@@ -179,4 +179,3 @@ extension WatermarkService {
         return value < 0 ? -m : m
     }
 }
-

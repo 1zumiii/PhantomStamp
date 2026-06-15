@@ -25,7 +25,7 @@
 import Foundation
 import Accelerate
 
-nonisolated extension WatermarkService {
+nonisolated extension WatermarkAlgorithmCore {
 
     // ==========================================
     // MARK: - Sync Template Geometric Constants
@@ -71,7 +71,7 @@ nonisolated extension WatermarkService {
     /// Returns `(angle: 0, scale: 1)` (identity) whenever the spectrum analysis fails — leaving
     /// the rest of the extraction pipeline as-if the hybrid feature were disabled.
     func detectGeometricTransforms(in yChannel: Matrix) -> (angle: Float, scale: Float) {
-        let N = WatermarkService.syncTemplateAnalysisFFTSize
+        let N = WatermarkAlgorithmCore.syncTemplateAnalysisFFTSize
         var complexMatrix = extractAndRemoveDC(from: yChannel, targetSize: N)
         performForwardFFT(matrix: &complexMatrix)
         let peaks = findSyncPeaks(in: complexMatrix)
@@ -82,8 +82,8 @@ nonisolated extension WatermarkService {
         
         let params = calculateAffineParams(
             from: peaks,
-            originalRadius: WatermarkService.syncTemplateOriginalRadius,
-            originalAngle: WatermarkService.syncTemplateOriginalAngleRadians
+            originalRadius: WatermarkAlgorithmCore.syncTemplateOriginalRadius,
+            originalAngle: WatermarkAlgorithmCore.syncTemplateOriginalAngleRadians
         )
         
         return params
@@ -294,7 +294,7 @@ nonisolated extension WatermarkService {
 
         // Radius prior centered on the known template radius. Sigma=30 corresponds to roughly
         // ±30% scale tolerance at half-weight; tweak in lock-step with the test sweep range.
-        let expectedRadius: Float = WatermarkService.syncTemplateOriginalRadius
+        let expectedRadius: Float = WatermarkAlgorithmCore.syncTemplateOriginalRadius
         let sigma: Float = 30
         let invSigmaSq: Float = 1.0 / (sigma * sigma)
 

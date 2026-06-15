@@ -298,7 +298,8 @@ struct RobustnessTestingView: View {
     }
 
     private var manipImagePickerRow: some View {
-        HStack(alignment: .center, spacing: 12) {
+        let pickerTitle = vm.manipSourceImage == nil ? "Pick" : "Change"
+        return HStack(alignment: .center, spacing: 12) {
             VStack(alignment: .leading, spacing: 3) {
                 Text("Source image")
                     .font(.callout.weight(.semibold))
@@ -313,7 +314,7 @@ struct RobustnessTestingView: View {
                 matching: ImagePickerSupport.imagesOnlyFilter,
                 photoLibrary: .shared()
             ) {
-                Text(vm.manipSourceImage == nil ? "Pick" : "Change")
+                Text(pickerTitle)
                     .font(.callout.weight(.semibold))
                     .padding(.horizontal, 12)
             }

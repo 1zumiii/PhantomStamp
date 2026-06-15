@@ -11,7 +11,7 @@
 
 import Foundation
 
-struct GeometricTransformCandidate: Sendable {
+nonisolated struct GeometricTransformCandidate: Sendable {
     var angle: Float
     var scale: Float
     var confidence: Float
@@ -19,7 +19,7 @@ struct GeometricTransformCandidate: Sendable {
     var isIdentity: Bool
 }
 
-private struct GeometricWindowEstimate: Sendable {
+nonisolated private struct GeometricWindowEstimate: Sendable {
     var angle: Float
     var scale: Float
     var confidence: Float
@@ -27,7 +27,7 @@ private struct GeometricWindowEstimate: Sendable {
     var originY: Int
 }
 
-nonisolated extension WatermarkService {
+nonisolated extension WatermarkAlgorithmCore {
     /// Returns a small, ordered hypothesis set for downstream Sync/FEC validation.
     ///
     /// The first pass uses the center and four spatial corners. Four edge-midpoint windows are
@@ -115,7 +115,7 @@ nonisolated extension WatermarkService {
         imageHeight: Int,
         fractions: [(Float, Float)]
     ) -> [(x: Int, y: Int)] {
-        let side = WatermarkService.syncTemplateAnalysisFFTSize
+        let side = WatermarkAlgorithmCore.syncTemplateAnalysisFFTSize
         let centeredX = (imageWidth - side) / 2
         let centeredY = (imageHeight - side) / 2
         let maxX = imageWidth - side
@@ -142,9 +142,10 @@ nonisolated extension WatermarkService {
         var results = [GeometricWindowEstimate?](repeating: nil, count: origins.count)
 
         results.withUnsafeMutableBufferPointer { resultPtr in
+            let estimates = DisjointWriteBuffer(resultPtr)
             DispatchQueue.concurrentPerform(iterations: origins.count) { index in
                 let origin = origins[index]
-                resultPtr[index] = self.analyzeGeometricWindow(
+                estimates[index] = self.analyzeGeometricWindow(
                     in: yChannel,
                     originX: origin.x,
                     originY: origin.y
@@ -159,7 +160,7 @@ nonisolated extension WatermarkService {
         originX: Int,
         originY: Int
     ) -> GeometricWindowEstimate? {
-        let side = WatermarkService.syncTemplateAnalysisFFTSize
+        let side = WatermarkAlgorithmCore.syncTemplateAnalysisFFTSize
         var spectrum = extractAndRemoveDC(
             from: yChannel,
             targetSize: side,
@@ -172,8 +173,8 @@ nonisolated extension WatermarkService {
 
         let params = calculateAffineParams(
             from: peaks,
-            originalRadius: WatermarkService.syncTemplateOriginalRadius,
-            originalAngle: WatermarkService.syncTemplateOriginalAngleRadians
+            originalRadius: WatermarkAlgorithmCore.syncTemplateOriginalRadius,
+            originalAngle: WatermarkAlgorithmCore.syncTemplateOriginalAngleRadians
         )
         guard params.scale.isFinite, (0.4...3.0).contains(params.scale) else { return nil }
 
@@ -199,8 +200,8 @@ nonisolated extension WatermarkService {
         let perPeak = peaks.map {
             calculateAffineParams(
                 from: [$0],
-                originalRadius: WatermarkService.syncTemplateOriginalRadius,
-                originalAngle: WatermarkService.syncTemplateOriginalAngleRadians
+                originalRadius: WatermarkAlgorithmCore.syncTemplateOriginalRadius,
+                originalAngle: WatermarkAlgorithmCore.syncTemplateOriginalAngleRadians
             )
         }
         let consistentCount = perPeak.reduce(into: 0) { count, estimate in

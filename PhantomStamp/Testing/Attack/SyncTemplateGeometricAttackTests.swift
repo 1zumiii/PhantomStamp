@@ -247,18 +247,12 @@ enum SyncTemplateGeometricAttackTests {
         // --- Core Evaluation Helper ---
         func evaluate(kind: AttackCase.Kind, param: Double) -> AttackCase {
             let attacked: UIImage?
-            let expectedAngle: Double
-            let expectedScale: Double
 
             switch kind {
             case .rotation:
                 attacked = rotate(image: watermarked, degrees: param)
-                expectedAngle = param
-                expectedScale = 1.0
             case .scale:
                 attacked = scale(image: watermarked, factor: param)
-                expectedAngle = 0.0
-                expectedScale = param
             }
 
             guard let attackedImg = attacked else {
@@ -435,19 +429,19 @@ enum SyncTemplateGeometricAttackTests {
         service: WatermarkService,
         image: UIImage
     ) -> (angleDeg: Double?, scale: Double?, topPeaks: [PeakSnapshot]) {
-        guard let ycbcr = service.convertToYCbCr(image: image) else {
+        guard let ycbcr = service.algorithms.convertToYCbCr(image: image) else {
             return (nil, nil, [])
         }
 
         let yChannel = ycbcr.Y
-        let t = service.detectGeometricTransforms(in: yChannel)
+        let t = service.algorithms.detectGeometricTransforms(in: yChannel)
 
         // Re-run only the early stages so we can read the top peaks for diagnostics. The
         // duplication is intentional — we want exactly the same FFT + peak set the detector saw.
-        let N = WatermarkService.syncTemplateAnalysisFFTSize
-        var complexMatrix = service.extractAndRemoveDC(from: yChannel, targetSize: N)
-        service.performForwardFFT(matrix: &complexMatrix)
-        let peaks = service.findSyncPeaks(in: complexMatrix)
+        let N = WatermarkAlgorithmCore.syncTemplateAnalysisFFTSize
+        var complexMatrix = service.algorithms.extractAndRemoveDC(from: yChannel, targetSize: N)
+        service.algorithms.performForwardFFT(matrix: &complexMatrix)
+        let peaks = service.algorithms.findSyncPeaks(in: complexMatrix)
 
         let topPeaks: [PeakSnapshot] = peaks.prefix(4).map { p in
             let r = sqrt(Double(p.x) * Double(p.x) + Double(p.y) * Double(p.y))

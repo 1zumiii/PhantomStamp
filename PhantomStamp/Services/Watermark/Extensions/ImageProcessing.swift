@@ -9,7 +9,7 @@ import Accelerate
 import Foundation
 import UIKit
 
-nonisolated extension WatermarkService {
+nonisolated extension WatermarkAlgorithmCore {
 
     /// Converts an image to separate **Y**, **Cb**, and **Cr** planes (**full-resolution**, equivalent to **4:4:4** sampling).
     /// - Storage is **8-bit** per sample (`UInt8`), matching typical encoder layouts and reducing peak memory vs full-float planes.
@@ -125,19 +125,19 @@ nonisolated extension WatermarkService {
 // MARK: - vImage 4:4:4 (non-420) + concurrent BT.601 fallback
 
 /// Apple’s documented **full-range** 8-bit example (`vImage_YpCbCrPixelRange`).
-private let phantomStampFullRangeYCbCr8 = vImage_YpCbCrPixelRange(
+nonisolated private let phantomStampFullRangeYCbCr8 = vImage_YpCbCrPixelRange(
     Yp_bias: 0, CbCr_bias: 128, YpRangeMax: 255, CbCrRangeMax: 255,
     YpMax: 255, YpMin: 1, CbCrMax: 255, CbCrMin: 0
 )
 
 /// Memory order **BGRA** → `permuteMap` for APIs that label channels **A,R,G,B** (`449AYpCbCr8` path treats indices `[A,R,G,B]`).
-private let phantomStampBGRAPermuteToARGBChannelOrder: [UInt8] = [3, 2, 1, 0]
+nonisolated private let phantomStampBGRAPermuteToARGBChannelOrder: [UInt8] = [3, 2, 1, 0]
 
-private func convertBGRAToYCbCrPlanesVImage444(bgra: [UInt8], width w: Int, height h: Int) -> (y: [UInt8], cb: [UInt8], cr: [UInt8])? {
+nonisolated private func convertBGRAToYCbCrPlanesVImage444(bgra: [UInt8], width w: Int, height h: Int) -> (y: [UInt8], cb: [UInt8], cr: [UInt8])? {
     let count = w * h
     var pixelRange = phantomStampFullRangeYCbCr8
     var argbToYpCbCr = vImage_ARGBToYpCbCr()
-    var genErr = vImageConvert_ARGBToYpCbCr_GenerateConversion(
+    let genErr = vImageConvert_ARGBToYpCbCr_GenerateConversion(
         kvImage_ARGBToYpCbCrMatrix_ITU_R_601_4,
         &pixelRange,
         &argbToYpCbCr,
@@ -222,7 +222,7 @@ private func convertBGRAToYCbCrPlanesVImage444(bgra: [UInt8], width w: Int, heig
     return (y, cb, cr)
 }
 
-private func convertYCbCrPlanesToBGRAVImage444(y: [UInt8], cb: [UInt8], cr: [UInt8], width w: Int, height h: Int) -> [UInt8]? {
+nonisolated private func convertYCbCrPlanesToBGRAVImage444(y: [UInt8], cb: [UInt8], cr: [UInt8], width w: Int, height h: Int) -> [UInt8]? {
     let count = w * h
     guard y.count == count, cb.count == count, cr.count == count else { return nil }
 
@@ -280,7 +280,7 @@ private func convertYCbCrPlanesToBGRAVImage444(y: [UInt8], cb: [UInt8], cr: [UIn
     return bgra
 }
 
-private func convertBGRAToYCbCrPlanesBT601Concurrent(bgra: [UInt8], pixelCount count: Int) -> (y: [UInt8], cb: [UInt8], cr: [UInt8]) {
+nonisolated private func convertBGRAToYCbCrPlanesBT601Concurrent(bgra: [UInt8], pixelCount count: Int) -> (y: [UInt8], cb: [UInt8], cr: [UInt8]) {
     var yData = [UInt8](repeating: 0, count: count)
     var cbData = [UInt8](repeating: 0, count: count)
     var crData = [UInt8](repeating: 0, count: count)
@@ -303,7 +303,7 @@ private func convertBGRAToYCbCrPlanesBT601Concurrent(bgra: [UInt8], pixelCount c
     return (yData, cbData, crData)
 }
 
-private func convertYCbCrPlanesToBGRABT601Concurrent(y: [UInt8], cb: [UInt8], cr: [UInt8], pixelCount count: Int) -> [UInt8] {
+nonisolated private func convertYCbCrPlanesToBGRABT601Concurrent(y: [UInt8], cb: [UInt8], cr: [UInt8], pixelCount count: Int) -> [UInt8] {
     var bgra = [UInt8](repeating: 0, count: count * 4)
 
     DispatchQueue.concurrentPerform(iterations: count) { i in

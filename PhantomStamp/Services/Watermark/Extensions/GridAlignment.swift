@@ -12,7 +12,7 @@ import CoreGraphics
 import Foundation
 
 /// Result of the 64-pixel-offset scan plus sliding-window sync search on the bit grid.
-struct GridOffsetScanResult: Sendable {
+nonisolated struct GridOffsetScanResult: Sendable {
     /// Physical top-left offset of the 8×8 DCT grid when alignment succeeds.
     var offset: CGPoint?
     /// Best sync-header match (out of 32 bits) observed across all offsets and windows.
@@ -21,7 +21,7 @@ struct GridOffsetScanResult: Sendable {
     var topologyHypothesis: ScoreGridTopologyHypothesis = .normal
 }
 
-nonisolated extension WatermarkService {
+nonisolated extension WatermarkAlgorithmCore {
     /// Convenience overload for 8-bit planes (tests / non-deskewed paths): promotes to Float once,
     /// then runs the precision-preserving scan below.
     func findGridOffsetAndSyncMarker(in matrix: Matrix, onOffsetProgress: ((Double) -> Void)? = nil) -> GridOffsetScanResult {
@@ -156,6 +156,7 @@ nonisolated extension WatermarkService {
         // Each physical offset reads the immutable deskewed plane and writes one disjoint result
         // slot. GCD bounds actual parallelism to the device's available worker threads.
         offsetResults.withUnsafeMutableBufferPointer { resultPtr in
+            let results = DisjointWriteBuffer(resultPtr)
             DispatchQueue.concurrentPerform(iterations: offsetCount) { idx in
                 let offsetY = idx / DCTMatrix8x8.side
                 let offsetX = idx % DCTMatrix8x8.side
@@ -192,7 +193,7 @@ nonisolated extension WatermarkService {
                         )
                     }
 
-                    resultPtr[idx] = OffsetScoreGrid(
+                    results[idx] = OffsetScoreGrid(
                         offsetX: offsetX,
                         offsetY: offsetY,
                         regionScores: regionScores,
@@ -246,6 +247,7 @@ nonisolated extension WatermarkService {
 
         var fallbackMatches = [SyncScanMatch?](repeating: nil, count: cachedOffsetScores.count)
         fallbackMatches.withUnsafeMutableBufferPointer { matchPtr in
+            let matches = DisjointWriteBuffer(matchPtr)
             DispatchQueue.concurrentPerform(iterations: cachedOffsetScores.count) { idx in
                 let cached = cachedOffsetScores[idx]
                 var localBest: SyncScanMatch?
@@ -256,7 +258,7 @@ nonisolated extension WatermarkService {
                         if match.matchCount == 32 { break scan }
                     }
                 }
-                matchPtr[idx] = localBest
+                matches[idx] = localBest
             }
         }
 

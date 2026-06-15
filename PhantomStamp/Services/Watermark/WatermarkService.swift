@@ -8,6 +8,10 @@ import Accelerate
 import SwiftData
 
 class WatermarkService: WatermarkServiceProtocol {
+    /// Stateless image/DSP implementation. Keeping it outside the service prevents UI-facing
+    /// orchestration state from leaking into detached algorithm work.
+    nonisolated let algorithms = WatermarkAlgorithmCore()
+
     /// SwiftData store for watermark history rows. Prefer this over caching a `ModelContext` directly —
     /// `ModelContext` is MainActor-bound and must not be read from background watermark work.
     /// Wired from `RootView` via `modelContext.container`.
@@ -246,7 +250,7 @@ class WatermarkService: WatermarkServiceProtocol {
             // Step 2: Color / layout → (prepEnd, colorEnd]
             // ==========================================
             reportProgress(step: .colorConversion, percentage: prepEnd)
-            guard var ycbcrImage = convertToYCbCr(image: image) else {
+            guard var ycbcrImage = algorithms.convertToYCbCr(image: image) else {
                 #if DEBUG
                 let pxW = Int(image.size.width * image.scale)
                 let pxH = Int(image.size.height * image.scale)
@@ -258,7 +262,7 @@ class WatermarkService: WatermarkServiceProtocol {
 
             // slice the Y channel into multiple strips (the height must be a multiple of 8)
             let stripHeight = 80
-            var imageStrips = sliceImage(yChannel, heightPerStrip: stripHeight)
+            var imageStrips = algorithms.sliceImage(yChannel, heightPerStrip: stripHeight)
             reportProgress(step: .colorConversion, percentage: colorEnd)
 
             // ==========================================
@@ -276,12 +280,13 @@ class WatermarkService: WatermarkServiceProtocol {
             let stripProgressStride = max(1, (stripCount + 4) / 5)
             var embedVisited8x8Blocks = 0
             var embedSmoothSkipped8x8Blocks = 0
+            let algorithms = algorithms
             try await withThrowingTaskGroup(of: (ImageStrip, Int, Int).self) { group in
                 for strip in imageStrips {
                     group.addTask {
                         // force memory recycling to prevent OOM silent crash caused by large image slicing computation
                         autoreleasepool {
-                            let out = self.processSingleStripForEmbedding(
+                            let out = algorithms.processSingleStripForEmbedding(
                                 strip: strip,
                                 macroblock: macroblock,
                                 thresholdSmooth: thresholdSmooth,
@@ -297,7 +302,7 @@ class WatermarkService: WatermarkServiceProtocol {
                 for try await triple in group {
                     let (processedStrip, visited, skipped) = triple
                     // overwrite the processed strip back to the original strips array (located by `globalYOffset`).
-                    updateStripInPlace(&imageStrips, with: processedStrip)
+                    algorithms.updateStripInPlace(&imageStrips, with: processedStrip)
                     embedVisited8x8Blocks += visited
                     embedSmoothSkipped8x8Blocks += skipped
                     completedStrips += 1
@@ -318,7 +323,7 @@ class WatermarkService: WatermarkServiceProtocol {
             
             // overwrite the processed strips back to the original Y channel matrix.
             // the extra 1~7 pixels on the right side and bottom of the original matrix will be kept intact, and not be destroyed.
-            reassembleStrips(imageStrips, into: &ycbcrImage.Y)
+            algorithms.reassembleStrips(imageStrips, into: &ycbcrImage.Y)
             
 
             // ==========================================
@@ -328,15 +333,15 @@ class WatermarkService: WatermarkServiceProtocol {
             // Intensity is user-configurable via `UserSettingsStore.syncTemplateIntensity` so the
             // robustness-vs-visibility trade-off can be tuned without rebuilding. Snapshot was
             // taken at the top of this method to avoid mid-pipeline races.
-            let syncTemplate = loadSpatialSyncTemplate()
+            let syncTemplate = algorithms.loadSpatialSyncTemplate()
             let templateIntensity = Float(syncIntensitySnapshot)
-            applySpatialTiling(to: &ycbcrImage.Y, template: syncTemplate, intensity: templateIntensity)
+            algorithms.applySpatialTiling(to: &ycbcrImage.Y, template: syncTemplate, intensity: templateIntensity)
 
 
             // Final color conversion back to UIImage.
             reportProgress(step: .rgbRebuild, percentage: 0.90)
 
-            guard let finalImage = convertToUIImage(from: ycbcrImage) else {
+            guard let finalImage = algorithms.convertToUIImage(from: ycbcrImage) else {
                 #if DEBUG
                 print("[WatermarkService] convertToUIImage failed (Y=\(ycbcrImage.Y.width)x\(ycbcrImage.Y.height), Cb=\(ycbcrImage.Cb.width)x\(ycbcrImage.Cb.height), Cr=\(ycbcrImage.Cr.width)x\(ycbcrImage.Cr.height))")
                 #endif
@@ -490,12 +495,13 @@ class WatermarkService: WatermarkServiceProtocol {
         do {
             reportProgress(step: .extractPreparation, percentage: 0)
 
-            // important fix: use Task.detached to force the heavy matrix computation to run in the background concurrency pool
-            let work = try await Task.detached(priority: .userInitiated) { [weak self] in
-                guard let self = self else { throw WatermarkError.processingError }
+            let algorithms = algorithms
+            // The stateless algorithm core is Sendable, so this entire matrix pipeline remains
+            // on the background concurrency pool instead of inheriting service/UI isolation.
+            let work = try await Task.detached(priority: .userInitiated) {
 
                 // 1. image preprocessing
-                guard let ycbcrImage = self.convertToYCbCr(image: image) else {
+                guard let ycbcrImage = algorithms.convertToYCbCr(image: image) else {
                     throw WatermarkError.processingError
                 }
                 let yChannel = ycbcrImage.Y
@@ -510,7 +516,7 @@ class WatermarkService: WatermarkServiceProtocol {
 
                 // DFT is a proposal generator, not an authority. Spatially separated FFT windows
                 // form transform consensuses, while identity is always retained as a fallback.
-                let transformCandidates = self.detectGeometricTransformCandidates(in: yChannel)
+                let transformCandidates = algorithms.detectGeometricTransformCandidates(in: yChannel)
                 await reportProgress(step: .extractDetectTransforms, percentage: 0.40)
 
                 func validationScore(_ work: ExtractMatrixWorkResult) -> Int {
@@ -533,7 +539,7 @@ class WatermarkService: WatermarkServiceProtocol {
                     )
                     #endif
 
-                    let deskewedYChannel = self.deskewImage(
+                    let deskewedYChannel = algorithms.deskewImage(
                         yChannel,
                         angle: transformParams.angle,
                         scale: transformParams.scale
@@ -541,16 +547,18 @@ class WatermarkService: WatermarkServiceProtocol {
 
                     // 2. physical and logical alignment. Each offset now probes multiple spatial
                     // regions, so a local edit cannot blind validation merely by covering one corner.
-                    let gridScan = self.findGridOffsetAndSyncMarker(
+                    let gridScan = algorithms.findGridOffsetAndSyncMarker(
                         in: deskewedYChannel,
                         onOffsetProgress: { t in
                             let coarse = floor(min(max(t, 0), 1) * 4) / 4
                             let candidateSpan = 0.40 / Double(max(transformCandidates.count, 1))
                             let candidateStart = 0.40 + Double(candidateIndex) * candidateSpan
-                            reportProgress(
-                                step: .extractOffsetScan,
-                                percentage: candidateStart + candidateSpan * coarse
-                            )
+                            Task { @MainActor in
+                                reportProgress(
+                                    step: .extractOffsetScan,
+                                    percentage: candidateStart + candidateSpan * coarse
+                                )
+                            }
                         }
                     )
 
@@ -575,13 +583,13 @@ class WatermarkService: WatermarkServiceProtocol {
                     }
 
                     // 3. data extraction from this candidate's corrected plane.
-                    let rawExtractedScores = self.extractSoftBitsWithOffset(
+                    let rawExtractedScores = algorithms.extractSoftBitsWithOffset(
                         deskewedYChannel,
                         offset: gridOffset
                     )
 
                     // 4. sync-gated recovery and FEC validation.
-                    let voting = self.applySoftMajorityVotingWithDiagnostics(
+                    let voting = algorithms.applySoftMajorityVotingWithDiagnostics(
                         to: rawExtractedScores,
                         preferredHypothesis: gridScan.topologyHypothesis
                     )

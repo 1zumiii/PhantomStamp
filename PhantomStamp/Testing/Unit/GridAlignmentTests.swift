@@ -74,7 +74,7 @@ enum GridAlignmentTests {
                 writeSpatialBlock(&m, spatial, x: px, y: py)
             }
 
-            let got = service.findGridOffsetAndSyncMarker(in: m)
+            let got = service.algorithms.findGridOffsetAndSyncMarker(in: m)
             guard check(got.offset != nil) else { return (false, checks) }
             guard let p = got.offset else { return (false, checks) }
             guard check(got.bestSyncBitsMatched == 32) else { return (false, checks) }
@@ -106,9 +106,9 @@ enum GridAlignmentTests {
         for i in 0..<spatial.values.count {
             spatial.values[i] = rng.nextUnitFloat() * 160.0 + 40.0
         }
-        var freq = service.performDCT(spatial)
-        service.embedBitIntoFrequencies(&freq, bit: bit)
-        return service.performIDCT(freq)
+        var freq = service.algorithms.performDCT(spatial)
+        service.algorithms.embedBitIntoFrequencies(&freq, bit: bit)
+        return service.algorithms.performIDCT(freq)
     }
 
     private static func writeSpatialBlock(_ matrix: inout Matrix, _ block: DCTMatrix8x8, x: Int, y: Int) {

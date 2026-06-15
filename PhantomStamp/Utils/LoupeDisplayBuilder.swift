@@ -7,7 +7,7 @@
 
 import UIKit
 
-enum LoupeDisplayBuilder {
+nonisolated enum LoupeDisplayBuilder {
     struct Model: Sendable {
         let croppedImage: UIImage
         let maskOverlayImage: UIImage
