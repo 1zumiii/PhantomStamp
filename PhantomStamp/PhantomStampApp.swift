@@ -51,6 +51,21 @@ struct PhantomStampApp: App {
                     if ProcessInfo.processInfo.arguments.contains("--run-geometric-candidate-test") {
                         await WatermarkLocalDamageAttackTests.runRotationAndPrint()
                     }
+                    if ProcessInfo.processInfo.arguments.contains("--run-expanded-rotation-test") {
+                        let arguments = ProcessInfo.processInfo.arguments
+                        let degrees = arguments
+                            .first(where: { $0.hasPrefix("--rotation-degrees=") })
+                            .flatMap { Double($0.dropFirst("--rotation-degrees=".count)) } ?? 27
+                        let paddingName = arguments
+                            .first(where: { $0.hasPrefix("--rotation-padding=") })
+                            .map { String($0.dropFirst("--rotation-padding=".count)) }
+                        let padding = paddingName
+                            .flatMap(ImageRotationPadding.init(rawValue:)) ?? .white
+                        await WatermarkLocalDamageAttackTests.runExpandedRotationAndPrint(
+                            degrees: degrees,
+                            padding: padding
+                        )
+                    }
                     if ProcessInfo.processInfo.arguments.contains("--run-downscaled-damage-test") {
                         await WatermarkLocalDamageAttackTests.runDownscaledScribbleAndPrint()
                     }

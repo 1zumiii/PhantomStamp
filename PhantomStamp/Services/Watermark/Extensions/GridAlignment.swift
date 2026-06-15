@@ -246,16 +246,37 @@ nonisolated extension WatermarkAlgorithmCore {
         }
 
         var fallbackMatches = [SyncScanMatch?](repeating: nil, count: cachedOffsetScores.count)
+        let fallbackPerfectLock = NSLock()
+        var fallbackPerfectFound = false
+        let fallbackHypotheses: [ScoreGridTopologyHypothesis] = [
+            .rotated90,
+            .rotated180,
+            .rotated270,
+            .normalFlipped,
+            .rotated90Flipped,
+            .rotated180Flipped,
+            .rotated270Flipped
+        ]
         fallbackMatches.withUnsafeMutableBufferPointer { matchPtr in
             let matches = DisjointWriteBuffer(matchPtr)
             DispatchQueue.concurrentPerform(iterations: cachedOffsetScores.count) { idx in
                 let cached = cachedOffsetScores[idx]
                 var localBest: SyncScanMatch?
                 scan: for scores in cached.regionScores {
-                    for hypothesis in ScoreGridTopologyHypothesis.allCases where hypothesis != .normal {
+                    for hypothesis in fallbackHypotheses {
+                        fallbackPerfectLock.lock()
+                        let shouldStop = fallbackPerfectFound
+                        fallbackPerfectLock.unlock()
+                        if shouldStop { break scan }
+
                         guard let match = scanScoreGrid(scores, hypothesis: hypothesis) else { continue }
                         localBest = strongerMatch(localBest, match)
-                        if match.matchCount == 32 { break scan }
+                        if match.matchCount == 32 {
+                            fallbackPerfectLock.lock()
+                            fallbackPerfectFound = true
+                            fallbackPerfectLock.unlock()
+                            break scan
+                        }
                     }
                 }
                 matches[idx] = localBest

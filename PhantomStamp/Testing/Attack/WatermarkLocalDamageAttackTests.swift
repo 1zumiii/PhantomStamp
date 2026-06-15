@@ -184,6 +184,53 @@ enum WatermarkLocalDamageAttackTests {
     }
 
     @MainActor
+    static func runExpandedRotationAndPrint(
+        degrees: Double,
+        padding: ImageRotationPadding
+    ) async {
+        #if DEBUG
+        guard let image = ImagePipelineTests.loadBundledTestUIImage() else {
+            print("[WatermarkLocalDamageAttackTests] FAIL expanded rotation: bundled image missing")
+            return
+        }
+
+        let suite = UserDefaults(
+            suiteName: "phantomstamp.testing.expanded-rotation.\(UUID().uuidString)"
+        )!
+        let settings = UserSettingsStore(defaults: suite)
+        settings.textureVarianceThreshold = -1
+        let service = WatermarkService()
+        service.settingsStore = settings
+        let expectedText = "Successful"
+
+        guard let watermarked = try? await service.embedWatermarkSilently(
+            into: image,
+            text: expectedText
+        ), let rotated = ImageRotationUtils.rotateExpandingCanvas(
+            image: watermarked,
+            degrees: degrees,
+            padding: padding
+        ) else {
+            print("[WatermarkLocalDamageAttackTests] FAIL expanded rotation: preparation failed")
+            return
+        }
+
+        let started = CFAbsoluteTimeGetCurrent()
+        let extracted = try? await service.extractWatermarkSilently(from: rotated)
+        let elapsed = CFAbsoluteTimeGetCurrent() - started
+        let pixels = WatermarkAttackTestHarness.pixelSize(of: rotated)
+        let passed = extracted == expectedText
+        print(
+            "[WatermarkLocalDamageAttackTests] \(passed ? "PASS" : "FAIL") "
+                + "expanded rotation \(degrees)deg padding=\(padding.rawValue) "
+                + "pixels=\(pixels.w)x\(pixels.h) "
+                + "elapsed=\(String(format: "%.3f", elapsed))s "
+                + "text=\(extracted ?? "nil")"
+        )
+        #endif
+    }
+
+    @MainActor
     static func runDownscaledScribbleOnBundledTestImg(
         scale: CGFloat = 0.518
     ) async -> DownscaledDamageReport {

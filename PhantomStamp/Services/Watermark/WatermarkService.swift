@@ -523,12 +523,19 @@ class WatermarkService: WatermarkServiceProtocol {
             // The stateless algorithm core is Sendable, so this entire matrix pipeline remains
             // on the background concurrency pool instead of inheriting service/UI isolation.
             let work = try await Task.detached(priority: .userInitiated) {
+                let pipelineStarted = CFAbsoluteTimeGetCurrent()
 
                 // 1. image preprocessing
                 guard let ycbcrImage = algorithms.convertToYCbCr(image: image) else {
                     throw WatermarkError.processingError
                 }
                 let yChannel = ycbcrImage.Y
+                #if DEBUG
+                print(
+                    "[WatermarkService] timing: YCbCr "
+                        + "\(String(format: "%.1f", (CFAbsoluteTimeGetCurrent() - pipelineStarted) * 1000))ms"
+                )
+                #endif
                 await reportProgress(step: .extractConvertToYCbCr, percentage: 0.20)
 
 
@@ -540,7 +547,15 @@ class WatermarkService: WatermarkServiceProtocol {
 
                 // DFT is a proposal generator, not an authority. Spatially separated FFT windows
                 // form transform consensuses, while identity is always retained as a fallback.
+                let detectionStarted = CFAbsoluteTimeGetCurrent()
                 let transformCandidates = algorithms.detectGeometricTransformCandidates(in: yChannel)
+                #if DEBUG
+                print(
+                    "[WatermarkService] timing: geometric detection "
+                        + "\(String(format: "%.1f", (CFAbsoluteTimeGetCurrent() - detectionStarted) * 1000))ms "
+                        + "candidates=\(transformCandidates.count)"
+                )
+                #endif
                 await reportProgress(step: .extractDetectTransforms, percentage: 0.40)
 
                 func validationScore(_ work: ExtractMatrixWorkResult) -> Int {
@@ -553,6 +568,7 @@ class WatermarkService: WatermarkServiceProtocol {
                 // A candidate earns the right to control the full image only after the existing
                 // DCT sync marker and real FEC decoder validate it.
                 for (candidateIndex, transformParams) in transformCandidates.enumerated() {
+                    let candidateStarted = CFAbsoluteTimeGetCurrent()
                     #if DEBUG
                     print(
                         "[WatermarkService] validating geometric candidate "
@@ -568,6 +584,7 @@ class WatermarkService: WatermarkServiceProtocol {
                         angle: transformParams.angle,
                         scale: transformParams.scale
                     )
+                    let deskewFinished = CFAbsoluteTimeGetCurrent()
 
                     // 2. physical and logical alignment. Each offset now probes multiple spatial
                     // regions, so a local edit cannot blind validation merely by covering one corner.
@@ -585,8 +602,18 @@ class WatermarkService: WatermarkServiceProtocol {
                             }
                         }
                     )
+                    let gridScanFinished = CFAbsoluteTimeGetCurrent()
 
                     guard let gridOffset = gridScan.offset else {
+                        #if DEBUG
+                        print(
+                            "[WatermarkService] timing candidate \(candidateIndex + 1): "
+                                + "deskew=\(String(format: "%.1f", (deskewFinished - candidateStarted) * 1000))ms "
+                                + "grid=\(String(format: "%.1f", (gridScanFinished - deskewFinished) * 1000))ms "
+                                + "total=\(String(format: "%.1f", (gridScanFinished - candidateStarted) * 1000))ms "
+                                + "(no grid)"
+                        )
+                        #endif
                         let failed = ExtractMatrixWorkResult(
                             payloadBitsWithoutSync: [],
                             deskewAngleRadians: transformParams.angle,
@@ -611,12 +638,15 @@ class WatermarkService: WatermarkServiceProtocol {
                         deskewedYChannel,
                         offset: gridOffset
                     )
+                    let extractionFinished = CFAbsoluteTimeGetCurrent()
 
                     // 4. sync-gated recovery and FEC validation.
                     let voting = algorithms.applySoftMajorityVotingWithDiagnostics(
                         to: rawExtractedScores,
-                        preferredHypothesis: gridScan.topologyHypothesis
+                        preferredHypothesis: gridScan.topologyHypothesis,
+                        preferredHypothesisIsExact: gridScan.bestSyncBitsMatched == 32
                     )
+                    let votingFinished = CFAbsoluteTimeGetCurrent()
                     let votedBits = voting.bits
                     let syncCount = getSyncMarkerBits().count
                     let payload = votedBits.count >= syncCount
@@ -654,9 +684,23 @@ class WatermarkService: WatermarkServiceProtocol {
                             + "FEC=\(fecPassed ? "PASS" : "FAIL") "
                             + "topology=\(topologySummary)"
                     )
+                    print(
+                        "[WatermarkService] timing candidate \(candidateIndex + 1): "
+                            + "deskew=\(String(format: "%.1f", (deskewFinished - candidateStarted) * 1000))ms "
+                            + "grid=\(String(format: "%.1f", (gridScanFinished - deskewFinished) * 1000))ms "
+                            + "DCT=\(String(format: "%.1f", (extractionFinished - gridScanFinished) * 1000))ms "
+                            + "voting=\(String(format: "%.1f", (votingFinished - extractionFinished) * 1000))ms "
+                            + "total=\(String(format: "%.1f", (votingFinished - candidateStarted) * 1000))ms"
+                    )
                     #endif
 
                     if fecPassed {
+                        #if DEBUG
+                        print(
+                            "[WatermarkService] timing: extraction matrix pipeline "
+                                + "\(String(format: "%.1f", (CFAbsoluteTimeGetCurrent() - pipelineStarted) * 1000))ms"
+                        )
+                        #endif
                         await reportProgress(step: .extractOffsetScan, percentage: 0.80)
                         await reportProgress(step: .extractBitGrid, percentage: 0.90)
                         return candidateWork

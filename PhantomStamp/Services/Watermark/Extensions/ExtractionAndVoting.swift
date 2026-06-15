@@ -357,40 +357,84 @@ nonisolated extension WatermarkAlgorithmCore {
     /// detects double-bit errors per codeword) is the only meaningful validator.
     func applySoftMajorityVotingWithDiagnostics(
         to scores: [[Float]],
-        preferredHypothesis: ScoreGridTopologyHypothesis? = nil
+        preferredHypothesis: ScoreGridTopologyHypothesis? = nil,
+        preferredHypothesisIsExact: Bool = false
     ) -> (bits: [Int], diagnostics: MajorityVotingDiagnostics?) {
         var bestFallback: SoftMajorityVotingAttempt?
         var successfulAttempts: [SoftMajorityVotingAttempt] = []
+        var attemptedHypotheses = Set<ScoreGridTopologyHypothesis>()
 
-        let hypotheses: [ScoreGridTopologyHypothesis] = {
-            var ordered: [ScoreGridTopologyHypothesis] = [.normal]
-            if let preferredHypothesis, preferredHypothesis != .normal {
-                ordered.append(preferredHypothesis)
-            }
-            ordered.append(
-                contentsOf: ScoreGridTopologyHypothesis.allCases.filter { !ordered.contains($0) }
-            )
-            return ordered
-        }()
-
-        for hypothesis in hypotheses {
+        func evaluate(_ hypothesis: ScoreGridTopologyHypothesis) -> SoftMajorityVotingAttempt {
             let transformedScores = transformedSoftScoreGrid(scores, hypothesis: hypothesis)
-            let attempt = applySoftMajorityVotingSingleTopologyWithDiagnostics(
+            return applySoftMajorityVotingSingleTopologyWithDiagnostics(
                 to: transformedScores,
                 hypothesis: hypothesis
             )
+        }
 
+        func collect(_ attempt: SoftMajorityVotingAttempt) {
             if attempt.fecDecoded {
-                // The overwhelmingly common path is an untouched image. Validate it first and
-                // stop immediately so a noisy geometric prior cannot relabel it as mirrored.
-                if hypothesis == .normal {
-                    return (attempt.bits, attempt.diagnostics)
-                }
                 successfulAttempts.append(attempt)
             } else if bestFallback == nil ||
-                        (attempt.diagnostics?.bestSyncBitsMatched ?? -1) > (bestFallback?.diagnostics?.bestSyncBitsMatched ?? -1) {
+                        (attempt.diagnostics?.bestSyncBitsMatched ?? -1) >
+                        (bestFallback?.diagnostics?.bestSyncBitsMatched ?? -1) {
                 bestFallback = attempt
             }
+        }
+
+        // A non-mirrored orientation backed by an exact 32/32 regional sync match can go first.
+        // Mirror hypotheses deliberately do not use this shortcut because natural-image content
+        // previously produced occasional false mirror priors; FEC remains the final validator.
+        if let preferredHypothesis,
+           preferredHypothesis != .normal,
+           !preferredHypothesis.isMirrored,
+           preferredHypothesisIsExact {
+            let preferredAttempt = evaluate(preferredHypothesis)
+            attemptedHypotheses.insert(preferredHypothesis)
+            if preferredAttempt.fecDecoded {
+                return (preferredAttempt.bits, preferredAttempt.diagnostics)
+            }
+            collect(preferredAttempt)
+        }
+
+        // Untouched images dominate normal use. Validate that interpretation before any
+        // untrusted or mirrored topology so there is no fan-out on the common fast path.
+        let normalAttempt = evaluate(.normal)
+        attemptedHypotheses.insert(.normal)
+        if normalAttempt.fecDecoded {
+            return (normalAttempt.bits, normalAttempt.diagnostics)
+        }
+        collect(normalAttempt)
+
+        // The physical offset scan already evaluated several separated image regions. If its
+        // preferred topology survives a real FEC decode backed by certified repetitions, that is
+        // sufficient evidence to stop instead of paying for the six unrelated hypotheses.
+        if let preferredHypothesis, !attemptedHypotheses.contains(preferredHypothesis) {
+            let preferredAttempt = evaluate(preferredHypothesis)
+            attemptedHypotheses.insert(preferredHypothesis)
+            if preferredAttempt.fecDecoded {
+                return (preferredAttempt.bits, preferredAttempt.diagnostics)
+            }
+            collect(preferredAttempt)
+        }
+
+        let remaining = ScoreGridTopologyHypothesis.allCases.filter {
+            !attemptedHypotheses.contains($0)
+        }
+        var remainingAttempts = [SoftMajorityVotingAttempt?](repeating: nil, count: remaining.count)
+
+        // These jobs only read the immutable soft-score grid and write disjoint result slots.
+        // Running them together removes the eight-way serial latency without duplicating the
+        // full-resolution deskew or DCT extraction stages.
+        remainingAttempts.withUnsafeMutableBufferPointer { resultPtr in
+            guard !resultPtr.isEmpty else { return }
+            let results = DisjointWriteBuffer(resultPtr)
+            DispatchQueue.concurrentPerform(iterations: remaining.count) { index in
+                results[index] = evaluate(remaining[index])
+            }
+        }
+        for attempt in remainingAttempts.compactMap({ $0 }) {
+            collect(attempt)
         }
 
         if let best = successfulAttempts.max(by: { lhs, rhs in
@@ -439,7 +483,7 @@ nonisolated extension WatermarkAlgorithmCore {
         }
     }
 
-    private struct SoftMajorityVotingAttempt {
+    private struct SoftMajorityVotingAttempt: Sendable {
         var bits: [Int]
         var diagnostics: MajorityVotingDiagnostics?
         var fecDecoded: Bool
@@ -516,7 +560,8 @@ nonisolated extension WatermarkAlgorithmCore {
             w: Int,
             bx: Int,
             by: Int,
-            minSyncAgreement: Float = 0.75
+            minSyncAgreement: Float = 0.75,
+            allowUngatedFallback: Bool = false
         ) -> FoldResult {
             let originX = bx % w
             let originY = by % w
@@ -558,13 +603,26 @@ nonisolated extension WatermarkAlgorithmCore {
                 }
             }
 
-            // Degenerate fallback (e.g. heavy crop leaves almost no certifiable repetition):
-            // fold everything rather than nothing.
-            let reps = gatedReps.count >= 3 ? gatedReps : allReps
+            let gateTooSparse = gatedReps.count < 3
             #if DEBUG
-            print("[WatermarkService] DEBUG voting: sync-gated fold w=\(w) bx=\(bx) by=\(by) gate=\(String(format: "%.2f", minSyncAgreement)): accepted \(gatedReps.count)/\(allReps.count) repetitions\(gatedReps.count >= 3 ? "" : " (gate too sparse — folding ALL)")")
+            let sparseAction = allowUngatedFallback ? "folding ALL for diagnostics" : "skipping fold"
+            print("[WatermarkService] DEBUG voting: sync-gated fold w=\(w) bx=\(bx) by=\(by) gate=\(String(format: "%.2f", minSyncAgreement)): accepted \(gatedReps.count)/\(allReps.count) repetitions\(gateTooSparse ? " (gate too sparse — \(sparseAction))" : "")")
             #endif
 
+            // FEC validation explicitly rejects folds with fewer than three independently
+            // certified repetitions. Previously this branch still folded every repetition and
+            // then immediately discarded the result, multiplying failure latency under attacks.
+            guard !gateTooSparse || allowUngatedFallback else {
+                return FoldResult(
+                    bits: [],
+                    certifiedRepetitionCount: gatedReps.count,
+                    totalRepetitionCount: allReps.count,
+                    usedUngatedFallback: true
+                )
+            }
+
+            // Keep the all-repetition fold only for the final best-effort diagnostic result.
+            let reps = gateTooSparse ? allReps : gatedReps
             var votedMacroblock = [Int](repeating: 0, count: w * w)
             for i in 0..<(w * w) {
                 let tileRow = i / w
@@ -710,7 +768,12 @@ nonisolated extension WatermarkAlgorithmCore {
             print("  - sync=\(c.matchCount)/32 w=\(c.w) bx=\(c.bx) by=\(c.by)")
         }
         #endif
-        let fold = computeVotedMacroblock(w: bestW, bx: bestBx, by: bestBy)
+        let fold = computeVotedMacroblock(
+            w: bestW,
+            bx: bestBx,
+            by: bestBy,
+            allowUngatedFallback: true
+        )
         let diag = MajorityVotingDiagnostics(
             bestSyncBitsMatched: bestMatchCount,
             macroTileWidth: bestW,
