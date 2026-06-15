@@ -51,6 +51,7 @@ final class RobustnessTestingViewModel {
         case jpeg
         case resize
         case scribble
+        case rotation
     }
 
     let settingsStore: UserSettingsStore
@@ -72,17 +73,22 @@ final class RobustnessTestingViewModel {
 
     var manipJpegQuality = 0.60
     var manipResizeScaleFactor = 1.0
+    var manipRotationDegrees = 10.0
+    var manipRotationPadding: ImageRotationPadding = .black
     var manipScribbleStrokeCount = 2
     var manipScribbleWidthPercent = 0.60
     var manipJpegRunning = false
     var manipResizeRunning = false
     var manipScribbleRunning = false
+    var manipRotationRunning = false
     var manipJpegFeedback: ManipSaveFeedback = .idle
     var manipResizeFeedback: ManipSaveFeedback = .idle
     var manipScribbleFeedback: ManipSaveFeedback = .idle
+    var manipRotationFeedback: ManipSaveFeedback = .idle
     var manipJpegFeedbackTrigger = 0
     var manipResizeFeedbackTrigger = 0
     var manipScribbleFeedbackTrigger = 0
+    var manipRotationFeedbackTrigger = 0
     var selectedCropKind: WatermarkCropAttackTests.CropKind = .right
 
     var currentSyncTemplateIntensity: Double { settingsStore.syncTemplateIntensity }
@@ -103,6 +109,16 @@ final class RobustnessTestingViewModel {
             scaleFactor: manipResizeScaleFactor
         ) else { return nil }
         return (w: out.width, h: out.height)
+    }
+
+    var manipRotationPreviewSize: (w: Int, h: Int)? {
+        guard let px = manipSourcePx else { return nil }
+        guard let output = ImageRotationUtils.previewOutputSize(
+            sourceWidth: px.w,
+            sourceHeight: px.h,
+            degrees: manipRotationDegrees
+        ) else { return nil }
+        return (w: output.width, h: output.height)
     }
 
     func dismissAlert() {
@@ -186,6 +202,39 @@ final class RobustnessTestingViewModel {
             await finishManipSaveRun(.resize, started: runStarted)
         } catch {
             manipResizeRunning = false
+            presentManipFailure(title: "Save failed", subtitle: error.localizedDescription)
+        }
+    }
+
+    func runManipRotation() async {
+        guard let source = manipSourceImage else {
+            presentManipFailure(title: "No source image", subtitle: "Pick a photo in Image tools before rotating.")
+            return
+        }
+        guard let rotated = ImageRotationUtils.rotateExpandingCanvas(
+            image: source,
+            degrees: manipRotationDegrees,
+            padding: manipRotationPadding
+        ) else {
+            presentManipFailure(title: "Rotation failed", subtitle: "Could not render the expanded rotation canvas.")
+            return
+        }
+
+        manipRotationRunning = true
+        isLoading = true
+        let runStarted = ContinuousClock.now
+        defer { isLoading = false }
+
+        let outPx = pixelSize(of: rotated)
+        do {
+            try await saveManipResultToPhotos(rotated)
+            print(
+                "[TestPage] ManipRotation degrees=\(String(format: "%+.1f", manipRotationDegrees)) "
+                    + "padding=\(manipRotationPadding.rawValue) out=\(outPx.w)x\(outPx.h)"
+            )
+            await finishManipSaveRun(.rotation, started: runStarted)
+        } catch {
+            manipRotationRunning = false
             presentManipFailure(title: "Save failed", subtitle: error.localizedDescription)
         }
     }
@@ -475,6 +524,7 @@ final class RobustnessTestingViewModel {
         case .jpeg: manipJpegRunning = false
         case .resize: manipResizeRunning = false
         case .scribble: manipScribbleRunning = false
+        case .rotation: manipRotationRunning = false
         }
         flashManipSaveSuccess(tool)
     }
@@ -490,6 +540,9 @@ final class RobustnessTestingViewModel {
         case .scribble:
             manipScribbleFeedback = .success
             manipScribbleFeedbackTrigger += 1
+        case .rotation:
+            manipRotationFeedback = .success
+            manipRotationFeedbackTrigger += 1
         }
 
         Task {
@@ -501,6 +554,8 @@ final class RobustnessTestingViewModel {
                 manipResizeFeedback = .idle
             case .scribble where manipScribbleFeedback == .success:
                 manipScribbleFeedback = .idle
+            case .rotation where manipRotationFeedback == .success:
+                manipRotationFeedback = .idle
             default:
                 break
             }

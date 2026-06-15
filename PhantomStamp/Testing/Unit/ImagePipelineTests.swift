@@ -92,7 +92,56 @@ enum ImagePipelineTests {
         } else {
             print("[ImagePipelineTests] FAIL YCbCr Round-Trip — missing \(bundledTestAssetName) or round-trip / raster mismatch")
         }
+
+        let rotationPassed = validateExpandedRotationCanvas()
+        print("[ImagePipelineTests] \(rotationPassed ? "PASS" : "FAIL") Expanded rotation canvas")
         #endif
+    }
+
+    private static func validateExpandedRotationCanvas() -> Bool {
+        guard let unchanged = ImageRotationUtils.previewOutputSize(
+            sourceWidth: 100,
+            sourceHeight: 50,
+            degrees: 0
+        ),
+        unchanged.width == 100,
+        unchanged.height == 50,
+        let quarterTurn = ImageRotationUtils.previewOutputSize(
+            sourceWidth: 100,
+            sourceHeight: 50,
+            degrees: 90
+        ),
+        quarterTurn.width == 50,
+        quarterTurn.height == 100 else {
+            return false
+        }
+
+        let format = UIGraphicsImageRendererFormat()
+        format.scale = 1
+        let source = UIGraphicsImageRenderer(
+            size: CGSize(width: 100, height: 50),
+            format: format
+        ).image { context in
+            UIColor.red.setFill()
+            context.fill(CGRect(x: 0, y: 0, width: 100, height: 50))
+        }
+        guard let rotated = ImageRotationUtils.rotateExpandingCanvas(
+            image: source,
+            degrees: 30,
+            padding: .black
+        ),
+        let expected = ImageRotationUtils.previewOutputSize(
+            sourceWidth: 100,
+            sourceHeight: 50,
+            degrees: 30
+        ) else {
+            return false
+        }
+
+        return Int(rotated.size.width * rotated.scale) == expected.width
+            && Int(rotated.size.height * rotated.scale) == expected.height
+            && expected.width > 100
+            && expected.height > 50
     }
 
     // MARK: - Raster (aligned with ImageProcessing)

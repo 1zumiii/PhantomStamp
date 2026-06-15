@@ -360,12 +360,17 @@ nonisolated extension WatermarkAlgorithmCore {
         preferredHypothesis: ScoreGridTopologyHypothesis? = nil
     ) -> (bits: [Int], diagnostics: MajorityVotingDiagnostics?) {
         var bestFallback: SoftMajorityVotingAttempt?
+        var successfulAttempts: [SoftMajorityVotingAttempt] = []
 
         let hypotheses: [ScoreGridTopologyHypothesis] = {
-            guard let preferredHypothesis else {
-                return Array(ScoreGridTopologyHypothesis.allCases)
+            var ordered: [ScoreGridTopologyHypothesis] = [.normal]
+            if let preferredHypothesis, preferredHypothesis != .normal {
+                ordered.append(preferredHypothesis)
             }
-            return [preferredHypothesis] + ScoreGridTopologyHypothesis.allCases.filter { $0 != preferredHypothesis }
+            ordered.append(
+                contentsOf: ScoreGridTopologyHypothesis.allCases.filter { !ordered.contains($0) }
+            )
+            return ordered
         }()
 
         for hypothesis in hypotheses {
@@ -376,14 +381,62 @@ nonisolated extension WatermarkAlgorithmCore {
             )
 
             if attempt.fecDecoded {
-                return (attempt.bits, attempt.diagnostics)
+                // The overwhelmingly common path is an untouched image. Validate it first and
+                // stop immediately so a noisy geometric prior cannot relabel it as mirrored.
+                if hypothesis == .normal {
+                    return (attempt.bits, attempt.diagnostics)
+                }
+                successfulAttempts.append(attempt)
             } else if bestFallback == nil ||
                         (attempt.diagnostics?.bestSyncBitsMatched ?? -1) > (bestFallback?.diagnostics?.bestSyncBitsMatched ?? -1) {
                 bestFallback = attempt
             }
         }
 
+        if let best = successfulAttempts.max(by: { lhs, rhs in
+            isVotingAttempt(lhs, weakerThan: rhs)
+        }) {
+            return (best.bits, best.diagnostics)
+        }
+
         return (bestFallback?.bits ?? [], bestFallback?.diagnostics)
+    }
+
+    private func isVotingAttempt(
+        _ lhs: SoftMajorityVotingAttempt,
+        weakerThan rhs: SoftMajorityVotingAttempt
+    ) -> Bool {
+        guard let left = lhs.diagnostics, let right = rhs.diagnostics else {
+            return lhs.diagnostics == nil && rhs.diagnostics != nil
+        }
+
+        if left.bestSyncBitsMatched != right.bestSyncBitsMatched {
+            return left.bestSyncBitsMatched < right.bestSyncBitsMatched
+        }
+
+        let leftRatio = Double(left.certifiedRepetitionCount) / Double(max(left.totalRepetitionCount, 1))
+        let rightRatio = Double(right.certifiedRepetitionCount) / Double(max(right.totalRepetitionCount, 1))
+        if abs(leftRatio - rightRatio) > 1e-9 {
+            return leftRatio < rightRatio
+        }
+        if left.certifiedRepetitionCount != right.certifiedRepetitionCount {
+            return left.certifiedRepetitionCount < right.certifiedRepetitionCount
+        }
+
+        // Exact evidence ties are common on clean periodic grids. Prefer the least destructive
+        // interpretation so an untouched image cannot be reported as mirrored by scan order.
+        return topologyPrior(left.topologyHypothesis) < topologyPrior(right.topologyHypothesis)
+    }
+
+    private func topologyPrior(_ hypothesis: ScoreGridTopologyHypothesis) -> Int {
+        switch hypothesis {
+        case .normal: return 8
+        case .rotated180: return 7
+        case .rotated90, .rotated270: return 6
+        case .normalFlipped: return 4
+        case .rotated180Flipped: return 3
+        case .rotated90Flipped, .rotated270Flipped: return 2
+        }
     }
 
     private struct SoftMajorityVotingAttempt {
@@ -622,7 +675,10 @@ nonisolated extension WatermarkAlgorithmCore {
                 for messageLenGuess in 1...16 {
                     let eccCount = expectedEccBitCount(messageLengthBytes: messageLenGuess)
                     guard (syncCount + eccCount) <= (c.w * c.w), payloadBits.count >= eccCount else { continue }
-                    if decodeFEC(bits: Array(payloadBits.prefix(eccCount))) != nil {
+                    if decodeFEC(
+                        bits: Array(payloadBits.prefix(eccCount)),
+                        expectedMessageLengthBytes: messageLenGuess
+                    ) != nil {
                         #if DEBUG
                         print("[WatermarkService] DEBUG voting: decode SUCCESS topology=\(hypothesis.rawValue) sync=\(c.matchCount)/32 w=\(c.w) bx=\(c.bx) by=\(c.by) gate=\(gate) guessLen=\(messageLenGuess)")
                         #endif

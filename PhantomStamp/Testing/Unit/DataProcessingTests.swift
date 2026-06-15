@@ -44,6 +44,8 @@ enum DataProcessingTests {
         let encAscii = encodeFEC(text: msgAscii)
         let decAscii = decodeFEC(bits: encAscii)
         let roundTripAsciiPassed = (decAscii == msgAscii)
+            && decodeFEC(bits: encAscii, expectedMessageLengthBytes: msgAscii.utf8.count) == msgAscii
+            && decodeFEC(bits: encAscii, expectedMessageLengthBytes: msgAscii.utf8.count + 1) == nil
 
         // 3) Round-trip (UTF-8 multibyte). Keep <= 16 bytes.
         let msgUtf8 = "Successful"
@@ -135,4 +137,3 @@ enum DataProcessingTests {
         #endif
     }
 }
-

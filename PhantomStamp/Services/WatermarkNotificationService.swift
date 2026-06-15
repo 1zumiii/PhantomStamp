@@ -34,7 +34,7 @@ enum WatermarkOperationNotificationService {
         }
     }
 
-    private static func scheduleImmediate(title: String, body: String) async {
+    private static func schedule(title: String, body: String, delay: TimeInterval? = nil) async {
         guard await ensureAuthorizedForDelivery() else { return }
 
         let content = UNMutableNotificationContent()
@@ -42,7 +42,14 @@ enum WatermarkOperationNotificationService {
         content.body = body
         content.sound = .default
 
-        let request = UNNotificationRequest(identifier: UUID().uuidString, content: content, trigger: nil)
+        let trigger = delay.map {
+            UNTimeIntervalNotificationTrigger(timeInterval: max(1, $0), repeats: false)
+        }
+        let request = UNNotificationRequest(
+            identifier: UUID().uuidString,
+            content: content,
+            trigger: trigger
+        )
         try? await center.add(request)
     }
 
@@ -54,34 +61,36 @@ enum WatermarkOperationNotificationService {
     // MARK: - Single image
 
     static func notifySingleEmbedFinished(success: Bool, error: Error?) async {
-        try? await Task.sleep(nanoseconds: 8_000_000_000)
         if success {
-            await scheduleImmediate(
+            await schedule(
                 title: AppConstants.Copy.WatermarkPush.embedSingleSuccessTitle,
-                body: AppConstants.Copy.WatermarkPush.embedSingleSuccessBody
+                body: AppConstants.Copy.WatermarkPush.embedSingleSuccessBody,
+                delay: 8
             )
         } else {
             let body = error?.localizedDescription ?? AppConstants.Copy.WatermarkPush.genericErrorBody
-            await scheduleImmediate(
+            await schedule(
                 title: AppConstants.Copy.WatermarkPush.embedSingleFailureTitle,
-                body: trimBody(body)
+                body: trimBody(body),
+                delay: 8
             )
         }
     }
 
     static func notifySingleExtractFinished(success: Bool, extractedText: String?, error: Error?) async {
-        try? await Task.sleep(nanoseconds: 8_000_000_000)
         if success, let text = extractedText {
             let body = AppConstants.Copy.WatermarkPush.extractSingleSuccessBodyPrefix + trimBody(text)
-            await scheduleImmediate(
+            await schedule(
                 title: AppConstants.Copy.WatermarkPush.extractSingleSuccessTitle,
-                body: body
+                body: body,
+                delay: 8
             )
         } else {
             let body = error?.localizedDescription ?? AppConstants.Copy.WatermarkPush.genericErrorBody
-            await scheduleImmediate(
+            await schedule(
                 title: AppConstants.Copy.WatermarkPush.extractSingleFailureTitle,
-                body: trimBody(body)
+                body: trimBody(body),
+                delay: 8
             )
         }
     }
@@ -91,13 +100,13 @@ enum WatermarkOperationNotificationService {
     static func notifyBatchEmbedFinished(succeeded: Int, failed: Int) async {
         let title = AppConstants.Copy.WatermarkPush.batchEmbedDoneTitle
         let body = String(format: AppConstants.Copy.WatermarkPush.batchEmbedDoneBodyFormat, succeeded, failed)
-        await scheduleImmediate(title: title, body: body)
+        await schedule(title: title, body: body)
     }
 
     static func notifyBatchExtractFinished(succeeded: Int, failed: Int) async {
         let title = AppConstants.Copy.WatermarkPush.batchExtractDoneTitle
         let body = String(format: AppConstants.Copy.WatermarkPush.batchExtractDoneBodyFormat, succeeded, failed)
-        await scheduleImmediate(title: title, body: body)
+        await schedule(title: title, body: body)
     }
 
 
@@ -107,6 +116,6 @@ enum WatermarkOperationNotificationService {
             ? AppConstants.Copy.WatermarkPush.robustnessTestPassStatus
             : AppConstants.Copy.WatermarkPush.robustnessTestFailStatus
         let title = String(format: AppConstants.Copy.WatermarkPush.robustnessTestDoneTitleFormat, testName, status)
-        await scheduleImmediate(title: title, body: trimBody(summary))
+        await schedule(title: title, body: trimBody(summary))
     }
 }

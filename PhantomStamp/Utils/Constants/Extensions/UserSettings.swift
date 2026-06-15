@@ -23,6 +23,7 @@ extension AppConstants {
         // Watermark Defaults — added for SettingsView
         static let defaultWatermarkText = "phantomstamp.settings.defaultWatermarkText"
         static let embeddingStrength    = "phantomstamp.settings.embeddingStrength"
+        static let embeddingStrengthDefault10Migration = "phantomstamp.migration.embeddingStrengthDefault10"
         static let exportQualityIndex   = "phantomstamp.settings.exportQualityIndex"
         /// Save to Photos toggle (always-on until properly wired to export pipeline).
         static let saveToPhotos         = "phantomstamp.settings.saveToPhotos"
@@ -75,8 +76,10 @@ extension AppConstants {
         static let min: Double = 0
         static let max: Double = 10
         static let step: Double = 0.5
-        /// `1.0×` keeps the baseline adaptive Q unchanged.
-        static let `default`: Double = 1.0
+        /// Adaptive mode uses the strongest tested global Q multiplier by default.
+        static let `default`: Double = 10.0
+        /// Shipped briefly as the adaptive-mode default and migrated once to `default`.
+        static let legacyBuggyDefault: Double = 1.0
     }
 
     /// Normalizes a stored embedding-strength value (handles legacy 0–100% → multiplier).

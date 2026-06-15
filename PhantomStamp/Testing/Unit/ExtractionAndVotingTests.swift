@@ -130,6 +130,13 @@ enum ExtractionAndVotingTests {
                 }
             }
 
+            let untouched = service.algorithms.applySoftMajorityVotingWithDiagnostics(
+                to: canonicalScores,
+                preferredHypothesis: .normalFlipped
+            )
+            guard check(decodeVotedPayload(untouched.bits) == text) else { return (false, checks) }
+            guard check(untouched.diagnostics?.topologyHypothesis == .normal) else { return (false, checks) }
+
             for hypothesis in ScoreGridTopologyHypothesis.allCases {
                 let observed = service.algorithms.transformedSoftScoreGrid(canonicalScores, hypothesis: hypothesis)
                 let result = service.algorithms.applySoftMajorityVotingWithDiagnostics(to: observed)
@@ -178,7 +185,10 @@ enum ExtractionAndVotingTests {
             let paddedRaw = ((rawBits + 3) / 4) * 4
             let eccCount = (paddedRaw / 4) * 8
             guard payloadBits.count >= eccCount else { continue }
-            if let decoded = decodeFEC(bits: Array(payloadBits.prefix(eccCount))) {
+            if let decoded = decodeFEC(
+                bits: Array(payloadBits.prefix(eccCount)),
+                expectedMessageLengthBytes: lenGuess
+            ) {
                 return decoded
             }
         }

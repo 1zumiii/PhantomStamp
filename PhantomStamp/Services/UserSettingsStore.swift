@@ -215,6 +215,15 @@ final class UserSettingsStore {
         if normalizedEmbeddingStrength != rawEmbeddingStrength {
             _embeddingStrength.wrappedValue = normalizedEmbeddingStrength
         }
+        if !defaults.bool(forKey: AppConstants.UserDefaultsKey.embeddingStrengthDefault10Migration) {
+            if abs(normalizedEmbeddingStrength - AppConstants.EmbeddingStrength.legacyBuggyDefault) < 1e-9 {
+                _embeddingStrength.wrappedValue = AppConstants.SettingsDefault.embeddingStrength
+            }
+            defaults.set(
+                true,
+                forKey: AppConstants.UserDefaultsKey.embeddingStrengthDefault10Migration
+            )
+        }
         _exportQualityIndex = AppUserDefault(
             key: AppConstants.UserDefaultsKey.exportQualityIndex,
             defaultValue: AppConstants.SettingsDefault.exportQualityIndex,

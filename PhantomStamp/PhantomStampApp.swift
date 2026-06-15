@@ -54,6 +54,12 @@ struct PhantomStampApp: App {
                     if ProcessInfo.processInfo.arguments.contains("--run-downscaled-damage-test") {
                         await WatermarkLocalDamageAttackTests.runDownscaledScribbleAndPrint()
                     }
+                    if ProcessInfo.processInfo.arguments.contains("--run-core-unit-tests") {
+                        ExtractionAndVotingTests.runAllAndPrint()
+                        DataProcessingTests.runAllAndPrint()
+                        ImagePipelineTests.runAllBundledAndPrint()
+                        UserSettingsStoreTests.runAllAndPrint()
+                    }
                     #endif
                 }
         }

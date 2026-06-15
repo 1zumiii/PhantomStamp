@@ -54,10 +54,14 @@ class WatermarkService: WatermarkServiceProtocol {
         }
     }
 
-    /// Delivers `UserNotifications` only when the user enabled alerts in Settings (system authorization is still required inside the notification service).
-    private func deliverWatermarkNotificationIfAllowed(_ work: () async -> Void) async {
+    /// Queues `UserNotifications` without delaying the watermark result.
+    private func deliverWatermarkNotificationIfAllowed(
+        _ work: @escaping @MainActor () async -> Void
+    ) async {
         guard await userAllowsWatermarkNotifications() else { return }
-        await work()
+        Task { @MainActor in
+            await work()
+        }
     }
     private func awaitPerFileProgressDrain(current: Int, timeoutSeconds: Double = 60.0) async -> Bool {
         // If the overlay isn't listening (e.g. tests or headless runs), don't block forever.
@@ -227,6 +231,16 @@ class WatermarkService: WatermarkServiceProtocol {
         }
 
         do {
+            #if DEBUG
+            let inputPixelWidth = Int((image.size.width * image.scale).rounded())
+            let inputPixelHeight = Int((image.size.height * image.scale).rounded())
+            print(
+                "[WatermarkService] embed begin: source=\(sourceImageName ?? "<unknown>") "
+                    + "pixels=\(inputPixelWidth)x\(inputPixelHeight) "
+                    + "orientation=\(image.imageOrientation.rawValue)"
+            )
+            #endif
+
             // ==========================================
             // Step 1: Prepare payload + build 2D tile → [0, prepEnd]
             // ==========================================
@@ -467,6 +481,16 @@ class WatermarkService: WatermarkServiceProtocol {
         shouldHideProgressbar: Bool,
         reportsProgressNotifications: Bool
     ) async throws -> WatermarkExtractionResult {
+        #if DEBUG
+        let inputPixelWidth = Int((image.size.width * image.scale).rounded())
+        let inputPixelHeight = Int((image.size.height * image.scale).rounded())
+        print(
+            "[WatermarkService] extract begin: source=\(sourceImageName ?? "<unknown>") "
+                + "pixels=\(inputPixelWidth)x\(inputPixelHeight) "
+                + "orientation=\(image.imageOrientation.rawValue)"
+        )
+        #endif
+
         if shouldHideProgressbar, reportsProgressNotifications {
             NotificationCenter.default.post(name: AppConstants.Notifications.watermarkProgressOverlayDidStart, object: nil)
             await awaitProgressOverlayPresentation()
@@ -574,7 +598,7 @@ class WatermarkService: WatermarkServiceProtocol {
                             rawBitGridCols: 0,
                             majorityBestSyncBits: nil,
                             majorityMacroTileWidth: nil,
-                            topologyHypothesis: gridScan.topologyHypothesis
+                            topologyHypothesis: nil
                         )
                         if bestFailedWork == nil || validationScore(failed) > validationScore(bestFailedWork!) {
                             bestFailedWork = failed
@@ -599,6 +623,7 @@ class WatermarkService: WatermarkServiceProtocol {
                         ? Array(votedBits.dropFirst(syncCount))
                         : []
                     let maj = voting.diagnostics
+                    let fecPassed = maj?.fecValidated == true
                     let candidateWork = ExtractMatrixWorkResult(
                         payloadBitsWithoutSync: payload,
                         deskewAngleRadians: transformParams.angle,
@@ -610,19 +635,24 @@ class WatermarkService: WatermarkServiceProtocol {
                         rawBitGridCols: rawExtractedScores.first?.count ?? 0,
                         majorityBestSyncBits: maj?.bestSyncBitsMatched,
                         majorityMacroTileWidth: maj?.macroTileWidth,
-                        topologyHypothesis: maj?.topologyHypothesis ?? gridScan.topologyHypothesis
+                        // Sync-only matches are search hypotheses. Report orientation only after
+                        // the folded payload passes the real FEC decoder.
+                        topologyHypothesis: fecPassed ? maj?.topologyHypothesis : nil
                     )
-                    let fecPassed = maj?.fecValidated == true
 
                     #if DEBUG
                     let rows = rawExtractedScores.count
                     let cols = rawExtractedScores.first?.count ?? 0
+                    let topologySummary = fecPassed
+                        ? (maj?.topologyHypothesis.rawValue ?? "unknown")
+                        : "unvalidated(\(maj?.topologyHypothesis.rawValue ?? gridScan.topologyHypothesis.rawValue))"
                     print(
                         "[WatermarkService] candidate result: gridOffset="
                             + "(\(Int(gridOffset.x)),\(Int(gridOffset.y))) "
                             + "rawBits=\(rows)x\(cols) votedBits=\(votedBits.count) "
                             + "sync=\(gridScan.bestSyncBitsMatched)/32 "
-                            + "FEC=\(fecPassed ? "PASS" : "FAIL")"
+                            + "FEC=\(fecPassed ? "PASS" : "FAIL") "
+                            + "topology=\(topologySummary)"
                     )
                     #endif
 
@@ -689,7 +719,10 @@ class WatermarkService: WatermarkServiceProtocol {
                 let eccCount = eccBitCount(messageLengthBytes: lenGuess)
                 guard payloadBits.count >= eccCount else { continue }
                 let eccBits = Array(payloadBits.prefix(eccCount))
-                if let correctedText = decodeFEC(bits: eccBits) {
+                if let correctedText = decodeFEC(
+                    bits: eccBits,
+                    expectedMessageLengthBytes: lenGuess
+                ) {
                     reportProgress(step: .extractDecodeFEC, percentage: 1.0)
                     if shouldHideProgressbar, reportsProgressNotifications {
                         NotificationCenter.default.post(name: AppConstants.Notifications.watermarkProgressOverlayDidEnd, object: nil)

@@ -50,6 +50,7 @@ struct RobustnessTestingView: View {
         .sensoryFeedback(.success, trigger: vm.manipJpegFeedbackTrigger)
         .sensoryFeedback(.success, trigger: vm.manipResizeFeedbackTrigger)
         .sensoryFeedback(.success, trigger: vm.manipScribbleFeedbackTrigger)
+        .sensoryFeedback(.success, trigger: vm.manipRotationFeedbackTrigger)
         .onChange(of: vm.manipPickerItem) { _, newItem in
             Task { await vm.loadManipSourceImage(from: newItem) }
         }
@@ -292,6 +293,10 @@ struct RobustnessTestingView: View {
 
                 Divider().opacity(0.75)
 
+                manipRotationSection
+
+                Divider().opacity(0.75)
+
                 manipResizeSection
             }
         }
@@ -303,7 +308,7 @@ struct RobustnessTestingView: View {
             VStack(alignment: .leading, spacing: 3) {
                 Text("Source image")
                     .font(.callout.weight(.semibold))
-                Text("Pick one photo. Both tools below operate on this image.")
+                Text("Pick one photo. All tools below operate on this image.")
                     .font(.caption)
                     .foregroundStyle(.secondary)
                     .fixedSize(horizontal: false, vertical: true)
@@ -498,6 +503,58 @@ struct RobustnessTestingView: View {
                     Task { await vm.runManipResize() }
                 }
                 .disabled(vm.isLoading || vm.manipSourceImage == nil || vm.manipResizePreviewSize == nil)
+            }
+        }
+    }
+
+    private var manipRotationSection: some View {
+        VStack(alignment: .leading, spacing: 10) {
+            Text("Rotate with padding")
+                .font(.callout.weight(.semibold))
+
+            Text("Expands the output canvas to preserve every source pixel, then fills the exposed border with black or white.")
+                .font(.caption)
+                .foregroundStyle(.secondary)
+                .fixedSize(horizontal: false, vertical: true)
+
+            HStack {
+                Text("Angle")
+                    .font(.footnote.weight(.semibold))
+                    .foregroundStyle(.secondary)
+                Spacer()
+                Text(String(format: "%+.0f°", vm.manipRotationDegrees))
+                    .font(.caption.monospacedDigit())
+                    .foregroundStyle(.secondary)
+            }
+
+            Slider(value: $vm.manipRotationDegrees, in: -45...45, step: 1)
+                .disabled(vm.isLoading || vm.manipSourceImage == nil)
+
+            Picker("Padding", selection: $vm.manipRotationPadding) {
+                ForEach(ImageRotationPadding.allCases) { padding in
+                    Text(padding.rawValue).tag(padding)
+                }
+            }
+            .pickerStyle(.segmented)
+            .disabled(vm.isLoading || vm.manipSourceImage == nil)
+
+            if let preview = vm.manipRotationPreviewSize, let src = vm.manipSourcePx {
+                Text("Output: \(preview.w) × \(preview.h) px  (full \(src.w) × \(src.h) source retained)")
+                    .font(.caption.monospacedDigit())
+                    .foregroundStyle(.secondary)
+            }
+
+            HStack {
+                Spacer()
+                ManipSaveButton(
+                    title: "Rotate & Save",
+                    prominent: false,
+                    isRunning: vm.manipRotationRunning,
+                    feedback: vm.manipRotationFeedback
+                ) {
+                    Task { await vm.runManipRotation() }
+                }
+                .disabled(vm.isLoading || vm.manipSourceImage == nil || vm.manipRotationPreviewSize == nil)
             }
         }
     }

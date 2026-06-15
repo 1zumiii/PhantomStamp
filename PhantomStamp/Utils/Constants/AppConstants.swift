@@ -158,7 +158,7 @@ enum AppConstants {
             static let rowLearnMore      = "Learn more"
 
             // Testing rows
-            static let rowRobustnessTests = "Robustness Tests"
+            static let rowRobustnessTests = "Robustness Tests & Dev Tools"
         }
 
         enum Footer {

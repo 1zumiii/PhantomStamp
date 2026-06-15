@@ -74,6 +74,17 @@ nonisolated func decodeFEC(bits: [Int]) -> String? {
     return String(bytes: bytes, encoding: .utf8)
 }
 
+/// Decodes one exact candidate length. This prevents a longer trial prefix from accepting a
+/// shorter accidental header, which otherwise creates false-positive topology candidates.
+nonisolated func decodeFEC(
+    bits: [Int],
+    expectedMessageLengthBytes: Int
+) -> String? {
+    guard let text = decodeFEC(bits: bits) else { return nil }
+    guard text.utf8.count == expectedMessageLengthBytes else { return nil }
+    return text
+}
+
 nonisolated func getSyncMarkerBits() -> [Int] {
     // fixed sync header, used to identify the start of the watermark
     // length 32 bits, use a pattern with obvious high/low changes
