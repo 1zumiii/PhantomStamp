@@ -111,9 +111,9 @@ To sample breakdown behavior under extreme lossy channel conditions, an automate
 * **Observed File-Size Floor:** The encoded file size approached roughly 1 MiB below **q = 0.30** in this run. File size alone cannot identify which DC or AC coefficients caused that floor; codec metadata, residual image structure, and watermark energy may all contribute.
 * **Quantization-Step Hypothesis:** The **q = 0.25 FAIL / q = 0.24 PASS** inversion is consistent with discrete quantization and rounding effects, but confirming the exact cause would require inspecting the codec's quantization tables and resulting coefficient errors.
 
-### 5.4 Robustness Against Severe Edge Cropping (Single Variable: Right-Side Crop)
+### 5.4 Robustness Against Severe Edge and Corner Cropping
 
-To evaluate the grid-tracking resilience and redundant block spatial alignment under extreme surface destruction, a 59-case segmented boundary sweep was executed by progressively shaving pixels from the right margin of a **4032x3024** image asset (`identity = PASS`).
+To evaluate grid-tracking resilience and redundant block spatial alignment under extreme surface destruction, segmented boundary sweeps were executed on a **4032x3024** image asset (`identity = PASS`). The primary reference chart below shows the right-edge sweep; follow-up all-direction sweeps were used to characterize edge and corner crops that preserve or remove the original tile-grid origin.
 
 <p align="center">
   <img src="PhantomStamp/Assets/Docs/crop_sweep_sampled.png" alt="Crop Sweep Sampled Results" width="75%">
@@ -121,11 +121,18 @@ To evaluate the grid-tracking resilience and redundant block spatial alignment u
   <em>Figure 3: Segmented right-edge crop sweep with the 136px period for the reference payload shown as a reference line.</em>
 </p>
 
-* **96% Right-Edge Crop Pass:** The reference run still recovered the exact payload after removing **96.0% of the image width**, leaving a **162x3024** slice. The next sampled point, **97.0%**, failed.
+<p align="center">
+  <img src="PhantomStamp/Assets/Docs/crop_direction_summary.png" alt="Crop Direction Summary Results" width="75%">
+  <br>
+  <em>Figure 4: Directional crop boundary summary for the reference image and payload.</em>
+</p>
+
+* **96% Best Directional Crop Pass:** The reference run recovered the exact payload after removing **96.0%** from right-edge, bottom-edge, and top-right corner crops. The next sampled point, **97.0%**, failed in these sweeps. The right-edge case leaves a **162x3024** slice; the bottom-edge case leaves a **4032x121** slice; the top-right corner case leaves a **162x121** patch.
+* **94% Origin-Shift Crop Pass:** Directional sweeps that remove the left-side origin, including left-edge and bottom-left corner crops, recovered the reference payload through **94.0%** removal and failed at **95.0%**. This small drop is consistent with the extractor needing to rediscover the tile phase rather than inheriting the original grid alignment.
 * **Payload-Dependent Spatial Period:** Tile width is not universally fixed at 136px. It depends on the payload length after the 32-bit sync marker, Hamming coding, interleaving, and square storage padding. The 15-character reference payload `"DesignedByOrion"` produces a $17 \times 17$ block tile, or a **136px** period; for comparison, the 10-character payload `"Successful"` produces a $15 \times 15$ tile, or **120px**.
 * **Vertical Redundancy:** For `"DesignedByOrion"`, the uncropped 3024px axis contains 378 DCT-block rows, or roughly 22 complete 17-block tile heights before accounting for phase and partial repetitions. Sync gating determines how many of those repetitions are actually allowed to vote.
 * **Identity Candidate:** A pure crop does not require rotation/scale correction. Because identity is always retained as a geometric candidate, the extraction pipeline can validate the unresampled luma plane and avoid unnecessary bilinear filtering.
-* **Other Crop Geometries:** Bilateral and corner crops are supported by the same phase-search machinery, but the 96% figure applies only to the documented right-edge sweep. No equivalent numerical limit is claimed for unmeasured crop geometries.
+* **Directional Interpretation:** The all-direction sweep shows a clear empirical split for this reference image: origin-preserving / top-right cases reached **96%**, while left-origin-shift cases reached **94%**. These are still measured limits, not universal guarantees; percentage limits are especially image-size-dependent because a 96% width crop and a 96% height crop leave different absolute pixel spans.
 
 ### 5.5 Local Damage and False-Positive Regression
 
