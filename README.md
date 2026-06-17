@@ -95,7 +95,7 @@ The boundary sweeps exposed two important DSP behaviors:
 1. **Bilinear Resampling Loss:** Even a small non-identity transform moves most samples away from integer coordinates, so the corrective bilinear interpolation attenuates some high-frequency payload energy.
 2. **Non-contiguous Failures:** Specific fractional scale factors can interact unfavorably with the resampling grid and image texture. A nearby, more severe factor may therefore pass when a milder factor fails.
 
-Two separate controls affect this trade-off: **synchronization-template intensity** strengthens geometric peak detection, while **DCT embedding strength** increases the payload coefficient separation. Raising either value can improve robustness, but may also make image changes more visible. The current defaults are empirical operating points rather than a formal Human Visual System threshold.
+Two separate controls affect this trade-off: **synchronization-template intensity** strengthens geometric peak detection, while **DCT embedding strength** increases the payload coefficient separation. Raising either value can improve robustness, but may also make image changes more visible. The Adaptive-mode default is a showcase-safe operating point selected for reliable recovery; lower local strengths remain available in internal sweeps and Advanced-mode experiments when visual subtlety is the primary goal.
 
 ### 5.3 Robustness Against Heavy JPEG Compression (Reference Configuration: Strength = 10.0, Threshold = -1.0)
 
@@ -142,6 +142,22 @@ Localized edits such as pen strokes, annotations, and high-contrast scribbles ar
 * **Geometric Isolation:** Because the generated image retains the exact source width and height, the tool removes accidental resizing as a confounding variable when evaluating local spatial corruption.
 * **False-Positive Acceptance Rule:** A damaged image may either decode the correct payload or fail extraction. Returning an incorrect payload is treated as a regression. Sparse sync evidence and ungated fallback folding are therefore explicitly excluded from successful candidate validation.
 * **Regression Coverage:** The DEBUG attack suite includes a full-resolution diagonal-scribble case and a compound downscale-plus-scribble guard case. The former checks recovery under pure local damage; the latter checks safe rejection rather than false success outside the documented reference scale envelope.
+
+### 5.6 Perceptual Quality Sweep (SSIM-Focused)
+
+<p align="center">
+  <img src="PhantomStamp/Assets/Docs/phantomstamp_ssim_sweep.png" alt="SSIM Summary Results" width="75%">
+  <br>
+  <em>Figure 5: SSIM perceptual-quality sweep. Moderate strengths retained SSIM above 0.994, while 10.0x prioritizes showcase-safe robustness.</em>
+</p>
+
+Visual quality was evaluated with a local-strength sweep that embeds a test payload and compares the original image with the watermarked output. **SSIM (Structural Similarity Index)** is used as the primary perceptual indicator because it measures preservation of luminance, contrast, and image structure rather than only raw pixel error.
+
+Across two high-resolution reference images, moderate DCT embedding strength retained high structural similarity:
+
+* **Moderate-strength visual fidelity:** At **5.0x** local DCT strength, SSIM remained above **0.994** on both tested images.
+* **Showcase-safe robustness mode:** At the current Adaptive default of **10.0x**, SSIM remained approximately **0.985-0.987** while prioritizing robust extraction for live demonstrations.
+* **Metric interpretation:** Pixel-error metrics such as PSNR are treated as conservative diagnostics rather than the headline perceptual result. PhantomStamp distributes weak frequency-domain changes across many image blocks and also adds a geometric synchronization template; this can make raw pixel-error scores look more pessimistic than the observed structural similarity and side-by-side visual inspection.
 
 ## 6. Current Limitations
 

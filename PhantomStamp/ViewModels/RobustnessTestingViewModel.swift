@@ -54,6 +54,17 @@ final class RobustnessTestingViewModel {
         case rotation
     }
 
+    struct PerceptualQualitySweepCase: Identifiable {
+        let strength: Double
+        let result: ImageQualityMetrics.Result
+
+        var id: Double { strength }
+
+        var formattedStrength: String {
+            String(format: "%.1f×", strength)
+        }
+    }
+
     let settingsStore: UserSettingsStore
     let watermarkService: WatermarkService
 
@@ -81,6 +92,10 @@ final class RobustnessTestingViewModel {
     var manipResizeRunning = false
     var manipScribbleRunning = false
     var manipRotationRunning = false
+    var perceptualQualityRunning = false
+    var perceptualQualityResults: [PerceptualQualitySweepCase] = []
+    var perceptualQualityPayload = "PSNRSSIM"
+    var perceptualQualityStrengths: [Double] = [1.0, 2.0, 3.0, 4.0, 5.0, 7.5, 10.0]
     var manipJpegFeedback: ManipSaveFeedback = .idle
     var manipResizeFeedback: ManipSaveFeedback = .idle
     var manipScribbleFeedback: ManipSaveFeedback = .idle
@@ -281,6 +296,51 @@ final class RobustnessTestingViewModel {
         } catch {
             manipScribbleRunning = false
             presentManipFailure(title: "Save failed", subtitle: error.localizedDescription)
+        }
+    }
+
+    func runPerceptualQualityTest() async {
+        guard let source = manipSourceImage else {
+            presentManipFailure(title: "No source image", subtitle: "Pick a photo in Image tools before measuring PSNR/SSIM.")
+            return
+        }
+
+        perceptualQualityRunning = true
+        isLoading = true
+        perceptualQualityResults = []
+        defer {
+            perceptualQualityRunning = false
+            isLoading = false
+        }
+
+        do {
+            var sweepCases: [PerceptualQualitySweepCase] = []
+            for strength in perceptualQualityStrengths {
+                let watermarked = try await watermarkService.embedWatermarkSilently(
+                    into: source,
+                    text: perceptualQualityPayload,
+                    embeddingStrengthOverride: strength
+                )
+                let result = try ImageQualityMetrics.compare(original: source, compared: watermarked)
+                let sweepCase = PerceptualQualitySweepCase(strength: strength, result: result)
+                sweepCases.append(sweepCase)
+                perceptualQualityResults = sweepCases
+                print(
+                    "[TestPage] PerceptualQuality payload=\(perceptualQualityPayload) "
+                        + "strength=\(sweepCase.formattedStrength) "
+                        + "size=\(result.width)x\(result.height) "
+                        + "PSNR=\(result.formattedPSNR) SSIM=\(result.formattedSSIM) "
+                        + "MSE=\(result.formattedMSE) MAE=\(result.formattedMAE) maxAbs=\(result.maxAbsRGB)"
+                )
+            }
+            print(
+                "[TestPage] PerceptualQualitySweep complete cases=\(sweepCases.count) "
+                    + "localStrengths=\(perceptualQualityStrengths.map { String(format: "%.1f", $0) }.joined(separator: ",")) "
+                    + "adaptiveDefault=\(String(format: "%.1f", AppConstants.SettingsDefault.embeddingStrength))"
+            )
+        } catch {
+            perceptualQualityResults = []
+            presentManipFailure(title: "Quality test failed", subtitle: error.localizedDescription)
         }
     }
 

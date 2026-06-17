@@ -21,7 +21,7 @@ enum WatermarkAttackTestHarness {
   }
 
   /// Embeds with full tile coverage while preserving all other user settings
-  /// (`syncTemplateIntensity`, `embeddingStrength`, …).
+  /// such as `syncTemplateIntensity`.
   @MainActor
   static func embedForAttackTest(
     service: WatermarkService,

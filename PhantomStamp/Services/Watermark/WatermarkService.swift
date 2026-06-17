@@ -206,14 +206,19 @@ class WatermarkService: WatermarkServiceProtocol {
 
     /// Embed without posting production overlay / per-step progress notifications.
     /// Intended for robustness tests and other headless validation runs.
-    func embedWatermarkSilently(into image: UIImage, text: String) async throws -> UIImage {
+    func embedWatermarkSilently(
+        into image: UIImage,
+        text: String,
+        embeddingStrengthOverride: Double? = nil
+    ) async throws -> UIImage {
         try await embedWatermark(
             into: image,
             text: text,
             sourceImageName: nil,
             shouldHideProgressbar: false,
             parameterOverrides: nil,
-            reportsProgressNotifications: false
+            reportsProgressNotifications: false,
+            embeddingStrengthOverride: embeddingStrengthOverride
         )
     }
 
@@ -223,7 +228,8 @@ class WatermarkService: WatermarkServiceProtocol {
         sourceImageName: String?,
         shouldHideProgressbar: Bool,
         parameterOverrides: AdvancedEmbedOverrides?,
-        reportsProgressNotifications: Bool
+        reportsProgressNotifications: Bool,
+        embeddingStrengthOverride: Double? = nil
     ) async throws -> UIImage {
         #if DEBUG
         // Debug-only: prints internal data-layer checks. Disable by default to avoid noisy logs in demos.
@@ -273,10 +279,13 @@ class WatermarkService: WatermarkServiceProtocol {
             settingsStore?.syncTemplateIntensity ?? AppConstants.SettingsDefault.syncTemplateIntensity
         }
         let embeddingStrengthSnapshot: Double = await MainActor.run {
+            if let embeddingStrengthOverride {
+                return embeddingStrengthOverride
+            }
             if let overrides = parameterOverrides {
                 return overrides.embeddingIntensity
             }
-            return settingsStore?.embeddingStrength ?? AppConstants.SettingsDefault.embeddingStrength
+            return AppConstants.SettingsDefault.embeddingStrength
         }
 
         do {

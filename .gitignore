@@ -61,3 +61,6 @@ fastlane/.env*
 .env
 .env.*
 !.env.example
+
+# Other
+/ShowcaseMaterials/

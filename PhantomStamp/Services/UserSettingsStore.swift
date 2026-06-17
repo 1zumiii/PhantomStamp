@@ -83,9 +83,6 @@ final class UserSettingsStore {
     private var _defaultWatermarkText: AppUserDefault<String>
 
     @ObservationIgnored
-    private var _embeddingStrength: AppUserDefault<Double>
-
-    @ObservationIgnored
     private var _exportQualityIndex: AppUserDefault<Int>
 
     @ObservationIgnored
@@ -105,18 +102,6 @@ final class UserSettingsStore {
         set {
             withMutation(keyPath: \.defaultWatermarkText) {
                 _defaultWatermarkText.wrappedValue = newValue
-            }
-        }
-    }
-
-    var embeddingStrength: Double {
-        get {
-            access(keyPath: \.embeddingStrength)
-            return _embeddingStrength.wrappedValue
-        }
-        set {
-            withMutation(keyPath: \.embeddingStrength) {
-                _embeddingStrength.wrappedValue = newValue
             }
         }
     }
@@ -205,25 +190,6 @@ final class UserSettingsStore {
             defaultValue: AppConstants.SettingsDefault.defaultWatermarkText,
             defaults: defaults
         )
-        _embeddingStrength = AppUserDefault(
-            key: AppConstants.UserDefaultsKey.embeddingStrength,
-            defaultValue: AppConstants.SettingsDefault.embeddingStrength,
-            defaults: defaults
-        )
-        let rawEmbeddingStrength = _embeddingStrength.wrappedValue
-        let normalizedEmbeddingStrength = AppConstants.normalizedEmbeddingStrength(rawEmbeddingStrength)
-        if normalizedEmbeddingStrength != rawEmbeddingStrength {
-            _embeddingStrength.wrappedValue = normalizedEmbeddingStrength
-        }
-        if !defaults.bool(forKey: AppConstants.UserDefaultsKey.embeddingStrengthDefault10Migration) {
-            if abs(normalizedEmbeddingStrength - AppConstants.EmbeddingStrength.legacyBuggyDefault) < 1e-9 {
-                _embeddingStrength.wrappedValue = AppConstants.SettingsDefault.embeddingStrength
-            }
-            defaults.set(
-                true,
-                forKey: AppConstants.UserDefaultsKey.embeddingStrengthDefault10Migration
-            )
-        }
         _exportQualityIndex = AppUserDefault(
             key: AppConstants.UserDefaultsKey.exportQualityIndex,
             defaultValue: AppConstants.SettingsDefault.exportQualityIndex,

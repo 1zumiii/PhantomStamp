@@ -147,7 +147,6 @@ enum AppConstants {
             // Watermark Defaults rows
             static let labelDefaultWatermarkText = "Default Watermark text"
             static let placeholderWatermarkText  = "@YourName"
-            static let labelEmbeddingStrength    = "Embedding strength"
             static let labelExportQuality        = "Export quality"
             static let exportQualityOptions      = ["Low", "Medium", "High"]
             static let footnoteWatermarkDefaults = "Default text is used as the watermark payload when embedding."

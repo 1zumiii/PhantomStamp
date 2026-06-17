@@ -100,7 +100,6 @@ struct SettingsView: View {
     // MARK: - Watermark Defaults
     // Bindings:
     //   Default text       → $settingsStore.defaultWatermarkText  (new)
-    //   Embedding strength → $settingsStore.embeddingStrength      (multiplier 0–10×, step 0.5)
     //   Export quality     → $settingsStore.exportQualityIndex     (new, Int 0/1/2)
 
     private var watermarkDefaultsSection: some View {
@@ -166,26 +165,6 @@ struct SettingsView: View {
                     WatermarkPayloadLimits.sanitizingUserInput(newValue)
             }
         )
-    }
-
-    private var embeddingStrengthRow: some View {
-        VStack(alignment: .leading, spacing: 8) {
-            HStack {
-                Text(AppConstants.Copy.Settings.labelEmbeddingStrength)
-                    .font(.subheadline.weight(.medium))
-                Spacer()
-                Text(String(format: "%.1f×", settingsStore.embeddingStrength))
-                    .font(.caption.monospacedDigit())
-                    .foregroundStyle(.secondary)
-            }
-            Slider(
-                value: $settingsStore.embeddingStrength,
-                in: AppConstants.EmbeddingStrength.min...AppConstants.EmbeddingStrength.max,
-                step: AppConstants.EmbeddingStrength.step
-            )
-            .tint(accentPurple)
-        }
-        .padding(.vertical, 4)
     }
 
     private var exportQualityRow: some View {

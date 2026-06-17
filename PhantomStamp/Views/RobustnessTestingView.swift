@@ -285,6 +285,10 @@ struct RobustnessTestingView: View {
 
                 Divider().opacity(0.75)
 
+                perceptualQualitySection
+
+                Divider().opacity(0.75)
+
                 manipScribbleSection
 
                 Divider().opacity(0.75)
@@ -296,6 +300,118 @@ struct RobustnessTestingView: View {
                 manipResizeSection
             }
         }
+    }
+
+    private var perceptualQualitySection: some View {
+        VStack(alignment: .leading, spacing: 10) {
+            HStack(alignment: .firstTextBaseline, spacing: 12) {
+                VStack(alignment: .leading, spacing: 3) {
+                    Text("Watermark imperceptibility")
+                        .font(.callout.weight(.semibold))
+                    Text("Sweeps local embed strength, then compares original vs watermarked output with PSNR and luma SSIM. App settings are not changed.")
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
+                        .fixedSize(horizontal: false, vertical: true)
+                }
+
+                Spacer(minLength: 10)
+
+                Button {
+                    Task { await vm.runPerceptualQualityTest() }
+                } label: {
+                    HStack(spacing: 6) {
+                        if vm.perceptualQualityRunning {
+                            ProgressView()
+                                .controlSize(.small)
+                        } else {
+                            Image(systemName: "waveform.path.ecg")
+                                .font(.caption.weight(.semibold))
+                        }
+                        Text(vm.perceptualQualityRunning ? "Measuring" : "Measure")
+                            .font(.callout.weight(.semibold))
+                    }
+                    .frame(minWidth: 98)
+                    .padding(.horizontal, 8)
+                }
+                .buttonStyle(.borderedProminent)
+                .controlSize(.small)
+                .disabled(vm.isLoading || vm.manipSourceImage == nil)
+            }
+
+            if !vm.perceptualQualityResults.isEmpty {
+                VStack(alignment: .leading, spacing: 10) {
+                    HStack(spacing: 8) {
+                        Text("Strength")
+                            .frame(width: 68, alignment: .leading)
+                        Text("PSNR")
+                            .frame(maxWidth: .infinity, alignment: .leading)
+                        Text("SSIM")
+                            .frame(maxWidth: .infinity, alignment: .leading)
+                        Text("MAE")
+                            .frame(maxWidth: .infinity, alignment: .leading)
+                    }
+                    .font(.caption2.weight(.semibold))
+                    .foregroundStyle(.secondary)
+
+                    ForEach(vm.perceptualQualityResults) { sweepCase in
+                        perceptualQualityResultRow(sweepCase)
+                    }
+
+                    if let last = vm.perceptualQualityResults.last?.result {
+                        Text("Compared \(last.width) × \(last.height) px · local strength sweep only · Adaptive default \(String(format: "%.1f×", AppConstants.SettingsDefault.embeddingStrength))")
+                            .font(.caption.monospacedDigit())
+                            .foregroundStyle(.secondary)
+                    }
+                }
+                .padding(10)
+                .background(.thinMaterial, in: RoundedRectangle(cornerRadius: 12, style: .continuous))
+                .overlay {
+                    RoundedRectangle(cornerRadius: 12, style: .continuous)
+                        .strokeBorder(Color.primary.opacity(0.08), lineWidth: 1)
+                }
+            } else if vm.perceptualQualityRunning {
+                HStack(spacing: 8) {
+                    ProgressView()
+                        .controlSize(.small)
+                    Text("Sweeping local strengths: \(vm.perceptualQualityStrengths.map { String(format: "%.1f×", $0) }.joined(separator: ", "))")
+                        .font(.caption.monospacedDigit())
+                        .foregroundStyle(.secondary)
+                }
+                .padding(10)
+                .background(.thinMaterial, in: RoundedRectangle(cornerRadius: 12, style: .continuous))
+                .overlay {
+                    RoundedRectangle(cornerRadius: 12, style: .continuous)
+                        .strokeBorder(Color.primary.opacity(0.08), lineWidth: 1)
+                }
+            } else {
+                Text("Sweep result appears here after local-strength embedding and comparison.")
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+            }
+        }
+    }
+
+    private func perceptualQualityResultRow(
+        _ sweepCase: RobustnessTestingViewModel.PerceptualQualitySweepCase
+    ) -> some View {
+        HStack(spacing: 8) {
+            Text(sweepCase.formattedStrength)
+                .font(.caption.monospacedDigit().weight(.bold))
+                .foregroundStyle(.tint)
+                .frame(width: 68, alignment: .leading)
+            Text(sweepCase.result.formattedPSNR)
+                .frame(maxWidth: .infinity, alignment: .leading)
+            Text(sweepCase.result.formattedSSIM)
+                .frame(maxWidth: .infinity, alignment: .leading)
+            Text(sweepCase.result.formattedMAE)
+                .frame(maxWidth: .infinity, alignment: .leading)
+        }
+        .font(.caption.monospacedDigit().weight(.semibold))
+        .foregroundStyle(.primary)
+        .padding(.horizontal, 10)
+        .padding(.vertical, 7)
+        .frame(maxWidth: .infinity)
+        .background(Color.primary.opacity(0.045), in: RoundedRectangle(cornerRadius: 9, style: .continuous))
     }
 
     private var manipImagePickerRow: some View {

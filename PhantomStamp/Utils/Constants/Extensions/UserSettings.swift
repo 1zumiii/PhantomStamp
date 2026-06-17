@@ -22,8 +22,6 @@ extension AppConstants {
 
         // Watermark Defaults — added for SettingsView
         static let defaultWatermarkText = "phantomstamp.settings.defaultWatermarkText"
-        static let embeddingStrength    = "phantomstamp.settings.embeddingStrength"
-        static let embeddingStrengthDefault10Migration = "phantomstamp.migration.embeddingStrengthDefault10"
         static let exportQualityIndex   = "phantomstamp.settings.exportQualityIndex"
         /// Save to Photos toggle (always-on until properly wired to export pipeline).
         static let saveToPhotos         = "phantomstamp.settings.saveToPhotos"
@@ -45,7 +43,8 @@ extension AppConstants {
 
         // Watermark Defaults — added for SettingsView
         static let defaultWatermarkText: String = ""
-        /// Global multiplier for mid-frequency embed Q (`adaptiveQuantizationStep`).
+        /// Fixed Adaptive-mode multiplier for mid-frequency embed Q (`adaptiveQuantizationStep`).
+        /// Advanced mode and internal tests may override this locally for one embed run.
         static let embeddingStrength: Double     = EmbeddingStrength.default
         static let exportQualityIndex: Int       = 1   // 0 = Low, 1 = Medium, 2 = High
         static let saveToPhotos: Bool            = true
@@ -71,18 +70,16 @@ extension AppConstants {
         static let reductionFactor: Float = 0.3
     }
 
-    /// Settings slider range for embedding strength (global Q multiplier).
+    /// Adaptive-mode embed intensity bounds. Kept as algorithm constants, not user settings.
     nonisolated enum EmbeddingStrength {
         static let min: Double = 0
         static let max: Double = 10
         static let step: Double = 0.5
         /// Adaptive mode uses the strongest tested global Q multiplier by default.
         static let `default`: Double = 10.0
-        /// Shipped briefly as the adaptive-mode default and migrated once to `default`.
-        static let legacyBuggyDefault: Double = 1.0
     }
 
-    /// Normalizes a stored embedding-strength value (handles legacy 0–100% → multiplier).
+    /// Normalizes an embed intensity value for history display and one-shot test/Advanced overrides.
     static func normalizedEmbeddingStrength(_ storedValue: Double) -> Double {
         let migrated: Double
         if storedValue > EmbeddingStrength.max {

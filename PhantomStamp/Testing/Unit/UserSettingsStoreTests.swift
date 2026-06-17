@@ -11,34 +11,22 @@ import Foundation
 enum UserSettingsStoreTests {
     static func runAllAndPrint() {
         #if DEBUG
-        let freshDefaults = makeDefaults()
-        let freshStore = UserSettingsStore(defaults: freshDefaults)
-        let freshPassed = freshStore.embeddingStrength == 10
+        let defaults = makeDefaults()
+        let store = UserSettingsStore(defaults: defaults)
 
-        let legacyDefaults = makeDefaults()
-        legacyDefaults.set(
-            AppConstants.EmbeddingStrength.legacyBuggyDefault,
-            forKey: AppConstants.UserDefaultsKey.embeddingStrength
-        )
-        let migratedStore = UserSettingsStore(defaults: legacyDefaults)
-        let migrationPassed = migratedStore.embeddingStrength == 10
+        let defaultsPassed = store.autoLogWatermarkEmbedToHistory == AppConstants.SettingsDefault.autoLogWatermarkEmbed
+            && store.exportQualityIndex == AppConstants.SettingsDefault.exportQualityIndex
+            && store.saveToPhotos == AppConstants.SettingsDefault.saveToPhotos
 
-        let customDefaults = makeDefaults()
-        customDefaults.set(4.5, forKey: AppConstants.UserDefaultsKey.embeddingStrength)
-        let customStore = UserSettingsStore(defaults: customDefaults)
-        let customPassed = customStore.embeddingStrength == 4.5
+        store.defaultWatermarkText = "Tester_01"
+        store.exportQualityIndex = 2
 
-        let postMigrationDefaults = makeDefaults()
-        postMigrationDefaults.set(
-            true,
-            forKey: AppConstants.UserDefaultsKey.embeddingStrengthDefault10Migration
-        )
-        postMigrationDefaults.set(1.0, forKey: AppConstants.UserDefaultsKey.embeddingStrength)
-        let postMigrationStore = UserSettingsStore(defaults: postMigrationDefaults)
-        let postMigrationPassed = postMigrationStore.embeddingStrength == 1.0
+        let persistenceStore = UserSettingsStore(defaults: defaults)
+        let persistencePassed = persistenceStore.defaultWatermarkText == "Tester_01"
+            && persistenceStore.exportQualityIndex == 2
 
-        let passed = freshPassed && migrationPassed && customPassed && postMigrationPassed
-        print("[UserSettingsStoreTests] \(passed ? "PASS" : "FAIL") Embedding strength default/migration")
+        let passed = defaultsPassed && persistencePassed
+        print("[UserSettingsStoreTests] \(passed ? "PASS" : "FAIL") Settings defaults/persistence")
         #endif
     }
 
