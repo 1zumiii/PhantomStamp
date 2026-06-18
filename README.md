@@ -33,6 +33,14 @@ The app uses Apple's **Accelerate (vDSP)** framework to divide the host image's 
 
 To balance robustness and visual fidelity, an **Adaptive Quantization Step** is employed. The algorithm calculates the mean absolute AC magnitude of each 8×8 block to assess texture complexity dynamically. Smooth areas receive a lighter embedding to reduce visible distortion, while highly textured areas receive a stronger embedding to improve robustness against compression.
 
+The effective local embedding amplitude is then computed as a product of the adaptive estimate and reliability weights:
+
+```text
+targetQa = adaptiveQ × globalStrength × blockGain × positionStrength
+```
+
+`adaptiveQ` estimates how much change the local texture can absorb, `globalStrength` selects the operating point, `blockGain` adjusts per-block reliability, and `positionStrength` gives synchronization/header and payload positions different robustness weights. This keeps the watermark lighter in visually sensitive regions while allowing critical positions to receive extra margin for extraction.
+
 ### 3.2 Global Geometric Synchronization (DFT & Inverse Mapping)
 
 To counter rotation and scaling, which disrupt block-based DCT alignment, PhantomStamp adds a tiled, precomputed spatial synchronization template composed of cosine components.
