@@ -68,6 +68,12 @@ nonisolated extension WatermarkAlgorithmCore {
     func loadSpatialSyncTemplate() -> FFTFloatMatrix {
         return WatermarkAlgorithmCore.cachedSyncTemplate
     }
+
+    /// Headless callers do not have an app bundle. They must provide the exact template artifact
+    /// explicitly so a benchmark cannot silently use a generated or different resource.
+    func loadSpatialSyncTemplate(from url: URL) throws -> FFTFloatMatrix {
+        try WatermarkAlgorithmCore.readSpatialSyncTemplate(from: url)
+    }
     
     /// Maps global image coordinates to local 512x512 template coordinates.
     ///
@@ -109,24 +115,35 @@ nonisolated extension WatermarkAlgorithmCore {
         }
         
         do {
-            // Read the entire file into memory
-            let data = try Data(contentsOf: url)
-            
-            // Strictly validate file byte count: 512 * 512 * 4 bytes (each Float is 4 bytes)
-            let expectedBytes = 512 * 512 * 4
-            precondition(data.count == expectedBytes, "Template file corrupted: size not equal to \(expectedBytes) bytes")
-            
-            // High-performance pointer bridging: directly map the raw byte stream to a Float array, without any loop parsing overhead
-            let floatArray = data.withUnsafeBytes { (bufferPointer: UnsafeRawBufferPointer) -> [Float] in
-                // Bind the untyped memory buffer to a standard Float memory block
-                let boundPointer = bufferPointer.bindMemory(to: Float.self)
-                return Array(boundPointer)
-            }
-            
-            return FFTFloatMatrix(width: 512, height: 512, values: floatArray)
-            
+            return try readSpatialSyncTemplate(from: url)
         } catch {
             fatalError("Fatal error: Failed to load sync template binary file - \(error)")
         }
     }()
+
+    private static func readSpatialSyncTemplate(from url: URL) throws -> FFTFloatMatrix {
+        let data = try Data(contentsOf: url)
+        let expectedBytes = 512 * 512 * MemoryLayout<Float>.size
+        guard data.count == expectedBytes else {
+            throw SpatialSyncTemplateError.invalidByteCount(
+                expected: expectedBytes,
+                actual: data.count
+            )
+        }
+        let values = data.withUnsafeBytes { buffer -> [Float] in
+            Array(buffer.bindMemory(to: Float.self))
+        }
+        return FFTFloatMatrix(width: 512, height: 512, values: values)
+    }
+}
+
+private enum SpatialSyncTemplateError: LocalizedError {
+    case invalidByteCount(expected: Int, actual: Int)
+
+    var errorDescription: String? {
+        switch self {
+        case let .invalidByteCount(expected, actual):
+            return "Sync template has \(actual) bytes; expected \(expected)."
+        }
+    }
 }
